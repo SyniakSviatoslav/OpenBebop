@@ -4,6 +4,48 @@
   "description": "Bebop — your own coding agent. Warm cosmo-noir, a deterministic guard OS, living memory, post-quantum node identity, and a math-proven telemetry governor. AGPL-3.0.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "keywords": [
+    "ai-agent",
+    "coding-agent",
+    "agent-framework",
+    "ai",
+    "llm",
+    "typescript",
+    "autonomous-agent",
+    "guard-os",
+    "post-quantum",
+    "ml-kem",
+    "kyber",
+    "ed25519",
+    "vector-symbolic-architecture",
+    "vsa",
+    "associative-memory",
+    "pid-controller",
+    "telemetry",
+    "icir",
+    "content-addressable",
+    "p2p",
+    "mesh",
+    "event-sourcing",
+    "deterministic",
+    "bebop",
+    "cosmo-noir",
+    "self-hosted",
+    "offline-first",
+    "agpl"
+  ],
+  "author": {
+    "name": "Syniak Sviatoslav",
+    "url": "https://github.com/SyniakSviatoslav"
+  },
+  "homepage": "https://github.com/SyniakSviatoslav/bebop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyniakSviatoslav/bebop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SyniakSviatoslav/bebop/issues"
+  },
   "bin": {
     "bebop": "bebop.ts"
   },
@@ -25,7 +67,9 @@
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
-    "@noble/post-quantum": "^0.6.1",
+    "@noble/post-quantum": "^0.6.1"
+  },
+  "optionalDependencies": {
     "better-auth": "^1.6.23"
   },
   "devDependencies": {
