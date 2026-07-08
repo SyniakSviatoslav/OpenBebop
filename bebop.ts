@@ -32,6 +32,7 @@ import { selfMaintain, selfEvolve, recordSession, selfLoop } from './src/conscio
 import { createOrUnlock, lock, unlock, loadBlob } from './src/vault.ts';
 import { runMcpServer } from './src/mcp.ts';
 import { loadSettings } from './src/settings.ts';
+import { DEFAULT_SCOPE_GLOBS } from './src/guard.ts';
 import { subagent } from './src/loop.ts';
 import { loadSkills, findSkill } from './src/skills.ts';
 
@@ -369,9 +370,13 @@ async function main() {
     const settings = loadSettings();
     const profile = loadProfile() ?? undefined;
     const res = await runLoop({
-      cwd: path.resolve(HERE, '..', '..'),
+      cwd: path.resolve(HERE, '..'),
       taskClass: cls,
       profile,
+      // User-supplied allow/deny (from TRUSTED ~/.bebop/settings.json only) extend the guard.
+      // allow extends the granted scope; deny strengthens the red-line set (can't relax it).
+      scope: [...DEFAULT_SCOPE_GLOBS, ...settings.permissions.allow],
+      redLines: settings.permissions.deny,
       hooks: settings.hooks['PreToolUse'],
       planMode,
     });

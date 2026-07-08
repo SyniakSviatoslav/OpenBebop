@@ -58,8 +58,15 @@ export interface GuardDecision {
   kind?: 'redline' | 'scope' | 'ok';
 }
 
-export function checkRedLine(targetPath: string): GuardDecision {
+export function checkRedLine(targetPath: string, extraGlobs: readonly string[] = []): GuardDecision {
   for (const g of RED_LINE_GLOBS) {
+    if (toRegExp(g).test(targetPath)) {
+      return { ok: false, reason: STATES['guard.redline'].text, kind: 'redline' };
+    }
+  }
+  // User-supplied deny globs (from trusted ~/.bebop/settings.json only — never a cloned project
+  // file) strengthen the red-line set. They can only DENY more, never relax the hardcoded core.
+  for (const g of extraGlobs) {
     if (toRegExp(g).test(targetPath)) {
       return { ok: false, reason: STATES['guard.redline'].text, kind: 'redline' };
     }

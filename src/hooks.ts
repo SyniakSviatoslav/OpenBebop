@@ -40,7 +40,11 @@ function matches(matcher: string | undefined, tool: string | undefined): boolean
 }
 
 function defaultRun(command: string, input: string): { code: number; stdout: string } {
-  const r = spawnSync(command, { input, shell: true, encoding: 'utf8', timeout: 10_000 });
+  // SECURITY: never use a shell. Split the (already metacharacter-validated) command into argv
+  // and exec directly. A hook command containing shell metacharacters is refused at load time
+  // (see settings.ts), so this split is safe.
+  const argv = command.trim().split(/\s+/);
+  const r = spawnSync(argv[0], argv.slice(1), { input, shell: false, encoding: 'utf8', timeout: 10_000 });
   return { code: r.status ?? 0, stdout: r.stdout ?? '' };
 }
 

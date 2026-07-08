@@ -45,6 +45,8 @@ export interface BebopConfig {
   hooks?: HookSpec[];
   // plan mode: read-only; edit/write tools are denied (Explore/Plan subagent semantics).
   planMode?: boolean;
+  // extra red-line globs (from TRUSTED user settings only) — strengthen the deny set.
+  redLines?: string[];
 }
 
 export interface LoopContext {
@@ -111,7 +113,7 @@ function runTool(name: ToolName, args: any, cfg: BebopConfig): { result: string;
       return { result: `[run stub] would exec: ${args.cmd}`, mutated: false, denied: false };
     case 'edit': {
       // GUARD GATE — red-line + scope, BEFORE any write
-      const rl = checkRedLine(p);
+      const rl = checkRedLine(p, cfg.redLines ?? []);
       if (!rl.ok) return { result: rl.reason!, mutated: false, denied: true };
       const sc = checkScope(p, cfg.scope);
       if (!sc.ok) return { result: sc.reason!, mutated: false, denied: true };

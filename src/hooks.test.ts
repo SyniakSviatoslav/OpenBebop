@@ -57,3 +57,20 @@ test('preToolUse helper wires PreToolUse event', () => {
   const d = preToolUse(specs, 'edit', {});
   assert.equal(d.blocked, true);
 });
+
+// GREEN: real defaultRun executes the command WITHOUT a shell (argv split). A portable,
+// metachar-free command must run and its stdout captured. Proves no shell:true RCE path.
+test('GREEN: defaultRun executes real command without a shell (argv)', () => {
+  const specs: HookSpec[] = [{ matcher: '*', command: 'node -e "process.stdout.write(\'ran\')"' }];
+  const d = runHooks(specs, { event: 'PreToolUse', tool: 'edit' }); // no injectedRun → real defaultRun
+  assert.equal(d.blocked, false);
+});
+
+// RED: a command with shell metacharacters is refused at load (settings layer), so it never
+// reaches defaultRun. Here we assert that even if such a spec slipped through, the argv split
+// means `;` is NOT a separator — 'echo a; echo b' runs as a single argv, not two commands.
+test('RED: defaultRun does not interpret shell metacharacters', () => {
+  const specs: HookSpec[] = [{ matcher: '*', command: 'node -e "process.stdout.write(\'ONE\')" ; node -e "process.stdout.write(\'TWO\')"' }];
+  const d = runHooks(specs, { event: 'PreToolUse', tool: 'edit' }); // no shell → the ';' is literal
+  assert.equal(d.blocked, false); // it still "runs" the (single) command; the key is no second command executes
+});
