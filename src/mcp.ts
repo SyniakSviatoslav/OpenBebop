@@ -74,6 +74,12 @@ const TOOLS = [
   }),
 ];
 
+class InvalidParamsError extends Error {}
+
+function invalid(message: string): never {
+  throw new InvalidParamsError(message);
+}
+
 function callTool(name: string, params: any): any {
   switch (name) {
     case 'bebop_boot': {
@@ -81,11 +87,17 @@ function callTool(name: string, params: any): any {
       return { ok: t.ok, log: t.log, certified: t.ok };
     }
     case 'bebop_recall': {
-      const r = recall(String(params?.query ?? ''));
+      const q = params?.query;
+      if (typeof q !== 'string' || q.trim().length === 0) invalid('query must be a non-empty string');
+      const r = recall(q);
       return { note: r.note, hits: r.hits };
     }
     case 'bebop_remember': {
-      const id = rememberLocal(String(params?.concept ?? ''), String(params?.payload ?? ''));
+      const concept = params?.concept;
+      const payload = params?.payload;
+      if (typeof concept !== 'string' || concept.trim().length === 0) invalid('concept must be a non-empty string');
+      if (typeof payload !== 'string' || payload.length === 0) invalid('payload must be a non-empty string');
+      const id = rememberLocal(concept, payload);
       return { id, size: livingMemory().size };
     }
     case 'bebop_govern': {
@@ -118,7 +130,7 @@ function callTool(name: string, params: any): any {
   }
 }
 
-function handle(req: JsonRpcRequest): JsonRpcResponse {
+export function handle(req: JsonRpcRequest): JsonRpcResponse {
   const id = req.id ?? null;
   try {
     if (req.method === 'initialize') {
@@ -137,6 +149,9 @@ function handle(req: JsonRpcRequest): JsonRpcResponse {
     }
     return { jsonrpc: '2.0', id, error: { code: -32601, message: `method not found: ${req.method}` } };
   } catch (e: any) {
+    if (e instanceof InvalidParamsError) {
+      return { jsonrpc: '2.0', id, error: { code: -32602, message: e.message } };
+    }
     return { jsonrpc: '2.0', id, error: { code: -32000, message: e?.message ?? 'tool error' } };
   }
 }

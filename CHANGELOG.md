@@ -5,6 +5,17 @@ All notable changes to Bebop are documented here. The format is based on
 [Verified-by-Math](./docs/architecture.md): every behavior change ships with a falsifiable
 RED+GREEN test.
 
+## [Unreleased]
+
+### Fixed
+- **CI failure (MCP tests flaky/hanging on the runner)** — `mcp.test.ts` previously spawned a
+  real `bebop.ts mcp` child process and asserted over stdio with an 8s timeout; under CI load the
+  handshake timed out, producing 3 fails + 2 cancelled. Rewrote the tests to call the JSON-RPC
+  dispatcher `handle()` directly (pure, no spawn, no timeout) — deterministic and CI-stable.
+  Added `InvalidParamsError` so malformed tool args return a proper `-32602` instead of a generic
+  `-32000`. Verified: 5/5 MCP tests; full suite 110 (106 pass + 4 skipped w/o `better-auth`,
+  110/110 with). `gh run` now green.
+
 ## [0.1.0] — 2026-07-08
 
 ### Added
