@@ -18,10 +18,38 @@ All commands run through the guard OS. Run `bebop help` for the live list.
 | `bebop node [--path P --pass P]` | Show this node's post-quantum self-certifying identity. |
 | `bebop govern "<samples>"` | Run the telemetry governor on a quality stream (0..1). |
 | `bebop self [maintain\|evolve\|session\|loop]` | Bebop soul: self-maintenance / evolution / session-as-node. |
-| `bebop sync [--port N]` | Start the optional self-hosted Better Auth sync node. |
+| `bebop run <class> [--plan] [--json]` | Run the loop; `--plan` = read-only, `--json` = headless structured output. |
 | `bebop mcp` | Start the MCP stdio server (see [integrations/mcp](./integrations/mcp.md)). |
 
-## Examples
+## Slash commands (interactive session)
+
+| Command | What it does |
+| --- | --- |
+| `/help` | List slash commands. |
+| `/status` | Backend rotation + guard-OS certification state. |
+| `/model` | Show the routed model. |
+| `/clear` | Reset in-process living memory. |
+| `/compact` | Trim/summarize living memory (forget decay). |
+| `/resume` | Resume the last session node from memory. |
+| `/plan` | Show plan-mode note (`bebop run <class> --plan` to use). |
+| `/skills` | List loaded skills (`.bebop/skills/*`). |
+| `/review` | Run the review skill checklist + guard self-test. |
+| `/subagent "<task>"` | Delegate read-only recon to a scoped, cheaper-model subagent. |
+
+## Project settings (`bebop.json`)
+
+```json
+{
+  "model": "haiku",
+  "permissions": { "allow": ["tools/**"], "deny": ["**/secret/**"] },
+  "hooks": { "PreToolUse": [{ "matcher": "edit", "command": "scripts/pre-edit.sh" }] }
+}
+```
+
+`permissions.deny` globs extend the guard red-lines; `permissions.allow` extends the granted scope;
+`hooks.PreToolUse` commands may deny an action (exit 2 or emit `{"permissionDecision":"deny"}`).
+See [integrations/agent-parity](./integrations/agent-parity.md) for the full mapping.
+
 
 ```bash
 # Certify the guard OS before trusting autonomy
