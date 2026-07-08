@@ -7,6 +7,16 @@
 
 import path from 'node:path';
 import { STATES } from './voice.ts';
+import type { CoreHandle } from './core-wasm.ts';
+
+// Optional Rust/WASM kernel handle. The CLI calls `initCore()` at boot and registers the handle
+// here via `setKernel()`. When present, the guard delegates the decision to the Rust trust
+// boundary (the same logic, but in a memory-safe, no-RNG/no-network core). If absent, we fall
+// back to this TypeScript port — parity-tested so both paths agree. Either way the red-lines are
+// identical; only the execution engine differs.
+let KERNEL: CoreHandle | null = null;
+export function setKernel(handle: CoreHandle | null) { KERNEL = handle; }
+export function hasKernel(): boolean { return KERNEL !== null; }
 
 // Red-line globs — same set the repo protects. Touching these requires explicit human go-ahead,
 // never a blanket permission.
@@ -61,34 +71,43 @@ export interface GuardDecision {
   ok: boolean;
   reason?: string;
   kind?: 'redline' | 'scope' | 'ok';
+  engine?: 'rust' | 'ts';
 }
 
 export function checkRedLine(targetPath: string, extraGlobs: readonly string[] = []): GuardDecision {
+  if (KERNEL) {
+    const d = KERNEL.decide(targetPath, 'edit', [...extraGlobs]);
+    return { ok: d.ok, reason: d.reason, kind: d.kind as GuardDecision['kind'], engine: 'rust' };
+  }
   for (const g of RED_LINE_GLOBS) {
     if (toRegExp(g).test(targetPath)) {
-      return { ok: false, reason: STATES['guard.redline'].text, kind: 'redline' };
+      return { ok: false, reason: STATES['guard.redline'].text, kind: 'redline', engine: 'ts' };
     }
   }
   // User-supplied deny globs (from trusted ~/.bebop/settings.json only — never a cloned project
   // file) strengthen the red-line set. They can only DENY more, never relax the hardcoded core.
   for (const g of extraGlobs) {
     if (toRegExp(g).test(targetPath)) {
-      return { ok: false, reason: STATES['guard.redline'].text, kind: 'redline' };
+      return { ok: false, reason: STATES['guard.redline'].text, kind: 'redline', engine: 'ts' };
     }
   }
-  return { ok: true, kind: 'ok' };
+  return { ok: true, kind: 'ok', engine: 'ts' };
 }
 
 export function checkScope(targetPath: string, scope: readonly string[] = DEFAULT_SCOPE_GLOBS, cwd: string = process.cwd()): GuardDecision {
+  if (KERNEL) {
+    const d = KERNEL.decide(targetPath, 'edit', [], [...scope], cwd);
+    return { ok: d.ok, reason: d.reason, kind: d.kind as GuardDecision['kind'], engine: 'rust' };
+  }
   // Match the path against the globs BOTH raw (if already relative) and relative to cwd
   // (if absolute). A glob like 'tools/bebop/**' must match an absolute repo path.
   const rel = path.isAbsolute(targetPath) ? path.relative(cwd, targetPath) : targetPath;
   const candidates = [targetPath, rel].filter(Boolean);
   const allowed = scope.some((g) => candidates.some((c) => toRegExp(g).test(c)));
   if (!allowed) {
-    return { ok: false, reason: STATES['guard.scope'].text, kind: 'scope' };
+    return { ok: false, reason: STATES['guard.scope'].text, kind: 'scope', engine: 'ts' };
   }
-  return { ok: true, kind: 'ok' };
+  return { ok: true, kind: 'ok', engine: 'ts' };
 }
 
 // The falsifiable-gate rule: a guardrail is only valid if it CAN fail. We model that a "green"

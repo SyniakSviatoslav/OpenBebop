@@ -20,3 +20,7 @@ memory.json
 .env.*
 *.pem
 *.key
+
+# Rust build artifacts (keep the wasm binary src/bebop_core.wasm committed; never commit target/)
+crates/*/target/
+**/target/

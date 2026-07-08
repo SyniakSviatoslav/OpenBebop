@@ -67,7 +67,9 @@ export function writeProfile(p: Profile): string {
 export function statusLine(p: Profile): string {
   const cells = p.backendOrder.map((b: Backend) => {
     const a = ADAPTERS[b];
-    const ok = a.detect() && (a.requiredEnv.length === 0 || a.requiredEnv.some((v) => !!process.env[v]));
+    // Keyless / key-optional backends (free, native) are always "ready" — never starred.
+    const keyless = b === 'free' || b === 'native';
+    const ok = keyless || (a.detect() && a.requiredEnv.some((v) => !!process.env[v]));
     return `${b}${ok ? '' : '*'}`;
   });
   return cells.join(' → ');

@@ -37,8 +37,8 @@ export const BEBOP_PRESET: Profile = {
   narration: 'bebop',
   patrons: 'hybrid',
   looks: 'bebop',
-  // hybrid origin → prefer claude+opencode, then the rest, native last.
-  backendOrder: ['opencode', 'claude', 'codex', 'hermes', 'goose', 'aider', 'native'],
+  // hybrid origin → prefer the FREE backend first (no paid key), then claude+opencode, native last.
+  backendOrder: ['free', 'opencode', 'claude', 'codex', 'hermes', 'goose', 'aider', 'native'],
   yolo: false,
 };
 
@@ -79,5 +79,8 @@ export function validateProfile(p: any): Profile {
   }
   // native must remain reachable (last) so Bebop never hard-fails with zero backends.
   if (!p.backendOrder.includes('native')) p.backendOrder = [...p.backendOrder, 'native'];
+  // Migration: FREE is the default-first backend (no paid key needed). If a stale profile lacks it,
+  // inject it at the front so Bebop honours the "free by default" promise on upgrade.
+  if (!p.backendOrder.includes('free')) p.backendOrder = ['free', ...p.backendOrder];
   return p as Profile;
 }

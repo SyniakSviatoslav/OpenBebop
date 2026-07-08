@@ -12,7 +12,7 @@ kernel, governor, and living memory are the substrate; the patterns below are na
 | --- | --- | --- | --- |
 | Slash commands | `/help`, `/clear`, `/model`, `/status`, `/plan`, `/compact`, `/resume` | skills-on-demand | `/`-dispatcher in `bebop.ts` |
 | Hooks | PreToolUse/PostToolUse/Stop, deny decisions via `permissionDecision` | hooks staged/pushed | `src/hooks.ts` + guard gate |
-| Permissions | `settings.json` `permissions.allow/deny` (glob rules) | red-line globs | `bebop.json` + `guard.ts` scope |
+| Permissions | `settings.json` `permissions.allow/deny` (glob rules) | red-line globs | user `~/.bebop/settings.json` `permissions` (project `bebop.json` is model-only) + `guard.ts` scope |
 | Settings | `~/.claude/settings.json`, `.claude/settings.json` (project) | profile | `src/settings.ts` (project + user) |
 | Plan mode | read-only; Explore/Plan subagents; no edits until approved | plan skill | `--plan` flag → Write/Edit denied loop |
 | Headless | `claude -p "q"`, `--print`, `--json`, piped stdin | terminal tool | `bebop run -p/--json` one-shot |
@@ -24,9 +24,10 @@ kernel, governor, and living memory are the substrate; the patterns below are na
 
 ## Bounded integration (this pass)
 
-1. **`src/settings.ts`** — load `bebop.json` from cwd (project) and `~/.bebop/settings.json` (user).
-   Shape: `{ model?, permissions: { allow: string[], deny: string[] }, hooks: {...} }`.
-   `deny` globs feed the guard scope; `model` overrides default routing.
+1. **`src/settings.ts`** — load `bebop.json` from cwd (project, **untrusted — model only**) and
+   `~/.bebop/settings.json` (user, trusted — may set `model` / `permissions` / `hooks`).
+   A project `bebop.json` may set ONLY `model`; `permissions` and `hooks` are ignored + warned.
+   The user file's `permissions.deny` globs feed the guard red-lines; `model` overrides default routing.
 2. **`src/hooks.ts`** — a hooks runner with events `PreToolUse`, `PostToolUse`, `Stop`. Each hook is a
    command run with JSON on stdin; a `permissionDecision: "deny"` (exit-2 / stdout) blocks the action.
    Wired into `runLoop` so PreToolUse runs *before* the guard gate — native mapping of Claude's hook.

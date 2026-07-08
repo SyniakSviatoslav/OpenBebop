@@ -63,15 +63,15 @@ test('RED: an unavailable backend is reported unavailable (not crashed)', () => 
   if (!ADAPTERS.codex.detect()) assert.equal(ok, false);
 });
 
-test('GREEN: runBackend never shells out to an unavailable backend', () => {
+test('GREEN: runBackend never shells out to an unavailable backend', async () => {
   // If codex isn't installed, runBackend returns a clean "unavailable" result, no exec/hang.
   if (!ADAPTERS.codex.detect()) {
-    const r = runBackend('codex', 'do something', {});
+    const r = await runBackend('codex', 'do something', {});
     assert.equal(r.ok, false);
     assert.match(r.summary, /unavailable/);
   } else {
     // codex IS available: runBackend must actually succeed (not just no-op)
-    const r = runBackend('codex', 'do something', {});
+    const r = await runBackend('codex', 'do something', {});
     assert.equal(r.ok, true);
   }
 });

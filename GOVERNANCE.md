@@ -13,7 +13,7 @@ is governed and how to get set up as a collaborator.
 ## How to contribute
 
 1. Fork or branch off `main`.
-2. Keep it green: `npm run boot`, `npm test` (105 falsifiable), `npm run typecheck`.
+2. Keep it green: `npm run boot`, `npm test` (159 falsifiable), `npm run typecheck`.
 3. Open a PR using the template. CI runs boot + test + typecheck automatically.
 4. A maintainer reviews; red-line areas (auth, money, RLS, migrations, bulk edits) need explicit
    human sign-off before merge.

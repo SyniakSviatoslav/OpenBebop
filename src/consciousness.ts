@@ -70,7 +70,7 @@ export function selfMaintain(): Health {
  * persisted to the one living memory + a reflection is emitted. On reject it is QUARANTINED (returned,
  * not applied). Fail-closed, reversible, falsifiable.
  */
-export function selfEvolve(idea: string): { accepted: boolean; id?: string; reason: string } {
+export async function selfEvolve(idea: string): Promise<{ accepted: boolean; id?: string; reason: string }> {
   const mem = livingMemory();
   const concept = `evolution:${idea.slice(0, 32)}`;
   const payload = `self-proposed rule from idea: ${idea}`;
@@ -87,7 +87,7 @@ export function selfEvolve(idea: string): { accepted: boolean; id?: string; reas
     return 'approve';
   };
 
-  const result = runCopilot({
+  const result = await runCopilot({
     task: `evolve corpus with: ${idea}`,
     checker,
     runNative: () => ({ ok: true, backend: 'native', summary: payload, exitCode: 0 }),
@@ -127,11 +127,13 @@ export function recordSession(session: { id: string; summary: string; childFacts
 }
 
 /** A meta-loop: self-maintain, then self-evolve a queued idea, recursively (loops-in-loops). */
-export function selfLoop(ideas: string[]): { health: Health; evolutions: { idea: string; accepted: boolean }[] } {
+export async function selfLoop(ideas: string[]): Promise<{ health: Health; evolutions: { idea: string; accepted: boolean }[] }> {
   const health = selfMaintain();
-  const evolutions = ideas.map((idea) => {
-    const r = selfEvolve(idea);
-    return { idea, accepted: r.accepted };
-  });
+  const evolutions = await Promise.all(
+    ideas.map(async (idea) => {
+      const r = await selfEvolve(idea);
+      return { idea, accepted: r.accepted };
+    }),
+  );
   return { health, evolutions };
 }

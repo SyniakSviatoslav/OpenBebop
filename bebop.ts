@@ -6,6 +6,8 @@
 // Subcommands:
 //   boot            run the guard self-test (Verified-by-Math — refuse to start if gates can't go RED)
 //   run [task]      run the agentic loop (default: deterministic stub, no live model)
+//   agents          list every agentic CLI Bebop can drive + live connection status
+//   use <backend>   switch the default agent directly (e.g. bebop use claude / opencode / free)
 //   recall <q>      query the living-knowledge §0·GP retriever
 //   route <class>   show the token-router decision (doer/reason/redline)
 //   help            this text
@@ -23,8 +25,8 @@ import { banner, makePaint } from './src/theme.ts';
 import { BOOT } from './src/voice.ts';
 import { init, loadProfile, statusLine, writeProfile } from './src/init.ts';
 import { probeAll, selectBackend } from './src/routing.ts';
-import { BEBOP_PRESET } from './src/profile.ts';
-import { runBackend, type Backend } from './src/backend.ts';
+import { BEBOP_PRESET, type Profile } from './src/profile.ts';
+import { runBackend, ADAPTERS, isAvailable, type Backend } from './src/backend.ts';
 import { runCopilot } from './src/copilot.ts';
 import { Governor } from './src/governor.ts';
 import { startSyncServer } from './src/sync-server.ts';
@@ -33,9 +35,11 @@ import { createOrUnlock, lock, unlock, loadBlob } from './src/vault.ts';
 import { runMcpServer } from './src/mcp.ts';
 import { playLaunch } from './src/launch.ts';
 import { loadSettings } from './src/settings.ts';
-import { DEFAULT_SCOPE_GLOBS } from './src/guard.ts';
+import { DEFAULT_SCOPE_GLOBS, checkRedLine } from './src/guard.ts';
 import { subagent } from './src/loop.ts';
 import { loadSkills, findSkill } from './src/skills.ts';
+import { initCore } from './src/core-wasm.ts';
+import { setKernel } from './src/guard.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -124,10 +128,15 @@ async function main() {
   const [, , cmd, ...args] = process.argv;
   const paint = makePaint();
 
+  // Boot the self-contained Rust/WASM guard kernel (if the artifact is present). The guard then
+  // delegates every red-line/scope decision to it; if absent it transparently uses the TS port.
+  setKernel(await initCore());
+
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log(banner(paint));
-    console.log(paint.dim('  boot | init [--preset bebop|--json {...}] | run [doer|reason|redline] | dispatch "<task>"'));
-    console.log(paint.dim('  status | recall <query> | route <class> | sync [--port N] | mcp | help'));
+    console.log(paint.dim('  boot | init [--preset bebop|--json {...}] | status | agents | use <backend>'));
+    console.log(paint.dim('  run [doer|reason|redline] | dispatch "<task>" | route <class> | recall <query>'));
+    console.log(paint.dim('  govern "<q,...>" | self [maintain|evolve|session|loop] | node | sync [--port N] | mcp | help'));
     console.log(paint.dim(`  ${BOOT.link}`));
     return;
   }
@@ -282,12 +291,21 @@ async function main() {
     // in real time. Pass --no-copilot to opt out.
     const copilotOff = args.includes('--no-copilot');
     let authority = 1;
-    const res = runCopilot({
-      task,
-      profile: loadProfile() ?? undefined,
-      enabled: !copilotOff,
-      runNative: (t) => ({ ok: true, backend: 'native', summary: `native handled: ${t.slice(0, 40)}`, exitCode: 0 }),
-    });
+    const res = await (async () => {
+      // GUARD GATE (RED LINE) — the kernel denies red-line targets BEFORE any agent runs. This is the
+      // same trust boundary the `run` loop enforces; the `dispatch` command must not bypass it. Fail-closed.
+      const rl = checkRedLine(task);
+      if (!rl.ok) {
+        console.log(paint.blood(`  ⛔ DENIED by guard (${rl.engine}): ${rl.reason}`));
+        process.exit(1);
+      }
+      return runCopilot({
+        task,
+        profile: loadProfile() ?? undefined,
+        enabled: !copilotOff,
+        runNative: (t) => ({ ok: true, backend: 'native', summary: `native handled: ${t.slice(0, 40)}`, exitCode: 0 }),
+      });
+    })();
     // feed the verdict as proven quality telemetry. The Governor is a SERVO (error = target − actual),
     // so to get "approve ⇒ more freedom / reject ⇒ less" we feed the QUALITY DEFICIT (1 − quality):
     // approve (quality 1) ⇒ deficit 0 ⇒ error +0.9 ⇒ authority rises; reject ⇒ deficit 1 ⇒ authority falls.
@@ -359,17 +377,63 @@ async function main() {
       console.log(paint.dim(`  self-maintain ok=${h.ok} pass=${h.pass} fail=${h.fail}`));
     } else if (sub === 'evolve') {
       const idea = args.slice(1).join(' ');
-      const r = selfEvolve(idea);
+      const r = await selfEvolve(idea);
       console.log(paint.dim(`  self-evolve accepted=${r.accepted} reason=${r.reason}${r.id ? ' id=' + r.id.slice(0, 12) : ''}`));
     } else if (sub === 'session') {
       const id = recordSession({ id: args[1] ?? 'hermes-now', summary: args.slice(2).join(' ') || 'active hermes session node' });
       console.log(paint.dim(`  session recorded as living-memory node ${id.slice(0, 12)}`));
     } else if (sub === 'loop') {
-      const r = selfLoop(args.slice(1).length ? args.slice(1) : ['tighten the copilot checker invariant']);
+      const r = await selfLoop(args.slice(1).length ? args.slice(1) : ['tighten the copilot checker invariant']);
       console.log(paint.dim(`  self-loop health ok=${r.health.ok} evolutions=${JSON.stringify(r.evolutions)}`));
     } else {
       console.log(paint.blood('  usage: bebop self [maintain|evolve "<idea>"|session <id> <summary>|loop "<idea>"...]'));
     }
+    return;
+  }
+
+  if (cmd === 'agents') {
+    // The multi-agent abstraction: list every agentic CLI Bebop can drive, with live connection
+    // status. This is THE simple switch surface — `bebop use <name>` connects one directly.
+    console.log(banner(paint));
+    console.log(paint.dim('  Bebop drives ANY connected agentic CLI. Switch directly with:  bebop use <name>'));
+    const profile = loadProfile() ?? BEBOP_PRESET;
+    const order = profile.backendOrder;
+    for (const b of Object.keys(ADAPTERS) as Backend[]) {
+      const a = ADAPTERS[b];
+      const available = isAvailable(b);
+      const connected = available && (a.binary ? a.detect() : true);
+      const isDefault = order[0] === b;
+      const tag = isDefault ? paint.teal('◆ default') : connected ? paint.teal('● connected') : paint.amber('○ available (needs key/binary)');
+      const req = a.requiredEnv.length ? a.requiredEnv.join('/') : '(keyless)';
+      console.log(paint.dim(`  · ${b.padEnd(9)} ${tag}  ${paint.dim(a.label)}  key: ${req}`));
+    }
+    console.log(paint.dim(`\n  active rotation: ${statusLine(profile)}`));
+    return;
+  }
+
+  if (cmd === 'use') {
+    // Simple, direct switch to a connected agentic CLI. Persists as the new default-first backend.
+    const target = args[0] as Backend | undefined;
+    const force = args.includes('--force');
+    if (!target || !(target in ADAPTERS)) {
+      console.log(paint.blood(`  usage: bebop use <backend>   where backend ∈ ${Object.keys(ADAPTERS).join(', ')}`));
+      process.exit(2);
+    }
+    const backend: Backend = target;
+    if (!isAvailable(backend) && !force) {
+      const a = ADAPTERS[target];
+      const req = a.requiredEnv.length ? a.requiredEnv.join('/') : '(keyless)';
+      console.log(paint.amber(`  ! ${target} is not connected (needs ${req}). Connect it, or re-run with --force to set anyway.`));
+      process.exit(1);
+    }
+    const profile = loadProfile() ?? { ...BEBOP_PRESET };
+    // Promote the chosen backend to the front of the rotation; keep native last as the fail-safe.
+    const rest = profile.backendOrder.filter((b) => b !== backend && b !== 'native') as Backend[];
+    const next: Profile = { ...profile, backendOrder: [backend, ...rest, 'native'] };
+    const written = writeProfile(next);
+    console.log(paint.teal(`  ✓ switched default agent → ${target}`));
+    console.log(paint.dim(`  profile → ${written}`));
+    console.log(paint.dim(`  rotation: ${statusLine(next)}`));
     return;
   }
 

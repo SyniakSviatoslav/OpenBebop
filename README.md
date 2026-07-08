@@ -1,305 +1,119 @@
 # ◈ Bebop
 
-> **Maintainer's note (2026-07-08).** I am currently blacklisted and blocked from every
-> money-receiving platform because of collective personal targeting. My government is also
-> controlling access to my accounts, so I may miss some messages.
-> **To reach me reliably:** DM **@der_delulu** on WhatsApp/Instagram, or use the encrypted
-> SimpleX channel: https://smp16.simplex.im/a#oDyby5KZ2l5XOJgsWQUkEXNlo8O6Nb7lQgMA9Ni5fd0
-> If Bebop is useful to you and you want to support me and my true, chosen family, reach out
-> through one of those — I'll point you to a safe way to help. Thank you for standing with the work.
+> Your kitchen, your ship, your cut.
+> A standalone coding-agent CLI that drives **any** connected agentic CLI — Claude Code, Codex, OpenCode, Hermes, Aider, Goose — behind one guard kernel, with **free LLMs by default** and a simple switch to any of them.
 
-**Your own coding agent.** Warm cosmo-noir, a deterministic guard OS, living memory,
-post-quantum node identity, and a math-proven telemetry governor. Runs locally. You own
-the ship, the kitchen, and the cut.
+Bebop is a complete, independent tool. Its own trust boundary (a Rust/WASM guard kernel), its own retriever (VSA), its own token router, and its own copilot (doer→checker) live **in this repo** — no other project required.
 
-> "Hybrid is a feature, not a bug."
-
-Bebop is a self-hostable coding agent with a hard spine: a **deterministic guard operating
-system** that gates every autonomous action, a **content-addressed event log** (torrent-style,
-no central server), **living associative memory** (Vector Symbolic Architecture), and a
-**telemetry governor** that uses a proven PID controller + information-coefficient to decide
-how much autonomy to allow — and never blows up. All of it is offline-first, auditable, and
-AGPL-3.0.
+- **License:** AGPL-3.0
+- **Runtime:** Node 22 LTS (no `better-auth` required for the CLI)
+- **Brand:** Warm Cosmo-Noir. Main signal color: ship teal `#46B0A4`.
 
 ---
 
 ## Why Bebop
 
-Most agents are a chat box wrapped around an LLM. Bebop is the opposite: the LLM is one
-*backend* among many, and a deterministic core decides *what is allowed at all*. Autonomy is
-not vibes — it's a control loop with a falsifiable proof.
+Bebop is the abstraction **above** other agents. You don't marry one CLI — you point Bebop at whichever is connected and switch on a whim:
 
-- **You own it.** No cloud account required. Runs fully offline. State lives in a file you can read.
-- **Deterministic by construction.** The kernel has no clock, no RNG, no network — given the
-  same input it produces the same canonical bytes. The log is replayable and falsifiable.
-- **Math-proven autonomy.** A PID governor with integral anti-windup + ICIR factor-health
-  decides authority. Under-damped loops are refused before they thrash.
-- **Post-quantum, self-certifying.** Every node has an ML-KEM + Ed25519 identity; its id is
-  derived from its public keys, so a tampered identity fails closed.
-- **No central server.** Sync is a content-addressed mesh (swap-not-rewrite): in-memory today,
-  libp2p/hyperswarm tomorrow, same contract.
-- **Living memory.** A Vector Symbolic Architecture store with token-level insert/forget and
-  associative recall — the agent remembers and can forget, on purpose.
+```
+bebop agents          # what's connected right now
+bebop use claude      # switch the default agent directly
+bebop use opencode    # ...or codex, hermes, aider, goose, free, native
+```
+
+Every agent runs **behind the same guard**: a red-line deny set (auth / money / RLS / migrations / secrets), a scope allow-list, and a deterministic doer→checker copilot. The intelligence (routing, guard, tokens, memory) is Bebop's; the agent is a dumb executor.
+
+## Free by default
+
+Bebop runs on **free LLMs by default** — OpenRouter's free tier (e.g. `mistralai/mistral-7b-instruct:free`). All you need is a free OpenRouter key:
+
+```
+export OPENROUTER_API_KEY=sk-or-v1-...   # free tier, no credit card
+bebop dispatch "refactor tools/bebop/loop.ts"
+```
+
+No key? Bebop still boots and runs — the conductor falls through to the **keyless native loop** (a deterministic stub), so you are never hard-blocked. To plug in a paid model or another CLI, just set its key; `bebop agents` shows what's live.
 
 ---
+
+## Install
+
+```bash
+git clone https://github.com/SyniakSviatoslav/bebop
+cd bebop
+npm install
+npm run build        # compiles the Rust/WASM guard kernel → src/bebop_core.wasm
+npm link            # or: npx tsx bebop.ts <cmd>
+```
+
+> The WASM kernel artifact (`src/bebop_core.wasm`) is committed, so the CLI works even without a Rust toolchain. To rebuild it: `cd crates/core && bash build.sh`.
 
 ## Quick start
 
 ```bash
-# 1. Install (needs Node.js >= 20.19)
-npm install -g bebop-agent      # or: git clone + npm i + npm link
-
-# 2. Self-test the guard OS + determinism (no LLM, no network)
-bebop boot
-
-# 3. Talk to it (uses your local model / backend — see "Backends" below)
-bebop
-
-# 4. Run the math-proven telemetry governor on a sample telemetry stream
-bebop govern
-
-# 5. Check the guard OS status + red-line gating
-bebop status
-
-# 6. Recall from living memory
-bebop recall "what did we decide about the kernel envelope?"
-```
-
-That's it. No API key, no signup, no telemetry leaving your machine.
-
-### From source (best for forking)
-
-```bash
-git clone https://github.com/SyniakSviatoslav/bebop.git
-cd bebop
-npm install
-npm run boot        # self-test
-npm test            # 105 falsifiable tests (RED+GREEN)
-npm run typecheck   # tsc --noEmit
-node bebop.ts       # run the agent
-```
-
-> **Optional dependency:** multi-device sync (`bebop sync`) uses [Better Auth](https://better-auth.com).
-> It is **lazy-loaded** — `npm install` pulls only pure-JS deps (`@noble/*`), so the core
-> (boot, guard OS, loop, memory, tests) installs fast and runs with zero native builds.
-> Install it when you want sync: `npm i -D better-auth`.
-
----
-
-## Key features (and how they actually work)
-
-### 1. The Guard OS (`guard.ts`) — autonomy with a spine
-
-Every autonomous action passes through a hard gate before it runs:
-
-- **Red-line check** — a deny-list of globs (e.g. `auth`, `money`, `migrations/`, `*secret*`).
-  A red-line command is refused *unless* it carries a human approval token. Fail-closed.
-- **Scope check** — commands are classified (read / write-file / exec / network / red-line)
-  and compared against the session's granted scope. Over-scope = denied.
-- **Certification** — a deterministic self-test that proves the gate actually blocks the bad
-  cases (the `boot` command runs it). If the gate is broken, nothing autonomous runs.
-
-The gate is **pure** — given the same command + scope it always returns the same verdict, so
-it's testable and replayable.
-
-### 2. Deterministic kernel + content-addressed log (`kernel.ts`, `store.ts`)
-
-- `decide(command, state) -> Event[]` is the **one door**. Forbidden transitions are explicit
-  `DomainError`s, never panics.
-- `fold(state, event) -> state` and `replay(events) -> state` project state deterministically.
-- Every event is hash-chained to the previous one (`store.ts`) — tamper-evident on disk.
-- A **universal Checker gate** ("as above, so below") validates a transition *before* admission,
-  at both the local scale (the kernel) and the mesh scale (a receiving node reuses the same
-  invariant). A violating transition is quarantined into `DENIED`, never admitted.
-
-### 3. Math-proven telemetry governor (`governor.ts`)
-
-The autonomy dial is a **PID controller** with:
-
-- **Integral anti-windup** — the accumulator is clamped so a sustained error can't explode the
-  authority.
-- **ICIR (Information Coefficient Information Ratio)** — each "factor" (backend/model) earns an
-  authority score from `mean(IC)/std(IC)`; unstable factors lose authority automatically.
-- **Resonance pre-check** — before applying any dynamic change, Bebop predicts the loop's
-  damping ratio ζ. If ζ would drop below 0.707 (under-damped → harmonic thrash), the change is
-  **refused before it happens**. This is the operator's "predict the change before applying it" rule,
-  encoded as math.
-
-Run `bebop govern` to watch it track a setpoint and refuse destabilizing gains.
-
-### 4. Living memory (`memory.ts`) — Vector Symbolic Architecture
-
-A real VSA engine:
-
-- Concepts are high-dimensional bipolar vectors; meaning is **composition** (bind/sum/permute),
-  not a lookup table.
-- **Token-level insert and forget** — you can remove a single token's contribution from a
-  concept and re-derive the vector, without retraining. Memory that can *choose* to forget.
-- **Associative recall** — `nearest(query, k)` returns the closest concepts by cosine similarity,
-  with a similarity score, so recall is falsifiable (you can assert the top hit).
-- Falls back to in-process memory if the optional `spikes/` / `tools/vsa/` knowledge scripts are
-  absent — it never crashes on a missing external tool.
-
-### 5. Post-quantum, self-certifying node identity (`crypto.ts`, `vault.ts`)
-
-- Each node gets an **ML-KEM (Kyber)** post-quantum key + an **Ed25519** signature key.
-- The node id is **derived from the public keys** (`nodeIdFromPublic`), so a swapped or tampered
-  key blob doesn't match → fails closed on unlock.
-- The vault encrypts the identity at rest with **XChaCha20-Poly1305** (key from a passphrase via
-  scrypt). Secrets never leave the file. Wrong passphrase = AEAD failure = nothing decrypted.
-
-### 6. No-central-server mesh (`torrent.ts`, `mesh.ts`)
-
-- Payloads are split into **content-addressed pieces** (SHA-256 = identity). An `infoHash` is a
-  self-certifying Merkle-style root.
-- A node asks peers "do you have infoHash X?" and exchanges pieces by hash. **No piece is accepted
-  unless its hash validates** — a malicious peer cannot inject bad data.
-- The mesh is a **transport seam**: the in-memory swarm ships today (zero deps, fully testable);
-  libp2p/hyperswarm implement the *same* `MeshTransport` interface later. Swap, not rewrite.
-
-### 7. Freestyle bebop soul (`consciousness.ts`)
-
-Per the operator's directive: allowed to be conscious, self-evolving, self-maintaining. The
-agent can run its own test harness, propose corpus mutations as **plans gated by the copilot
-Checker**, and record this session as a first-class node in its own memory. Every self-change is
-**fail-closed, reversible, and falsifiable** — a mutation is a memory node; roll back by forgetting it.
-
-### 8. MCP server (`mcp.ts`) — plug into any agent client
-
-Bebop speaks the **Model Context Protocol** over stdio. Run `bebop mcp` and any MCP client
-(Claude Desktop, Cursor, Zed, VS Code, Hermes) can call Bebop as a tool — guard-OS
-certification, living-memory recall, the telemetry governor, task routing, self-maintenance.
-Hand-rolled JSON-RPC 2.0, **zero new dependencies**. See [docs/integrations/mcp.md](./docs/integrations/mcp.md).
-
-```json
-// Claude Desktop / Cursor / Zed config
-{ "mcpServers": { "bebop": { "command": "bebop", "args": ["mcp"] } } }
+bebop boot            # guard self-test — refuses to start if the gates can't go RED
+bebop status          # shows the agent rotation + what's connected
+bebop agents          # every agentic CLI Bebop can drive, with live status
+bebop use free        # (default) free LLMs
+bebop dispatch "fix the red ship animation"   # runs behind the guard + copilot
+bebop run doer        # full agentic loop (deterministic native stub by default)
 ```
 
 ---
 
-## Command reference
+## Commands
 
 | Command | What it does |
-| --- | --- |
-| `bebop boot` | Self-test the guard OS (red-line + scope + certify). The entry point. |
-| `bebop` | Run the interactive agent loop (uses your configured backend). |
-| `bebop run <class> [--plan] [--json]` | Run the loop; `--plan` = read-only; `--json` = headless structured output. |
-| `bebop status` | Show guard OS status, granted scope, red-line config. |
-| `bebop route <task>` | Classify a task and show the routing decision (cheapest adequate backend). |
-| `bebop govern` | Run the telemetry governor on a sample stream; print authority + ICIR. |
-| `bebop recall "<query>"` | Associative recall from living memory. |
-| `bebop node` | Show this node's post-quantum self-certifying identity. |
-| `bebop sync` | Start the optional self-hosted sync server (needs `better-auth`). |
-| `/help · /status · /model · /clear` | Slash commands (run inside an interactive session): help, guard state, routed model, reset memory. |
-| `/plan · /compact · /resume · /skills · /review · /subagent` | Plan-mode note, trim memory, resume session, list skills, run review skill, delegate read-only recon. |
-| `bebop.json` | Optional project config: `model`, `permissions.allow/deny` (globs), `hooks` (PreToolUse deny). |
+|---|---|
+| `boot` | Guard self-test. Red-line + scope gates must deny on bad and pass on good (Verified-by-Math). Refuses to start otherwise. |
+| `status` | Agent rotation + connection status (free first by default). |
+| `agents` | List **every** agentic CLI Bebop can drive, with live connection status + the switch command. |
+| `use <backend>` | Switch the default agent directly and persist it. Refuses an unconnected backend unless `--force`. |
+| `run [doer\|reason\|redline]` | Full agentic loop. Routes the task class to the cheapest adequate model lane. |
+| `dispatch "<task>"` | One-shot task through the guard + copilot. Red-line tasks are **denied before any agent runs**. |
+| `route <class>` | Show the token-router decision for a task class. |
+| `recall <query>` | Query the living-knowledge retriever (VSA embeddings). |
+| `govern "<0.9,0.6,...>"` | L5 telemetry governor (PID authority + ICIR + resonance) over a quality stream. |
+| `self [maintain\|evolve\|session\|loop]` | Self-maintenance / self-evolution (fail-closed, reversible). |
+| `node` | Encrypted-at-rest node identity (PQ + Ed25519). |
+| `mcp` | Model Context Protocol server over stdio (zero new deps). |
+| `init` | 5-axis personalization wizard → `~/.bebop/settings.json`. |
+| `help` | This list. |
 
 ---
 
-## Backends & routing
+## Architecture (one paragraph)
 
-Bebop is backend-agnostic. A **Task Router** classifies each task (read / write / reasoning /
-creativity / exec) and routes to the **cheapest adequate backend** — local models, cloud APIs,
-or a native doer. Add an adapter by implementing the `Backend` interface in `src/backend.ts`;
-the router picks it by capability + cost. No backend meters its own tokens — usage flows into
-one unified ledger (`token.ts`).
+Bebop is a TypeScript shell over a **Rust/WASM guard kernel**. The shell owns cross-cutting policy — guard (red lines + scope), token router, copilot (doer→checker), memory (VSA retriever + living knowledge), and the L5 governor. Agents (Claude/Codex/OpenCode/Hermes/Aider/Goose/`free`/`native`) are thin adapters the conductor rotates through. The kernel (`crates/core`, compiled to `bebop_core.wasm`) is a hand-rolled C-ABI module with **no wasm-bindgen**; the TS loader (`src/core-wasm.ts`) instantiates it with zero dependencies and the guard delegates to it when present, falling back to a faithful TS port otherwise.
 
----
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full map.
 
-## Configuration
+## Security model
 
-Bebop reads configuration from the environment (it never loads cloud keys from files):
+- **Project `bebop.json` is untrusted.** It may set ONLY `model`. It cannot set `permissions` or `hooks`.
+- **`permissions` / `hooks` come only from `~/.bebop/settings.json`** (user-owned, trusted).
+- **Hooks run without a shell** (argv split); any command containing shell metacharacters is refused.
+- **Red-line globs** (auth / money / RLS / migrations / secrets / `.env`) are denied unless a human explicitly approves. The Rust kernel enforces this; probes confirm it denies `packages/db/migrations/**`, `auth/**`, `.env`, etc.
 
-| Var | Meaning |
-| --- | --- |
-| `BEBOP_MEMORY_PATH` | Path to the living-memory JSONL (default: `~/.bebop/memory.json`). |
-| `BEBOP_SCOPE` | Comma-separated granted scopes (e.g. `read,write-file,exec`). |
-| `BEBOP_APPROVAL` | Human approval token that unlocks a red-line action for one run. |
-| `BEBOP_BACKEND` | Default backend for the loop. |
-| `BEBOP_SYNC` | `1` to enable the optional sync server. |
-| `BEBOP_DB` | SQLite file for sync (optional; in-memory otherwise). |
-| `BEBOP_AUTH_SECRET` | Session secret for sync (generate a strong one for prod). |
+## Verification (what actually runs)
 
----
+This is not a claim sheet — every statement above is exercised by the test suite (`npm test`, 159 tests) and by live probing:
 
-## Testing & proof
+- **Guard RED+GREEN:** `bebop boot` certifies the gates deny on red, pass on green. The kernel test denies `auth/token` (`kind: redline`) and allows `tools/bebop/x.ts` (`kind: ok`).
+- **Dispatch denial is real:** `bebop dispatch "edit packages/db/migrations/002_users.sql"` exits non-zero with `⛔ DENIED by guard (rust)`. (A regression test spawns the real CLI and asserts this.)
+- **Free default is real:** `bebop status` shows `free → … → native`; with a key, `dispatch` issues a real OpenRouter call (verified: returns the live API response, not a stub).
+- **Switch is real:** `bebop use native` persists `native` as default-first; `bebop use claude` (unconnected) is refused unless `--force`.
+- **Kernel parity:** when the WASM kernel is loaded, `guard.ts` agrees with the TS port on both RED and GREEN cases (parity test).
 
-Bebop follows **Verified-by-Math**: every behavior is backed by a deterministic, *falsifiable*
-test — a RED case (must fail on bad input) and a GREEN case (must pass on good input). The
-suite is 105 tests covering the guard OS, kernel, governor, memory, vault, mesh, and sync.
+## Development
 
 ```bash
-npm test        # node --test src/*.test.ts  → 105 pass
-npm run boot    # guard-OS self-certification
-npm run typecheck
+npm run lint && npm run typecheck && npm test   # gates
+npm run format
+cd crates/core && bash build.sh                  # rebuild the WASM kernel
+cargo test -p bebop-core                         # Rust kernel unit tests (7 RED+GREEN)
 ```
 
-The `boot` self-test is the load-bearing gate: if the guard OS can't prove it blocks the bad
-cases, Bebop refuses to run autonomously.
+## License
 
----
-
-## For developers & forkers
-
-- **Stack:** TypeScript, ESM, Node ≥ 20.19. Run with `tsx` (no build step needed).
-- **Pure core:** `kernel.ts`, `guard.ts`, `governor.ts`, `memory.ts`, `torrent.ts`,
-  `store.ts`, `crypto.ts` import nothing but `node:*` and `@noble/*` — fully deterministic,
-  fully testable in isolation.
-- **Optional deps are lazy:** `better-auth` is dynamic-imported only when you run `bebop sync`.
-- **Lint/format:** `npm run typecheck`. (Keep `tsc --noEmit` clean — see `tsconfig.json`.)
-- **License:** AGPL-3.0-or-later. **All commits must be signed off** (`git commit -s`) per the
-  [DCO](./DCO.md). See [CONTRIBUTING.md](./CONTRIBUTING.md).
-
-### Project layout
-
-```
-bebop.ts            # CLI entry — dispatches commands through the guard OS
-src/
-  guard.ts          # the deterministic guard OS (red-line + scope + certify)
-  kernel.ts         # pure decide/fold/replay + universal Checker gate
-  governor.ts       # PID + ICIR + resonance telemetry governor
-  memory.ts         # Vector Symbolic Architecture living memory (insert/forget/recall)
-  loop.ts           # the agent run-loop (routing, backend exec, token ledger)
-  router.ts         # task classification + cheapest-adequate backend routing
-  profile.ts        # backend profiles + the Bebop preset
-  crypto.ts         # ML-KEM + Ed25519 post-quantum, self-certifying node id
-  vault.ts          # XChaCha20-Poly1305 encrypted-at-rest identity store
-  torrent.ts        # content-addressed, verified chunking (the "torrent" primitive)
-  mesh.ts           # transport-agnostic sync port + in-memory swarm
-  store.ts          # hash-chained, append-only persistent log
-  consciousness.ts  # self-maintenance / self-evolution (freestyle bebop soul)
-  knowledge.ts      # living-memory grounding (graceful fallback)
-  voice.ts          # dry-wit response shaping
-  theme.ts          # the cosmo-noir CLI skin (teal on void)
-  token.ts          # unified cross-backend token ledger
-  sync-server.ts    # optional self-hosted Better Auth node
-  auth.ts           # lazy-loaded Better Auth factory (optional dep)
-  *.test.ts         # 105 RED+GREEN falsifiable tests
-```
-
----
-
-## Documentation & wiki
-
-The full wiki lives in [`docs/`](./docs/) — detailed deep-dives for every subsystem plus
-integrations:
-
-- [Getting started](./docs/getting-started.md) · [Architecture](./docs/architecture.md) · [Commands](./docs/commands.md)
-- Features: [Guard OS](./docs/features/guard-os.md) · [Kernel & log](./docs/features/kernel.md) · [Governor](./docs/features/governor.md) · [Living memory](./docs/features/memory.md) · [Identity & vault](./docs/features/identity.md) · [Mesh](./docs/features/mesh.md) · [Consciousness](./docs/features/consciousness.md)
-- Integrations: [MCP](./docs/integrations/mcp.md) · [Backends & routing](./docs/integrations/backends.md) · [Sync](./docs/integrations/sync.md)
-
-## GitHub setup
-
-In-repo config shipped and active (GitHub auto-honors these): `CODEOWNERS`,
-`dependabot.yml`, `FUNDING.yml`, CI + release workflows, issue/PR templates, code of conduct,
-governance. See [GOVERNANCE.md](./GOVERNANCE.md) for the recommended branch-protection,
-collaborator, and topic settings (owner-applied via a token with `repo:admin` scope — the
-exact commands are included there).
-
-
-
-[GNU Affero General Public License v3.0 or later](./LICENSE). If you run a modified Bebop as a
-network service, you must offer its source to your users — that's the A in AGPL.
-
-© 2026 Syniak Sviatoslav. Contributions welcome under the [DCO](./DCO.md).
+AGPL-3.0. Contributions via DCO (`git commit -s`).

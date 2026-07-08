@@ -6,7 +6,7 @@ governor. This wiki explains each subsystem in detail so you can fork, extend, a
 
 ## Start here
 - [Getting started](./getting-started.md) — install, run, configure.
-- [Architecture](./architecture.md) — the layers, the determinism contract, "as above so below".
+- [Architecture](./ARCHITECTURE.md) — the layers, the Rust/WASM guard kernel, the determinism contract, "as above so below".
 - [Command reference](./commands.md) — every `bebop` subcommand.
 
 ## Key features (deep dives)

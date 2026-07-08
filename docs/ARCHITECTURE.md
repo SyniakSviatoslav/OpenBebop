@@ -1,60 +1,111 @@
-# Bebop architecture — the short version
+# Bebop Architecture
 
-Bebop is built as **layers**, each testable in isolation. The invariant: the *core* is pure and
-deterministic; the *shell* (CLI, backends, network) is the only place IO lives.
+Bebop is a TypeScript agent shell over a **self-contained Rust/WASM guard kernel**. The shell owns
+all cross-cutting policy; agents are interchangeable dumb executors behind a uniform envelope.
 
 ```
-            ┌─────────────────────────────────────────────┐
-  CLI →     │  bebop.ts  (dispatch; reads env, NEVER files) │
-            └───────────────┬─────────────────────────────┘
-                            │  EVERY command passes through ↓
-            ┌─────────────────────────────────────────────┐
-  GUARD OS  │  guard.ts  red-line + scope + certify (pure)  │  ← fail-closed gate
-            └───────────────┬─────────────────────────────┘
-                            │
-        ┌───────────────┬───┴────────┬────────────────┐
-        ↓               ↓            ↓                ↓
-  kernel.ts        governor.ts   memory.ts        loop.ts
-  decide/fold/     PID + ICIR +   VSA insert/      routing +
-  replay +         resonance      forget/recall    backend exec
-  Checker gate     (autonomy $)   (living memory)  (token ledger)
-        │               │            │                │
-        ↓               ↓            ↓                ↓
-  store.ts        crypto.ts     torrent.ts        mesh.ts
-  hash-chained    PQ identity   content-addressed mesh transport
-  append-only     + vault       pieces            (swap-not-rewrite)
-  log
+                        ┌─────────────────────────────────────────┐
+   user task  ───────▶  │  bebop.ts  (CLI / command dispatcher)     │
+                        └───────────────┬───────────────────────────┘
+                                        │
+            ┌───────────────────────────┼───────────────────────────┐
+            ▼                           ▼                           ▼
+     ┌──────────────┐          ┌────────────────┐          ┌──────────────────┐
+     │  guard.ts    │          │  router.ts     │          │  copilot.ts      │
+     │ red-line +   │          │ cheapest       │          │ doer → checker   │
+     │ scope (deleg │          │ adequate model │          │ (distinct, native│
+     │  to kernel)  │          │ lane per class │          │  DEFAULT-on)     │
+     └──────┬───────┘          └────────────────┘          └────────┬─────────┘
+            │                                                        │
+            ▼                                                        ▼
+   ┌──────────────────────┐                          ┌──────────────────────────┐
+   │  core-wasm.ts        │   delegates to           │  conductor (routing.ts)   │
+   │  load bebop_core.wasm│ ───────────────────────▶ │  selectBackend / rotate   │
+   └──────────┬───────────┘                          └───────────┬──────────────┘
+              │                                                    │
+              ▼                                                    ▼
+   ┌──────────────────────┐                          ┌──────────────────────────┐
+   │  bebop_core.wasm      │                          │  backend.ts adapters      │
+   │  Rust kernel:         │                          │  free / opencode / claude │
+   │   decide(glob→regex)  │                          │  / codex / hermes / aider │
+   │   embed(VSA)          │                          │  / goose / native        │
+   └──────────────────────┘                          └──────────────────────────┘
 ```
 
-## The determinism contract
+## 1. The guard kernel (`crates/core` → `bebop_core.wasm`)
 
-`kernel.ts`, `guard.ts`, `governor.ts`, `memory.ts`, `torrent.ts`, `store.ts`, `crypto.ts`
-import **only** `node:*` and `@noble/*`. No `Date.now()`, no `Math.random()`, no `fetch`, no
-`process.env` *inside* the decision path. The shell supplies nonces/timestamps as arguments.
-This is what makes the log replayable, the gate testable, and the whole thing falsifiable.
+The single source of truth for the trust boundary. A faithful port of `guard.ts`'s glob→regex
+semantics, compiled to WebAssembly with a **hand-rolled C-ABI** (no `wasm-bindgen`):
 
-## "As above, so below"
+- `decide(target, op, extraDeny, scope, cwd) → { ok, kind, reason }`
+  - `kind ∈ { ok, redline, scope, error }`
+  - `glob_to_regex` mirrors the TS `toRegExp` (handles `**`, `*`, `?`, `[^/]`, anchors).
+- Decision log (`LOG`) — append-only, replayable.
+- Retriever: deterministic hash embeddings `embed`, `similarity`, `estimateTokens` (no network).
+- Exports: `bebop_decide`, `bebop_result_ptr/len`, `bebop_embed`, `bebop_similarity`, `bebop_estimate_tokens`.
 
-The same `Checker` abstraction that gates a command locally (`kernel.applyCommandChecked`)
-is the invariant a *receiving mesh node* reuses to admit/reject a gossiped envelope. One rule
-at two scales — local doer, mesh checker. A violating transition is quarantined into `DENIED`,
-never silently admitted.
+The TS loader (`src/core-wasm.ts`, zero-dep `WebAssembly.instantiate`) reads `src/bebop_core.wasm`,
+instantiates it, and exposes `decide`/`embed`/`similarity`/`estimateTokens`. `guard.ts` calls the
+kernel when the handle is present and falls back to its own TS port otherwise — **both engines are
+proven to agree** (parity test).
 
-## Autonomy is a control loop
+## 2. Routing & the conductor (`router.ts`, `routing.ts`, `backend.ts`)
 
-`governor.ts` is a PID controller over "quality". Authority = controller output, clamped, with
-integral anti-windup. Each backend/model is a "factor" scored by ICIR (stability of its
-predictions). Before any dynamic change, `loopResonance()` predicts the damping ratio ζ; if
-ζ < 0.707 the change is refused. Autonomy can shrink but is engineered never to blow up.
+- `router.ts` — pure token-router: classify task → cheapest adequate lane (`haiku`/`sonnet`/`opus`).
+  Red-line class **must** route to `opus`; doer **must not** waste `opus`. Pure + unit-tested.
+- `backend.ts` — thin adapters. Each agent CLI is ONE adapter: build argv, parse stdout. The
+  intelligence (routing, guard, tokens) is Bebop's, applied uniformly. `free` is special: it calls
+  OpenRouter's free tier over `fetch` (no binary). `native` is the keyless deterministic stub.
+- `routing.ts` — the conductor: `selectBackend` walks `profile.backendOrder`, skipping unavailable
+  agents, always keeping `native` as the fail-safe. `rotate` tries the next healthy backend on
+  failure. **Uniform across every agent** (no special-casing).
 
-## No central server
+## 3. Copilot (`copilot.ts`) — doer → checker
 
-`torrent.ts` splits payloads into SHA-256 content-addressed pieces; `mesh.ts` moves pieces
-between nodes by hash and verifies every one. Ordering/dedup is the kernel's job (via `cause`),
-so the transport only needs to move bytes — libp2p later is a swap, not a rewrite.
+Mirrors the kernel's Checker gate one level up: a task is **produced** by one backend (doer) and
+**checked in real time** by a **distinct** backend (checker). On `reject`, the action is
+quarantined (fail-closed). DEFAULT-on and native. Independence is enforced: the checker ≠ doer.
 
-## State you can read
+## 4. Memory (`memory.ts`, `knowledge.ts`, `store.ts`)
 
-Everything Bebop knows lives in files you can open: the hash-chained event log (`store.ts`),
-the living memory JSONL (`memory.ts`), and the encrypted identity vault (`vault.ts`). No
-opaque cloud. You own the ship.
+- `memory.ts` — the one living memory (VSA graph; deterministic embed). `selfEvolve` proposes
+  corpus mutations; the checker gate + a resonance pre-check (ζ < 0.707 → under-damped → reject)
+  keep self-evolution well-damped. Fail-closed, reversible.
+- `knowledge.ts` — recall over the living-knowledge retriever; degrades honestly (no spawn) when
+  the VSA CLI is absent.
+- `store.ts` — content-addressed blob store.
+
+## 5. L5 governor (`governor.ts`)
+
+A servo: PID authority, ICIR factor health, resonance risk **before** any gain change, and >3σ
+anomaly signals. Fed quality streams; emits math-proven authority. Applied live to any
+agent/model/process via `bebop govern`.
+
+## 6. Free-LLM default (`free-llm.ts`)
+
+Maps the three routing lanes to OpenRouter's best-free models. Available when
+`OPENROUTER_API_KEY` (or `OPENROUTER_FREE_KEY`) is set. **First in the default rotation**, so
+Bebop runs on free models out of the box; falls through to `native` when no key.
+
+## 7. Multi-agent switch (the abstraction the user asked for)
+
+`bebop agents` lists every connected CLI with live status. `bebop use <backend>` promotes an agent
+to default-first and persists it (refuses unconnected unless `--force`). The profile
+(`~/.bebop/settings.json`) carries `backendOrder`; a migration injects `free` first on upgrade so
+stale installs comply with the free-default promise.
+
+## 8. Security boundaries
+
+- Project `bebop.json` (untrusted): `model` only.
+- `~/.bebop/settings.json` (trusted): `model` / `permissions` / `hooks`.
+- Hooks: shell-less, argv-split, metacharacter-refused.
+- Red lines enforced by the **Rust kernel** at every dispatch/run entry point.
+
+## Build & verify
+
+```bash
+cd crates/core && bash build.sh     # wasm32 → src/bebop_core.wasm
+cargo test -p bebop-core             # 7 Rust RED+GREEN tests
+npm run lint && npm run typecheck && npm test   # 159 TS tests
+bebop boot                           # live guard self-test
+```

@@ -13,8 +13,10 @@ RED+GREEN test.
 - **Plan mode** (`bebop run <class> --plan`): read-only loop — `edit` is denied before the guard
   gate (Explore/Plan subagent semantics). RED-proved in `src/loop.test.ts`.
 - **Headless JSON** (`bebop run <class> --json`): one-shot structured output, no prompts.
-- **Settings file** (`bebop.json` + `~/.bebop/settings.json`): `model`, `permissions.allow/deny`
-  (glob rules feeding the guard scope/red-lines), `hooks`. See `src/settings.ts`.
+- **Settings file** (`~/.bebop/settings.json` user + optional `bebop.json` project): `model`,
+  plus `permissions.allow/deny` and `hooks` from the **user** file only. A project `bebop.json`
+  is untrusted and may set **only `model`** — `permissions`/`hooks` are ignored + warned (see
+  `src/settings.ts` `applyProject`). See `src/settings.ts`.
 - **Hooks** (`src/hooks.ts`): PreToolUse / PostToolUse / Stop with deny decisions (Claude Code
   analogue). A PreToolUse hook runs *before* the guard gate and can deny (fail-closed on crash).
 - **Subagents** (`subagent()` in `src/loop.ts`): scoped, read-only, cheaper-model delegation that
@@ -57,6 +59,6 @@ RED+GREEN test.
 
 ### Verified
 - `npm run boot` certifies the guard OS.
-- `npm test` → 105 tests (101 pass + 4 skipped without `better-auth`; 105/105 with it).
+- `npm test` → 159 tests (155 pass + 4 skipped without `better-auth`; 159/159 with it).
 - `npm run typecheck` → 0 source errors.
 - Clean clone + `npm install --omit=optional` reproduces the above.

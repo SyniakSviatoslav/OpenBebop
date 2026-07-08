@@ -56,6 +56,7 @@
   "scripts": {
     "boot": "tsx bebop.ts boot",
     "start": "tsx bebop.ts",
+    "build": "cd crates/core && bash build.sh",
     "test": "node --test --import tsx src/*.test.ts",
     "typecheck": "tsc --noEmit",
     "recall": "tsx bebop.ts recall"

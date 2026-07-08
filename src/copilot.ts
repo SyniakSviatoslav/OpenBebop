@@ -62,7 +62,7 @@ function pickChecker(cfg: CopilotConfig, doer: Backend): Backend | 'native' {
  * Run a task in copilot mode: DOER produces, CHECKER (distinct) verifies in real time.
  * Returns the structured result; the caller decides what to do with a REJECT (quarantine).
  */
-export function runCopilot(cfg: CopilotConfig): CopilotResult {
+export async function runCopilot(cfg: CopilotConfig): Promise<CopilotResult> {
   const enabled = cfg.enabled ?? true; // DEFAULT ON
   const profile = cfg.profile;
   const doer: Backend = cfg.forcedDoer
@@ -76,11 +76,11 @@ export function runCopilot(cfg: CopilotConfig): CopilotResult {
 
   if (!enabled) {
     // copilot disabled: doer only, no checker (caller opted out)
-    const res = runBackend(doer, cfg.task, { runNative: nativeRunner });
+    const res = await runBackend(doer, cfg.task, { runNative: nativeRunner });
     return { doer, checker: 'native', doerOutput: res.summary, verdict: 'approve', ok: res.ok, note: 'copilot disabled' };
   }
 
-  const res = runBackend(doer, cfg.task, { runNative: nativeRunner });
+  const res = await runBackend(doer, cfg.task, { runNative: nativeRunner });
   const checker = pickChecker(cfg, doer);
   const checkerFn = cfg.checker ?? defaultChecker;
   const verdict = checkerFn(cfg.task, res.summary, doer);

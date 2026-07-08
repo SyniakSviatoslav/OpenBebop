@@ -44,5 +44,5 @@ real P2P backend is a swap, not a rewrite.
 
 - **Censorship-resistant** — there's no single endpoint to block or coerce.
 - **Tamper-evident** — content addressing means you can't lie about what you sent.
-- **Falsifiable** — `torrent.test.ts` and `mesh.test.ts` assert a piece's hash matches (GREEN)
-  and that a corrupted piece is rejected (RED).
+- **Falsifiable** — `core.test.ts` asserts a piece's hash matches (GREEN) and that a corrupted
+  piece is rejected (RED). (Kernel, torrent, and mesh are exercised together in `core.test.ts`.)

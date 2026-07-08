@@ -15,7 +15,7 @@ git clone https://github.com/SyniakSviatoslav/bebop.git
 cd bebop
 npm install         # core deps only
 npm run boot
-npm test            # 105 falsifiable tests
+npm test            # 159 falsifiable tests
 ```
 
 To enable optional multi-device sync later:
@@ -28,7 +28,7 @@ bebop sync --port 8787
 ## Your first run
 
 ```bash
-bebop                 # interactive agent loop (uses your configured backend)
+bebop                 # show the command list / help (agentic work: `bebop run <class>` or `bebop dispatch "<task>"`)
 bebop status          # show backend rotation + guard-OS scope
 bebop recall "what did we decide about the kernel envelope?"
 bebop govern "0.9,0.6,0.2,0.95,0.1"   # watch the telemetry governor track a setpoint

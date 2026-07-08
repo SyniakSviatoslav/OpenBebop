@@ -1,3 +1,11 @@
+> **Note — two kernels.** This page documents Bebop's *secondary* deterministic modules
+> (`src/kernel.ts` event-sourcing, `src/store.ts` hash-chained log, `src/torrent.ts` /
+> `src/mesh.ts` content-addressed transport). They are real and tested in `core.test.ts`, but they
+> are **not** the live guard path. The live, fail-closed trust boundary that every autonomous
+> command passes through is the **Rust/WASM guard kernel** in `crates/core` (see
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md) and `src/guard.ts` → `src/core-wasm.ts`). Keep that
+> distinction in mind: "the kernel" in conversation means the Rust/WASM guard unless stated otherwise.
+
 # Architecture
 
 Bebop is built as **layers**, each testable in isolation. The invariant: the *core* is pure and

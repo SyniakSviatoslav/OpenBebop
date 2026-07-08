@@ -5,7 +5,7 @@ All commands run through the guard OS. Run `bebop help` for the live list.
 | Command | What it does |
 | --- | --- |
 | `bebop boot` | Self-test the guard OS (red-line + scope + certify). The entry point. |
-| `bebop` | Run the interactive agent loop (uses your configured backend). |
+| `bebop` | Show the command list / help. For agentic work use `bebop run <class>` or `bebop dispatch "<task>"`. |
 | `bebop init [--preset bebop\|--json {...}]` | Write a profile (origin, class, narration, patrons, looks, backend rotation). |
 | `bebop status` | Show guard-OS status, granted scope, backend rotation, availability. |
 | `bebop run [doer\|reason\|redline]` | Run the agentic loop at a task class. |
@@ -40,15 +40,18 @@ All commands run through the guard OS. Run `bebop help` for the live list.
 
 ```json
 {
-  "model": "haiku",
-  "permissions": { "allow": ["tools/**"], "deny": ["**/secret/**"] },
-  "hooks": { "PreToolUse": [{ "matcher": "edit", "command": "scripts/pre-edit.sh" }] }
+  "model": "haiku"
 }
 ```
 
-`permissions.deny` globs extend the guard red-lines; `permissions.allow` extends the granted scope;
-`hooks.PreToolUse` commands may deny an action (exit 2 or emit `{"permissionDecision":"deny"}`).
-See [integrations/agent-parity](./integrations/agent-parity.md) for the full mapping.
+`bebop.json` is **untrusted**: a cloned repo may set **only `model`**. `permissions` and `hooks`
+are silently ignored (and warned) — they load *only* from your user settings
+(`~/.bebop/settings.json`), which is trusted. This is the guard OS's trust boundary: no project
+file can relax the red-lines or install hooks. See `docs/integrations/agent-parity.md` and
+`src/settings.ts` (`applyProject`).
+
+> To extend the guard (add a red-line glob or a hook), edit `~/.bebop/settings.json`, never
+> `bebop.json`.
 
 
 ```bash

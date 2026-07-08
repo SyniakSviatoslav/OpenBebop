@@ -159,13 +159,13 @@ function runDispatch(
   task: string,
   cfg: BebopConfig,
   log: Envelope[],
-): { result: string; backend: Backend; ok: boolean } {
+): Promise<{ result: string; backend: Backend; ok: boolean }> {
   // GUARD GATE — the task string is a proxy for the target; a red-line task is denied BEFORE any
   // backend runs, for every backend equally (RESEARCH §1.6).
   const rl = checkRedLine(task, cfg.redLines ?? []);
   if (!rl.ok) {
     log.push({ seq: log.length, cause: causeHash(task), backend: 'denied' as Backend, event: 'denied', detail: rl.reason! });
-    return { result: `[denied] ${rl.reason!}`, backend: 'denied' as Backend, ok: false };
+    return Promise.resolve({ result: `[denied] ${rl.reason!}`, backend: 'denied' as Backend, ok: false });
   }
   const profile = cfg.profile;
   const chosen = cfg.forcedBackend
@@ -179,15 +179,17 @@ function runDispatch(
       ? cfg.runNative(t)
       : { ok: true, backend: 'native' as Backend, summary: 'native stub handled', exitCode: 0 };
 
-  let res = runBackend(chosen.backend, task, { model: chosen.model, yolo: profile?.yolo, runNative: nativeRunner });
+  return (async () => {
+  let res = await runBackend(chosen.backend, task, { model: chosen.model, yolo: profile?.yolo, runNative: nativeRunner });
   // Uniform rotation on failure (RESEARCH §1.6) — try the next available backend.
   if (!res.ok && profile) {
     const next = rotate(profile, chosen.backend);
-    if (next) res = runBackend(next.backend, task, { model: next.model, yolo: profile.yolo, runNative: nativeRunner });
+    if (next) res = await runBackend(next.backend, task, { model: next.model, yolo: profile.yolo, runNative: nativeRunner });
   }
   log.push({ seq: log.length, cause: causeHash(task), backend: res.backend, event: 'dispatch', detail: res.summary });
   const tag = `${res.backend}${res.ok ? '' : ' (failed)'}`;
   return { result: `[${tag}] ${res.summary}`, backend: res.backend, ok: res.ok };
+  })();
 }
 
 export async function runLoop(cfg: BebopConfig): Promise<LoopResult> {
@@ -223,7 +225,7 @@ export async function runLoop(cfg: BebopConfig): Promise<LoopResult> {
     let halted = false;
     for (const call of calls) {
       if (call.name === 'dispatch') {
-        const d = runDispatch(String(call.args?.task ?? ''), cfg, log);
+        const d = await runDispatch(String(call.args?.task ?? ''), cfg, log);
         if (!d.ok) denied++;
         transcript.push(paint.dim(`  · dispatch ${d.result.slice(0, 120)}`));
         messages.push({ role: 'tool', name: 'dispatch', content: d.result });

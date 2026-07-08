@@ -64,7 +64,7 @@ test('GREEN: the SAME checker shape is reused at the mesh scale (signature+invar
 
 // ───────── NATIVE COPILOT MODE (DEFAULT) ─────────
 
-test('GREEN: copilot is DEFAULT-on and runs doer then a DISTINCT checker when one is available', () => {
+test('GREEN: copilot is DEFAULT-on and runs doer then a DISTINCT checker when one is available', async () => {
   let checked = false;
   const checker: CheckerFn = (task, out) => {
     checked = true;
@@ -72,7 +72,7 @@ test('GREEN: copilot is DEFAULT-on and runs doer then a DISTINCT checker when on
     return out ? 'approve' : 'reject';
   };
   // default-on (no enabled flag), and force a checker distinct from the doer to prove independence
-  const res = runCopilot({
+  const res = await runCopilot({
     task: 'refactor the kernel',
     profile: BEBOP_PRESET,
     forcedChecker: 'claude', // a DIFFERENT backend than the native doer
@@ -85,9 +85,9 @@ test('GREEN: copilot is DEFAULT-on and runs doer then a DISTINCT checker when on
   assert.notEqual(res.checker, res.doer); // checker MUST differ from doer
 });
 
-test('GREEN: copilot DEFAULT-on still runs the checker even when only the native backend is present', () => {
+test('GREEN: copilot DEFAULT-on still runs the checker even when only the native backend is present', async () => {
   let checked = false;
-  const res = runCopilot({
+  const res = await runCopilot({
     task: 'x',
     // no forcedChecker, only native available -> checker falls back to native stub but STILL runs
     checker: (_t, out) => {
@@ -100,8 +100,8 @@ test('GREEN: copilot DEFAULT-on still runs the checker even when only the native
   assert.equal(checked, true); // above still watched below
 });
 
-test('RED: copilot QUARANTINES (ok=false) when the checker rejects the doer output', () => {
-  const res = runCopilot({
+test('RED: copilot QUARANTINES (ok=false) when the checker rejects the doer output', async () => {
+  const res = await runCopilot({
     task: 'do something',
     profile: BEBOP_PRESET,
     checker: (_t, out) => (out && /fail/i.test(out) ? 'reject' : 'approve'),
@@ -111,9 +111,9 @@ test('RED: copilot QUARANTINES (ok=false) when the checker rejects the doer outp
   assert.equal(res.ok, false); // not permitted to proceed
 });
 
-test('GREEN: copilot can be explicitly disabled (doer only, no checker over the result)', () => {
+test('GREEN: copilot can be explicitly disabled (doer only, no checker over the result)', async () => {
   let checked = false;
-  const res = runCopilot({
+  const res = await runCopilot({
     task: 'x',
     enabled: false,
     checker: () => {

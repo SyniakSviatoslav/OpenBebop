@@ -21,7 +21,7 @@ See [DCO.md](./DCO.md).
 2. `npm install` (core deps only; `better-auth` is optional — see README).
 3. Keep it green:
    - `npm run boot` — guard-OS self-certification must pass.
-   - `npm test` — 105 falsifiable tests must pass.
+   - `npm test` — 159 falsifiable tests must pass.
    - `npm run typecheck` — `tsc --noEmit` clean.
 4. **Verified-by-Math:** any behavior change needs a deterministic, *falsifiable* test — a RED
    case (fails on bad input) and a GREEN case (passes on good input). A test that can't fail is

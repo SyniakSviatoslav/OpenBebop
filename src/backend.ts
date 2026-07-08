@@ -13,8 +13,10 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { freeAvailable, callFreeLLM, type FreeCallResult } from './free-llm.ts';
 
 export type Backend =
+  | 'free'
   | 'opencode'
   | 'codex'
   | 'claude'
@@ -68,6 +70,15 @@ function defaultParse(stdout: string): string {
 }
 
 export const ADAPTERS: Record<Backend, BackendAdapter> = {
+  free: {
+    id: 'free',
+    label: 'Free LLM (OpenRouter free tier)',
+    binary: null,
+    requiredEnv: ['OPENROUTER_API_KEY', 'OPENROUTER_FREE_KEY'],
+    detect: () => freeAvailable(),
+    buildArgs: () => [],
+    parse: (s) => s.slice(0, 200),
+  },
   opencode: {
     id: 'opencode',
     label: 'OpenCode',
@@ -151,23 +162,34 @@ export const ADAPTERS: Record<Backend, BackendAdapter> = {
   },
 };
 
-/** A backend is "available" if installed AND has its required keys (or is native). */
+/** A backend is "available" if installed AND has its required keys (or is native / keyless-free). */
 export function isAvailable(b: Backend): boolean {
   const a = ADAPTERS[b];
   if (!a.detect()) return false;
-  if (a.requiredEnv.length === 0) return true; // native
+  if (b === 'native' || b === 'free') return true; // native always; free relies on key via detect()
+  if (a.requiredEnv.length === 0) return true;
   return hasEnv(a.requiredEnv);
 }
 
 /** Run a backend. `runNative` is injected so `native` doesn't shell out (no binary). */
-export function runBackend(
+export async function runBackend(
   b: Backend,
   task: string,
   opts: { model?: string; yolo?: boolean; runNative?: (task: string) => DispatchResult },
-): DispatchResult {
+): Promise<DispatchResult> {
   const a = ADAPTERS[b];
   if (b === 'native') {
     return opts.runNative ? opts.runNative(task) : { ok: false, backend: b, summary: 'no native runner', exitCode: 1 };
+  }
+  // Free-LLM backend: no shell-out — call OpenRouter's free tier directly (keyless-optional, but
+  // requires a free key; the conductor falls through if unavailable).
+  if (b === 'free') {
+    if (!freeAvailable()) {
+      return { ok: false, backend: b, summary: 'free backend unavailable (set OPENROUTER_API_KEY for free models)', exitCode: 2 };
+    }
+    const lane = (opts.model as any) === 'opus' ? 'opus' : (opts.model as any) === 'sonnet' ? 'sonnet' : 'haiku';
+    const r: FreeCallResult = await callFreeLLM(lane, task);
+    return { ok: r.ok, backend: b, summary: r.text.slice(0, 200) || r.reason || '(empty)', exitCode: r.ok ? 0 : 1 };
   }
   // Safety: never shell out to an unavailable backend (not installed or missing keys). This prevents
   // hanging on a missing/blocking binary and enforces the conductor's availability gate uniformly.
