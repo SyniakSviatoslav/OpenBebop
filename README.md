@@ -156,6 +156,18 @@ agent can run its own test harness, propose corpus mutations as **plans gated by
 Checker**, and record this session as a first-class node in its own memory. Every self-change is
 **fail-closed, reversible, and falsifiable** — a mutation is a memory node; roll back by forgetting it.
 
+### 8. MCP server (`mcp.ts`) — plug into any agent client
+
+Bebop speaks the **Model Context Protocol** over stdio. Run `bebop mcp` and any MCP client
+(Claude Desktop, Cursor, Zed, VS Code, Hermes) can call Bebop as a tool — guard-OS
+certification, living-memory recall, the telemetry governor, task routing, self-maintenance.
+Hand-rolled JSON-RPC 2.0, **zero new dependencies**. See [docs/integrations/mcp.md](./docs/integrations/mcp.md).
+
+```json
+// Claude Desktop / Cursor / Zed config
+{ "mcpServers": { "bebop": { "command": "bebop", "args": ["mcp"] } } }
+```
+
 ---
 
 ## Command reference
@@ -256,7 +268,24 @@ src/
 
 ---
 
-## License
+## Documentation & wiki
+
+The full wiki lives in [`docs/`](./docs/) — detailed deep-dives for every subsystem plus
+integrations:
+
+- [Getting started](./docs/getting-started.md) · [Architecture](./docs/architecture.md) · [Commands](./docs/commands.md)
+- Features: [Guard OS](./docs/features/guard-os.md) · [Kernel & log](./docs/features/kernel.md) · [Governor](./docs/features/governor.md) · [Living memory](./docs/features/memory.md) · [Identity & vault](./docs/features/identity.md) · [Mesh](./docs/features/mesh.md) · [Consciousness](./docs/features/consciousness.md)
+- Integrations: [MCP](./docs/integrations/mcp.md) · [Backends & routing](./docs/integrations/backends.md) · [Sync](./docs/integrations/sync.md)
+
+## GitHub setup
+
+In-repo config shipped and active (GitHub auto-honors these): `CODEOWNERS`,
+`dependabot.yml`, `FUNDING.yml`, CI + release workflows, issue/PR templates, code of conduct,
+governance. See [GOVERNANCE.md](./GOVERNANCE.md) for the recommended branch-protection,
+collaborator, and topic settings (owner-applied via a token with `repo:admin` scope — the
+exact commands are included there).
+
+
 
 [GNU Affero General Public License v3.0 or later](./LICENSE). If you run a modified Bebop as a
 network service, you must offer its source to your users — that's the A in AGPL.

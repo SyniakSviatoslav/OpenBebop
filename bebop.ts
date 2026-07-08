@@ -30,6 +30,7 @@ import { Governor } from './src/governor.ts';
 import { startSyncServer } from './src/sync-server.ts';
 import { selfMaintain, selfEvolve, recordSession, selfLoop } from './src/consciousness.ts';
 import { createOrUnlock, lock, unlock, loadBlob } from './src/vault.ts';
+import { runMcpServer } from './src/mcp.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,7 +41,7 @@ async function main() {
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log(banner(paint));
     console.log(paint.dim('  boot | init [--preset bebop|--json {...}] | run [doer|reason|redline] | dispatch "<task>"'));
-    console.log(paint.dim('  status | recall <query> | route <class> | sync [--port N] | help'));
+    console.log(paint.dim('  status | recall <query> | route <class> | sync [--port N] | mcp | help'));
     console.log(paint.dim(`  ${BOOT.link}`));
     return;
   }
@@ -96,6 +97,14 @@ async function main() {
     });
     await srv.close();
     console.log(paint.dim('  sync node stopped.'));
+    return;
+  }
+
+  if (cmd === 'mcp') {
+    // Model Context Protocol server over stdio. Exposes Bebop capabilities as tools to any
+    // MCP client (Claude Desktop, Cursor, Zed, VS Code, Hermes). Zero new dependencies.
+    console.error(paint.teal('  ◈ Bebop MCP server starting on stdio (JSON-RPC 2.0). Close stdin to stop.'));
+    await runMcpServer();
     return;
   }
 

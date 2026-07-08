@@ -1,0 +1,24 @@
+# CODEOWNERS — who reviews what.
+# Every PR touching these paths needs the listed reviewers' approval.
+# (GitHub enforces this automatically once the file exists in the default branch.)
+
+# Owner: project lead
+*       @SyniakSviatoslav
+
+# Guard OS, kernel, governor — the safety-critical core
+/src/guard.ts        @SyniakSviatoslav
+/src/kernel.ts       @SyniakSviatoslav
+/src/governor.ts     @SyniakSviatoslav
+/src/store.ts        @SyniakSviatoslav
+
+# Cryptography & identity — post-quantum, vault
+/src/crypto.ts       @SyniakSviatoslav
+/src/vault.ts        @SyniakSviatoslav
+
+# MCP integration
+/src/mcp.ts          @SyniakSviatoslav
+
+# Docs & governance
+/docs/               @SyniakSviatoslav
+GOVERNANCE.md        @SyniakSviatoslav
+SECURITY.md          @SyniakSviatoslav
