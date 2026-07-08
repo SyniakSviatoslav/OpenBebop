@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { livingMemory } from './memory.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-// This is a standalone repo: src/ → bebop-repo root is two levels up.
-const REPO_ROOT = path.resolve(HERE, '..', '..');
+// This is a standalone repo: src/ → bebop-repo root is ONE level up.
+const REPO_ROOT = path.resolve(HERE, '..');
 
 export interface Recall {
   found: boolean;
@@ -33,9 +33,17 @@ export function recallLocal(query: string): { id: string; text: string }[] {
 }
 
 // Call the living-knowledge §0·GP retriever. Returns ranked {id,text} hits.
+// Degrades honestly to in-process memory when the retriever isn't present in this repo.
 export function recall(query: string): Recall {
   const hits = recallLocal(query).map((h) => ({ id: h.id, text: h.text, score: 1 }));
   const script = path.join(REPO_ROOT, 'spikes', 'living-knowledge', 'search.mjs');
+  if (!fs.existsSync(script)) {
+    return {
+      found: hits.length > 0,
+      hits,
+      note: `in-process livingMemory only (living-knowledge retriever not bundled in this repo)`,
+    };
+  }
   try {
     const out = execFileSync('node', [script, query], { encoding: 'utf8', timeout: 20000, stdio: ['ignore', 'pipe', 'ignore'] });
     const remote = parseRecall(out);
@@ -45,7 +53,7 @@ export function recall(query: string): Recall {
       note: `in-process livingMemory + living-knowledge §0·GP recall`,
     };
   } catch (e: any) {
-    // local memory still works even if the repo retriever is absent — degrade honestly
+    // local memory still works even if the repo retriever errors — degrade honestly
     return {
       found: hits.length > 0,
       hits,
@@ -61,6 +69,7 @@ export function rememberLocal(concept: string, payload: string, linkTo?: string[
 // VSA token estimate via tools/vsa/cli.mjs tokens. Returns null if vsa absent.
 export function estimateTokens(text: string): number | null {
   const cli = path.join(REPO_ROOT, 'tools', 'vsa', 'cli.mjs');
+  if (!fs.existsSync(cli)) return null; // VSA not bundled in this standalone repo
   try {
     const tmp = path.join(os.tmpdir(), `.bebop-recall-${process.pid}-${Date.now()}.json`);
     fs.writeFileSync(tmp, text);
