@@ -5,15 +5,18 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createBebopAuth } from './auth.ts';
 import { startSyncServer } from './sync-server.ts';
 
-// better-auth is an OPTIONAL dependency (lazy-loaded by auth.ts). When it is not installed these
-// tests are skipped instead of failing — the rest of Bebop (boot, guard OS, loop, memory) runs with
-// zero heavy deps. Install better-auth to exercise the sync-server path:  npm i -D better-auth
-let betterAuthAvailable = true;
+// better-auth is an OPTIONAL dependency (lazy-loaded by auth.ts). Detect its presence
+// side-effect-free (resolve + existsSync) so the test process never hangs on a partial
+// module load when it is absent. When missing, the sync-server tests are skipped.
+let betterAuthAvailable = false;
 try {
-  await import('better-auth');
+  const req = createRequire(import.meta.url);
+  betterAuthAvailable = existsSync(req.resolve('better-auth'));
 } catch {
   betterAuthAvailable = false;
 }
@@ -52,7 +55,7 @@ test('GREEN: Better Auth is the default and a signup+login round-trips with a se
   }
 });
 
-test('RED: wrong password is rejected (no session issued)', async () => {
+test('RED: wrong password is rejected (no session issued)', { skip: betterAuthAvailable ? false : 'better-auth not installed (optional dep)' }, async () => {
   const srv = await startSyncServer({ port: 0 });
   try {
     const email = `red-${Date.now()}@bebop.local`;
@@ -74,7 +77,7 @@ test('RED: wrong password is rejected (no session issued)', async () => {
   }
 });
 
-test('RED: get-session without a cookie returns null (protected boundary holds)', async () => {
+test('RED: get-session without a cookie returns null (protected boundary holds)', { skip: betterAuthAvailable ? false : 'better-auth not installed (optional dep)' }, async () => {
   const srv = await startSyncServer({ port: 0 });
   try {
     const res = await api(srv.url, '/get-session');

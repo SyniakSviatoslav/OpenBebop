@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+          cache: npm
+      # Core deps only — better-auth is optional and lazy-loaded.
+      - run: npm install --omit=optional
+      - name: Guard-OS self-certification
+        run: npm run boot
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Falsifiable tests
+        run: npm test

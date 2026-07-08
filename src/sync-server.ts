@@ -60,7 +60,13 @@ export async function startSyncServer(opts: SyncServerOptions = {}): Promise<Syn
     auth,
     url,
     close: () =>
-      new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+      new Promise<void>((resolve, reject) => {
+        // Stop accepting; also tear down any open keep-alive sockets (e.g. from global fetch /
+        // undici) so the event loop can drain and `node --test` can exit in a combined run.
+        server.close((err) => (err ? reject(err) : resolve()));
+        // closeAllConnections is Node >=18.2; guard for older runtimes.
+        (server as any).closeAllConnections?.();
+      }),
   };
 }
 
