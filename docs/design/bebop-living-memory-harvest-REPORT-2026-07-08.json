@@ -1,0 +1,300 @@
+{
+  "generated": "2026-07-08T20:46:24.425Z",
+  "corpusSize": 12,
+  "candidates": [
+    {
+      "concept": "bebop",
+      "field": {
+        "div": -19.692004091638765,
+        "curl": 3.895879225182732,
+        "state": "sink",
+        "directive": "focus",
+        "concept": "bebop",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "guard",
+      "field": {
+        "div": 26.879902845992277,
+        "curl": 14.675949319237267,
+        "state": "both",
+        "directive": "generate+reconsider",
+        "concept": "guard",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "recall field is divergence+curl (spreads and cycles); fans into 3 distinct concepts"
+    },
+    {
+      "concept": "governor",
+      "field": {
+        "div": -146.15888573083777,
+        "curl": -8.580509432937287,
+        "state": "sink",
+        "directive": "focus",
+        "concept": "governor",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "field",
+      "field": {
+        "div": -44.411956809003186,
+        "curl": -7.219900109647075,
+        "state": "sink",
+        "directive": "focus",
+        "concept": "field",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "validate",
+      "field": {
+        "div": 140.92833909156883,
+        "curl": -1.7505189537939163,
+        "state": "diverge",
+        "directive": "generate",
+        "concept": "validate",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "speculate",
+      "field": {
+        "div": 103.49695124138552,
+        "curl": 4.83246274552688,
+        "state": "diverge",
+        "directive": "generate",
+        "concept": "speculate",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "memory",
+      "field": {
+        "div": 151.5987029248643,
+        "curl": 4.632361503921231,
+        "state": "diverge",
+        "directive": "generate",
+        "concept": "memory",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "skills",
+      "field": {
+        "div": 69.55358380222214,
+        "curl": -10.747965429181054,
+        "state": "diverge",
+        "directive": "generate",
+        "concept": "skills",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "redline",
+      "field": {
+        "div": -93.9641410663211,
+        "curl": 6.570195121584907,
+        "state": "sink",
+        "directive": "focus",
+        "concept": "redline",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "vsm",
+      "field": {
+        "div": 111.53813625413167,
+        "curl": 36.55801344669623,
+        "state": "diverge",
+        "directive": "generate",
+        "concept": "vsm",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    },
+    {
+      "concept": "recall",
+      "field": {
+        "div": 22.94498887580308,
+        "curl": 9.841793511851026,
+        "state": "both",
+        "directive": "generate+reconsider",
+        "concept": "recall",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "recall field is divergence+curl (spreads and cycles); fans into 3 distinct concepts"
+    },
+    {
+      "concept": "react",
+      "field": {
+        "div": 11.150050894124007,
+        "curl": -2.5507167074981134,
+        "state": "diverge",
+        "directive": "generate",
+        "concept": "react",
+        "spread": 3,
+        "depth": 3
+      },
+      "reason": "fans into 3 distinct concepts"
+    }
+  ],
+  "patterns": [
+    {
+      "concept": "bebop",
+      "kind": "sink-hot",
+      "state": "sink",
+      "support": 3
+    },
+    {
+      "concept": "guard",
+      "kind": "both-hot",
+      "state": "both",
+      "support": 3
+    },
+    {
+      "concept": "governor",
+      "kind": "sink-hot",
+      "state": "sink",
+      "support": 3
+    },
+    {
+      "concept": "field",
+      "kind": "sink-hot",
+      "state": "sink",
+      "support": 3
+    },
+    {
+      "concept": "validate",
+      "kind": "divergence-hot",
+      "state": "diverge",
+      "support": 3
+    },
+    {
+      "concept": "speculate",
+      "kind": "divergence-hot",
+      "state": "diverge",
+      "support": 3
+    },
+    {
+      "concept": "memory",
+      "kind": "divergence-hot",
+      "state": "diverge",
+      "support": 3
+    },
+    {
+      "concept": "skills",
+      "kind": "divergence-hot",
+      "state": "diverge",
+      "support": 3
+    },
+    {
+      "concept": "redline",
+      "kind": "sink-hot",
+      "state": "sink",
+      "support": 3
+    },
+    {
+      "concept": "vsm",
+      "kind": "divergence-hot",
+      "state": "diverge",
+      "support": 3
+    },
+    {
+      "concept": "recall",
+      "kind": "both-hot",
+      "state": "both",
+      "support": 3
+    },
+    {
+      "concept": "react",
+      "kind": "divergence-hot",
+      "state": "diverge",
+      "support": 3
+    }
+  ],
+  "cross": [
+    {
+      "a": "divergence-hot",
+      "b": "divergence-hot",
+      "count": 9,
+      "note": "coupling observed"
+    },
+    {
+      "a": "divergence-hot",
+      "b": "sink-hot",
+      "count": 6,
+      "note": "coupling observed"
+    },
+    {
+      "a": "sink-hot",
+      "b": "divergence-hot",
+      "count": 5,
+      "note": "coupling observed"
+    },
+    {
+      "a": "sink-hot",
+      "b": "sink-hot",
+      "count": 5,
+      "note": "coupling observed"
+    },
+    {
+      "a": "both-hot",
+      "b": "divergence-hot",
+      "count": 5,
+      "note": "coupling observed"
+    },
+    {
+      "a": "divergence-hot",
+      "b": "both-hot",
+      "count": 3,
+      "note": "coupling observed"
+    },
+    {
+      "a": "sink-hot",
+      "b": "both-hot",
+      "count": 2,
+      "note": "coupling observed"
+    },
+    {
+      "a": "both-hot",
+      "b": "sink-hot",
+      "count": 1,
+      "note": "coupling observed"
+    }
+  ],
+  "existingSkills": [
+    "boundary",
+    "field",
+    "harvest",
+    "release-docs",
+    "review"
+  ],
+  "searchField": {
+    "state": "sink",
+    "directive": "focus",
+    "div": -54.784,
+    "curl": 4.618
+  },
+  "skillCount": 5
+}

@@ -1,3 +1,5 @@
-{"version": 2, "width": 80, "height": 24, "timestamp": 1783533976, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop mcp"}
-[0.00561, "o", "### bebop mcp\r\n"]
-[1.194087, "o", "  ◈ Bebop MCP server starting on stdio (JSON-RPC 2.0). Close stdin to stop.\r\n"]
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537929, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop mcp"}
+[0.005114, "o", "### bebop mcp\r\n"]
+[0.86669, "o", "\u001b[1G"]
+[0.86676, "o", "\u001b[0K"]
+[1.226533, "o", "\u001b[38;2;70;176;164m  ◈ Bebop MCP server starting on stdio (JSON-RPC 2.0). Close stdin to stop.\u001b[0m\r\n"]

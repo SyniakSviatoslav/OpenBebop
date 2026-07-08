@@ -37,12 +37,15 @@ printf '{\n  "model": "anthropic/claude-3.5-haiku"\n}\n' > "$REPO/bebop.json"
 INNER=$(mktemp /tmp/rec-inner.XXXXXX.sh)
 cat > "$INNER" <<EOF
 #!/usr/bin/env bash
-export NO_ANIM=1
+# NOTE: NO_ANIM is intentionally NOT set — asciinema allocates a PTY (isTTY=true) so the real
+# launch/theme animation renders. Recording must show the actual bebop style, not a flat version.
+# NOTE: do NOT pipe stdout through head/sed/tee — that makes node's stdout a PIPE (isTTY=false) and
+# silently disables animation. timeout caps servers; agg handles long casts.
 cd "$REPO"
 echo "### bebop $ARGS"
 sleep 0.6
-# hard cap so servers (e.g. mcp) don't hang the recording forever
-timeout 12 npx tsx bebop.ts $ARGS 2>&1 | head -22
+# hard cap so servers (e.g. mcp) don't hang the recording forever; NO pipe on stdout (keeps the TTY)
+timeout 12 npx tsx bebop.ts $ARGS 2>&1
 sleep 1.0
 EOF
 chmod +x "$INNER"

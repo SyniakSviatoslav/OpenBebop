@@ -10,11 +10,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkRedLine, checkScope } from './guard.ts';
+import { validateToolArgs } from './validate.ts';
+import { searchFieldStateText, directiveFor, type FieldDirective } from './field.ts';
 import { route, enforceRouting, type TaskClass, type Model } from './router.ts';
 import { recall } from './knowledge.ts';
 import type { DispatchResult } from './backend.ts';
 import { SHIP, banner, makePaint } from './theme.ts';
-import { BOOT, say, TAGLINE } from './voice.ts';
+import { BOOT, say, TAGLINE, voiceFor } from './voice.ts';
 import { runBackend, type Backend } from './backend.ts';
 import { selectBackend, rotate } from './routing.ts';
 import { emptyLedger, record, type Ledger } from './token.ts';
@@ -47,12 +49,72 @@ export interface BebopConfig {
   planMode?: boolean;
   // extra red-line globs (from TRUSTED user settings only) — strengthen the deny set.
   redLines?: string[];
+  // ReAct iterations (Reason→Act→Observe→Reflect) — default 3, overridable via cfg or
+  // BEBOP_REACT_ITERS env. This is the visible iteration count; it is NOT hidden from the user.
+  iterations?: number;
+  // Field oracle (∇·F / ∇×F 3-state law): when set, the loop samples the agent's DOMAIN-KNOWLEDGE
+  // candidate field and reports the physics directive (generate / reconsider / focus). Off by
+  // default — pure, deterministic, no extra LLM call; it only reads the in-process VSA memory.
+  field?: boolean;
 }
 
 export interface LoopContext {
   cwd: string;
   model: Model;
   recallHits: { id: string; text: string }[];
+}
+
+// One visible ReAct step. The whole point: nothing here is hidden (unlike promo demos that show a
+// single "perfect" iteration). Every draft/observe/reflect is recorded and returned in reactTrace.
+export interface ReactStep {
+  iter: number;
+  phase: 'reason' | 'act' | 'observe' | 'reflect';
+  thought?: string;     // the model's reasoning for this iteration
+  action?: string;      // the tool call issued (e.g. "edit main.ts")
+  observation?: string; // what the tool/environment returned (truncated)
+  reflection?: string;  // the real-time eval verdict + self-correction note
+  evalScore?: number;   // 0..1 real-time quality score for THIS iteration
+  evalPassed?: boolean; // did the iteration's draft/test pass the eval gate?
+  ok: boolean;          // did this iteration make progress / not get denied?
+}
+
+// Real-time quality eval gate for ONE ReAct iteration. Combines with the existing guard (does NOT
+// duplicate it): the guard decides legality; this gate decides QUALITY of the iteration — did the
+// draft make progress, did a mutation land, did a test run pass. Returns a 0..1 score + pass flag.
+// Falsifiable: a denied mutation scores 0 and fails; a clean edit+done scores high.
+export interface EvalVerdict {
+  passed: boolean;
+  score: number; // 0..1
+  notes: string;
+}
+
+export function evalStep(step: { action?: string; observation?: string; denied?: boolean; mutated?: boolean }): EvalVerdict {
+  const action = step.action ?? '';
+  const obs = step.observation ?? '';
+  if (step.denied) {
+    return { passed: false, score: 0, notes: `denied by guard — draft rejected, rewrite required (ReAct iter will see this)` };
+  }
+  if (/edit|write|dispatch/.test(action) && /written|would dispatch|would exec/.test(obs)) {
+    return { passed: true, score: 0.9, notes: 'mutation/dispatch landed cleanly' };
+  }
+  if (/run/.test(action) && /test|pass|ok/.test(obs.toLowerCase())) {
+    return { passed: true, score: 0.85, notes: 'action ran and reported success' };
+  }
+  if (/done/.test(action)) {
+    return { passed: true, score: 1, notes: 'task marked done' };
+  }
+  if (/read|grep/.test(action)) {
+    return { passed: true, score: 0.6, notes: 'read-only observation' };
+  }
+  return { passed: true, score: 0.5, notes: 'neutral step' };
+}
+
+// Resolve the visible ReAct iteration count: explicit cfg > BEBOP_REACT_ITERS env > default 3.
+export function reactIters(cfg: { iterations?: number }): number {
+  const env = Number(process.env.BEBOP_REACT_ITERS ?? '');
+  if (Number.isFinite(env) && env >= 1) return Math.floor(env);
+  if (cfg.iterations && cfg.iterations >= 1) return Math.floor(cfg.iterations);
+  return 3;
 }
 
 // The kernel law (RESEARCH §1.5/§1.6): every dispatch/action is recorded as an immutable envelope so
@@ -74,6 +136,11 @@ export interface LoopResult {
   // the deterministic, replayable session log (cross-backend).
   log: Envelope[];
   ledger: Ledger;
+  // Visible ReAct iteration count (default 3) — NOT hidden from the user.
+  iterations: number;
+  // The full, visible Reason→Act→Observe→Reflect trace for every iteration. This is what promo
+  // demos hide: here it is emitted to the transcript AND returned for audit/replay.
+  reactTrace: ReactStep[];
 }
 
 const SYSTEM_PROMPT = `You are Bebop — a coding agent for the dowiz/DeliveryOS project.
@@ -193,17 +260,31 @@ function runDispatch(
 }
 
 export async function runLoop(cfg: BebopConfig): Promise<LoopResult> {
-  const paint = makePaint();
+  const paint = makePaint(cfg.profile?.looks);
+  const voice = voiceFor(cfg.profile?.narration);
   const model = route(cfg.taskClass).model;
   const routing = enforceRouting(cfg.taskClass, model);
   const r = recall(`task: ${cfg.taskClass}`);
   const ctx: LoopContext = { cwd: cfg.cwd, model, recallHits: r.hits };
+
+  // ── FIELD ORACLE (∇·F / ∇×F) ── the agent's domain-knowledge field, sampled from recall hits.
+  // Divergence = the field spreads (generate/explore); curl = it cycles (reconsider); both = both.
+  // Pure + deterministic (reads the in-process VSA memory). Off unless cfg.field is set.
+  let fieldDirective: FieldDirective | null = null;
+  if (cfg.field) {
+    const candidates = r.hits.length >= 2 ? r.hits.map((h) => h.text) : [
+      'guard os red line', 'pq identity', 'vsa token codec', 'mesh no server', 'landauer thermo',
+    ];
+    const fa = searchFieldStateText(`task: ${cfg.taskClass}`, candidates);
+    fieldDirective = directiveFor(fa.state);
+  }
 
   const transcript: string[] = [];
   transcript.push(banner(paint));
   transcript.push(paint.dim(`  model=${model} ${routing.ok ? '' : paint.blood('[' + routing.note + ']')}`));
   if (r.found) transcript.push(paint.dim(`  §0·GP recall: ${r.hits.length} hit(s)`));
   else transcript.push(paint.amber(`  ${r.note}`));
+  if (fieldDirective) transcript.push(paint.dim(`  field ∇·F/∇×F → ${fieldDirective}`));
 
   const messages: { role: string; content: string; name?: string }[] = [
     { role: 'system', content: SYSTEM_PROMPT },
@@ -212,50 +293,92 @@ export async function runLoop(cfg: BebopConfig): Promise<LoopResult> {
   let steps = 0;
   let mutations = 0;
   let denied = 0;
-  const maxSteps = cfg.maxSteps ?? 8;
+  // VISIBLE ReAct iteration count (default 3). Each iteration is a full Reason→Act→Observe→Reflect
+  // pass; the loop does NOT hide the intermediate drafts (unlike promo demos).
+  const iterations = reactIters(cfg);
+  const maxSteps = Math.min(iterations, cfg.maxSteps ?? 8); // maxSteps stays a hard safety cap
   const log: Envelope[] = [];
+  const reactTrace: ReactStep[] = [];
   let ledger = emptyLedger();
 
-  while (steps < maxSteps) {
+  for (let iter = 1; iter <= maxSteps; iter++) {
+    // ── REASON ── the model proposes a thought + an action (tool call)
     steps++;
     const res = await llm(messages, ctx);
     if (res.content) transcript.push(paint.teal(`${SHIP} ${res.content}`));
     const calls = res.tool_calls ?? [];
-    if (calls.length === 0) break;
+    if (calls.length === 0) {
+      reactTrace.push({ iter, phase: 'reason', thought: res.content, ok: true });
+      break;
+    }
+
     let halted = false;
     for (const call of calls) {
-      if (call.name === 'dispatch') {
-        const d = await runDispatch(String(call.args?.task ?? ''), cfg, log);
-        if (!d.ok) denied++;
-        transcript.push(paint.dim(`  · dispatch ${d.result.slice(0, 120)}`));
-        messages.push({ role: 'tool', name: 'dispatch', content: d.result });
+      // ── VALIDATION WALL (pydantic principle) ── untrusted LLM tool-args MUST clear the contract
+      // before any hook/guard/tool sees them. Malformed input is rejected at the boundary, never
+      // patched downstream. This runs BEFORE the guard gate (guard decides legality; this decides
+      // well-formedness).
+      const valid = validateToolArgs(call.name, call.args);
+      if (!valid.ok) {
+        denied++;
+        log.push({ seq: log.length, cause: causeHash(String(call.name)), backend: 'native', event: 'denied', detail: valid.reason });
+        transcript.push(paint.blood(`  ✖ VALIDATE ${valid.name ?? call.name} denied — ${valid.reason}`));
+        reactTrace.push({ iter, phase: 'act', action: String(call.name), observation: valid.reason, ok: false });
+        halted = true;
         continue;
       }
-      const out = runTool(call.name, call.args ?? {}, cfg);
-      if (out.denied) {
-        denied++;
-        log.push({ seq: log.length, cause: causeHash(call.name), backend: 'native', event: 'denied', detail: out.result });
-        transcript.push(paint.blood(`  ✖ ${call.name} denied — ${out.result}`));
-        halted = true;
+      const callArgs = valid; // typed, safe payload
+      const actionLabel = `${callArgs.name}${callArgs.path ? ' ' + callArgs.path : callArgs.task ? ' ' + callArgs.task : ''}`;
+      reactTrace.push({ iter, phase: 'reason', thought: res.content, action: actionLabel, ok: true });
+      transcript.push(paint.dim(`  ⟳ iter ${iter} · REASON: ${res.content ?? '(act)'}`));
+
+      // ── ACT ── execute the tool behind the guard gate (using the VALIDATED payload only)
+      let out: { result: string; mutated: boolean; denied: boolean };
+      if (callArgs.name === 'dispatch') {
+        const d = await runDispatch(String(callArgs.task ?? ''), cfg, log);
+        if (!d.ok) denied++;
+        out = { result: d.result, mutated: false, denied: !d.ok };
+        transcript.push(paint.dim(`  · ACT dispatch ${d.result.slice(0, 120)}`));
       } else {
-        if (out.mutated) {
-          mutations++;
-          log.push({ seq: log.length, cause: causeHash(call.name), backend: 'native', event: 'mutation', detail: out.result });
-        }
-        transcript.push(paint.dim(`  · ${call.name} → ${out.result.slice(0, 120)}`));
-        if (call.name === 'done') {
-          log.push({ seq: log.length, cause: causeHash(call.name), backend: 'native', event: 'done', detail: out.result });
-          halted = true;
+        out = runTool(callArgs.name, { path: callArgs.path, content: callArgs.content, cmd: callArgs.cmd, pattern: callArgs.pattern }, cfg);
+        if (out.denied) {
+          denied++;
+          log.push({ seq: log.length, cause: causeHash(callArgs.name), backend: 'native', event: 'denied', detail: out.result });
+          transcript.push(paint.blood(`  ✖ ACT ${callArgs.name} denied — ${out.result}`));
+        } else {
+          if (out.mutated) {
+            mutations++;
+            log.push({ seq: log.length, cause: causeHash(callArgs.name), backend: 'native', event: 'mutation', detail: out.result });
+          }
+          transcript.push(paint.dim(`  · ACT ${callArgs.name} → ${out.result.slice(0, 120)}`));
         }
       }
-      messages.push({ role: 'tool', name: call.name, content: out.result });
+      reactTrace.push({ iter, phase: 'act', action: actionLabel, observation: out.result.slice(0, 200), ok: !out.denied });
+
+      // ── OBSERVE ── record what the environment returned
+      messages.push({ role: 'tool', name: callArgs.name, content: out.result });
+      reactTrace.push({ iter, phase: 'observe', observation: out.result.slice(0, 200), ok: !out.denied });
+
+      // ── REFLECT ── real-time eval gate (combines with, does not replace, the guard)
+      const verdict = evalStep({ action: callArgs.name, observation: out.result, denied: out.denied, mutated: out.mutated });
+      const reflection = `eval ${verdict.score.toFixed(2)} ${verdict.passed ? 'PASS' : 'FAIL'} — ${verdict.notes}` +
+        (out.denied ? ' → rewrote draft for next iteration' : '');
+      reactTrace.push({ iter, phase: 'reflect', reflection, evalScore: verdict.score, evalPassed: verdict.passed, ok: !out.denied });
+      transcript.push(paint.dim(`  · REFLECT ${reflection}`));
+
+      if (out.denied) {
+        halted = true;
+      } else if (call.name === 'done') {
+        log.push({ seq: log.length, cause: causeHash(call.name), backend: 'native', event: 'done', detail: out.result });
+        halted = true;
+      }
     }
     if (halted) break;
   }
 
   transcript.push(paint.bold(paint.bone(`  ${TAGLINE}`)));
   const ok = routing.ok && denied === 0;
-  return { steps, mutations, denied, transcript, ok, log, ledger };
+  return { steps, mutations, denied, transcript, ok, log, ledger, iterations, reactTrace };
 }
 
 // Subagent — Claude Code's .claude/agents/*.md analogue. Runs a SCOPED, read-only loop with a

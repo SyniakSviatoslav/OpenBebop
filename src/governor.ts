@@ -221,8 +221,11 @@ export class Governor {
     if (this.volHistory.length > VH) this.volHistory.shift();
     this.anomaly = detectAnomaly(this.volHistory.slice(0, -1), s.volume, c.anomalyK ?? 3);
 
-    // thermodynamics: cost must clear the Landauer floor for the bits this volume erases
-    const floor = landauerFloor(bitsErased(s.volume));
+    // thermodynamics: cost is in RESOURCE-UNITS; bitsErased is a lower bound on the units that
+    // MUST be spent to touch that volume. Cross-unit compare against Joules (landauerFloor) was a
+    // dimensional mismatch (F4 in the determinism handoff) — thinking isn't free, so you must spend
+    // ≥1 unit per bit erased. Stay in resource-unit space.
+    const floor = bitsErased(s.volume);
     this.thermoFloorHit = s.cost < floor;
 
     return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error });

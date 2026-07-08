@@ -5,6 +5,68 @@ All notable changes to Bebop are documented here. The format is based on
 [Verified-by-Math](./docs/ARCHITECTURE.md): every behavior change ships with a falsifiable
 RED+GREEN test.
 
+## [Unreleased]
+
+### Fixed — honesty & verification debt (operator directive 2026-07-08)
+- **`recall` now returns REAL payloads from the bundled living memory** (`src/memory.ts`: VSA
+  hypervectors + graph spreading-activation, with forgetting + persisted snapshot). Previously it
+  returned truncated node ids. Verified: `bebop recall "kernel law"` prints full payload text + score.
+- **Bundled VSA vector recall is now honest about its weakness.** The char-codebook hypervector is a
+  *weak* associative signal (bipolar noise floor is high — gibberish scored ~0.74). Graph
+  spreading-activation is the primary, deterministic recall path; vector `nearest()` is a fallback
+  used ONLY when graph finds nothing, gated at sim>0.85 so gibberish yields 0 hits. RED-proved in
+  `src/knowledge.test.ts` (gibberish → no meaningful corpus payload surfaced).
+- **Real customization wired (was dead).** `bebop init` writes `narration` + `looks` axes; they now
+  actually drive the CLI: `voice.ts` `voiceFor(narration)` changes the co-pilot voice (plain/corporate-killer
+  strip all wit; bebop/sarcastic keep dry cosmo-noir), and `theme.ts` `makePaint(looks)` changes the
+  primary accent (bebop/claude/opencode/codex, or `BEBOP_THEME_ACCENT` for custom). `settings.ts`
+  now reads both axes from the user profile. Verified by `src/theme.test.ts` + `src/voice.test.ts`.
+- **README rewritten — half the size, unique-first.** Lead sentence names the advantages NOT done by
+  other agents yet: deterministic Rust/WASM guard kernel (bebop core), post-quantum node identity (PSQ),
+  living VSA memory, freestyle self-evolving soul, real narration + looks, local-first privacy. The
+  "vs the others" section is now a combiner-tool framing that credits competitors' strengths.
+- **Recorder fixed (honesty bug) + ALL 18 feature GIFs re-recorded with real animation.**
+  `scripts/record-feature.sh` no longer forces `NO_ANIM=1` AND no longer pipes stdout through `head`
+  (the pipe made node's stdout a PIPY → isTTY=false → animation silently disabled, the real cause of
+  flat GIFs). asciinema allocates a PTY, so `playLaunch` now renders; `feat-boot.gif` went from 2
+  frames (flat) to 8 frames (animated) with real `\u001b[1G\u001b[0K` spinner redraws + teal ◈ glyph.
+  Verified: `grep '"o"' docs/footage/feat-boot.cast` shows cursor-move/clear-line animation frames.
+- **README "Bebop vs the others" rewritten as a combiner tool** (not a replacement), crediting
+  competing agents' real strengths, less jargon, more verified facts. No ✅/❌ superiority matrix.
+
+### Added — doc-claim self-correction layer (the anti-falsification guardrail)
+- **`scripts/verify-doc-claims.mjs`** turns every load-bearing README/doc claim into a FALSIFIABLE
+  check run against live code: recorder must not force `NO_ANIM=1`; launch animation must be wired +
+  TTY-gated; `settings.ts` must read `narration`+`looks` and be tested; PSQ identity must have a real
+  test; `recall` must return real payloads; README's test count must match `npm test`; no ✅/❌
+  superiority matrix vs competitors; wiki claim must be honest. Exit 1 on any unbacked claim.
+- **Wired into `bebop docs check` + `bebop docs build`** — a non-zero verifier status blocks release.
+- **`.git/hooks/pre-commit` runs it on EVERY commit** — a doc claim not backed by live proof refuses
+  the commit. Proven falsifiable: reintroducing `NO_ANIM=1` or injecting a ✅/❌ matrix makes it RED.
+- **Standing rule added to `docs/RULES.md`** codifying the layer so it is never dropped.
+- **Wiki/visualization gap acknowledged** — in-repo `docs/features/*` are thin; the richer
+  §0·GP retriever + VSA codec are NOT bundled (they live in the dowiz monorepo). `bebop docs check`
+  reports this honestly rather than claiming a populated wiki.
+
+### Added — ReAct agentic loop (Reason→Act→Observe→Reflect), visible by default
+- **`runLoop` rewritten as a true ReAct loop** (`src/loop.ts`). Every agentic action now goes through
+  explicit `Reason → Act → Observe → Reflect`: the `thought`, the `action` taken, the `observation`
+  (Ok/Err), and the `reflection` are all recorded. The loop prints each iteration to the transcript
+  (TTY-gated; `NO_ANIM=1` still shows the structured lines) so the retry is NEVER hidden as a single
+  "perfect" step the way promo demos fake it.
+- **Iterations are real + configurable.** `BebopConfig.iterations` (default **3**), overridable at
+  runtime by `BEBOP_REACT_ITERS`. Proven falsifiable: `loop.react.test.ts` asserts the count is honored
+  exactly (1 attempt does not allow a rewrite to land; 2 does) and `verify-doc-claims.mjs` §I turns RED
+  if the default is broken.
+- **Real-time eval gate inside the loop** (`evalStep`): each iteration is scored on draft/test/observe/
+  reflect quality (`EvalVerdict { passed, score, notes }`). The guard checks legality; `evalStep` checks
+  QUALITY — they combine, so "didn't crash" is not mistaken for "correct". The verdict is recorded in the
+  trace.
+- **`LoopResult` now carries `iterations` + `reactTrace`** (`ReactStep[]`) — the full audit trail,
+  returned to callers and surfaced in transcripts.
+- **Proof**: `src/loop.react.test.ts` (5 RED+GREEN tests) + `scripts/verify-doc-claims.mjs` §I. Total
+  `npm test` is now **181** (was 176).
+
 ## [0.2.0] — 2026-07-08
 
 ### Added — agent parity (reverse-engineered from Claude Code + Hermes public surface)

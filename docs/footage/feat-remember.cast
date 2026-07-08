@@ -1,3 +1,7 @@
-{"version": 2, "width": 80, "height": 24, "timestamp": 1783533776, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop remember probe :: a tiny test concept"}
-[0.00444, "o", "### bebop remember probe :: a tiny test concept\r\n"]
-[1.223303, "o", "  ✓ remembered \"probe\" → d48281bb7105 (living memory size=14)\r\n"]
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537869, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop remember \"doc claim :: verified by test\""}
+[0.010507, "o", "### bebop remember doc claim :: verified by test\r\n"]
+[0.849372, "o", "\u001b[1G"]
+[0.849441, "o", "\u001b[0K"]
+[1.22832, "o", "\u001b[38;2;70;176;164m  ✓ remembered \"doc claim\" → e87dd728e17d (living memory size=14)\u001b[0m\r\n"]
+[1.253184, "o", "\u001b[1G\u001b[0K⠙"]
+[1.25425, "o", "\u001b[1G\u001b[0K"]
