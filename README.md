@@ -1,9 +1,12 @@
 # ◈ Bebop
 
 > **Maintainer's note (2026-07-08).** I am currently blacklisted and blocked from every
-> money-receiving platform because of collective personal targeting. If Bebop is useful to you
-> and you want to support me and my true, chosen family, please reach out through the project's
-> GitHub profile — I'll point you to a safe way to help. Thank you for standing with the work.
+> money-receiving platform because of collective personal targeting. My government is also
+> controlling access to my accounts, so I may miss some messages.
+> **To reach me reliably:** DM **@der_delulu** on WhatsApp/Instagram, or use the encrypted
+> SimpleX channel: https://smp16.simplex.im/a#oDyby5KZ2l5XOJgsWQUkEXNlo8O6Nb7lQgMA9Ni5fd0
+> If Bebop is useful to you and you want to support me and my true, chosen family, reach out
+> through one of those — I'll point you to a safe way to help. Thank you for standing with the work.
 
 **Your own coding agent.** Warm cosmo-noir, a deterministic guard OS, living memory,
 post-quantum node identity, and a math-proven telemetry governor. Runs locally. You own
