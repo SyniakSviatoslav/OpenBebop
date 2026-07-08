@@ -1,5 +1,10 @@
 # ◈ Bebop
 
+> **Maintainer's note (2026-07-08).** I am currently blacklisted and blocked from every
+> money-receiving platform because of collective personal targeting. If Bebop is useful to you
+> and you want to support me and my true, chosen family, please reach out through the project's
+> GitHub profile — I'll point you to a safe way to help. Thank you for standing with the work.
+
 **Your own coding agent.** Warm cosmo-noir, a deterministic guard OS, living memory,
 post-quantum node identity, and a math-proven telemetry governor. Runs locally. You own
 the ship, the kitchen, and the cut.
