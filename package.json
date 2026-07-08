@@ -1,0 +1,36 @@
+{
+  "name": "bebop-agent",
+  "version": "0.1.0",
+  "description": "Bebop — your own coding agent. Warm cosmo-noir, a deterministic guard OS, living memory, post-quantum node identity, and a math-proven telemetry governor. AGPL-3.0.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "bin": {
+    "bebop": "bebop.ts"
+  },
+  "files": [
+    "bebop.ts",
+    "src"
+  ],
+  "scripts": {
+    "boot": "tsx bebop.ts boot",
+    "start": "tsx bebop.ts",
+    "test": "node --test --import tsx src/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "recall": "tsx bebop.ts recall"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
+    "@noble/post-quantum": "^0.6.1",
+    "better-auth": "^1.6.23"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

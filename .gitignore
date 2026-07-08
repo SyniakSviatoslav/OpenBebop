@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build / cache
+*.tsbuildinfo
+.DS_Store
+
+# Bebop runtime state (NEVER commit your local memory / vault / sync DB)
+.bebop/
+memory.json
+*.vault.json
+*.sqlite
+*.db
+
+# Logs
+*.log
+
+# Env / secrets — Bebop NEVER reads cloud keys from files; keep them out of the repo
+.env
+.env.*
+*.pem
+*.key
