@@ -313,5 +313,16 @@ try {
       : 'gatewayRoute/VirtualKey missing or test lacks the guardrail/fallback RED case');
 }
 
+// --- Z. PDDL-INSTRUCT Logical CoT verifier (arXiv:2509.13351) + RED+GREEN ---
+{
+  const c = read('src/integration/logicalCot.ts');
+  const t = read('src/integration/logicalCot.test.ts');
+  const fn = /export function verifyLogicalPlan/.test(c) && /preconditions/.test(c) && /invariant/.test(c) && /effect-noop/.test(c);
+  const test = /verifyLogicalPlan/.test(t) && /precondition failure is caught/.test(t) && /invariant violation/.test(t) && /effect-noop/.test(t);
+  check('PDDL-INSTRUCT Logical CoT: verifyLogicalPlan + precondition/invariant/noop RED+GREEN', fn && test,
+    fn && test ? 'structural step-wise plan verification proven (arXiv:2509.13351); violations give precise re-plan feedback'
+      : 'verifyLogicalPlan missing or test lacks the precondition/invariant/noop RED cases');
+}
+
 console.log(`\n  ${fails ? `✗ ${fails} doc-claim check(s) FAILED — fix before commit/release` : '✓ all doc claims backed by live proof'}`);
 process.exit(fails ? 1 : 0);

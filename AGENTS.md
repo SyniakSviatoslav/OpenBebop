@@ -33,6 +33,9 @@ Hermes, Codex, OpenCode, Aider, or Bebop itself) working in this repo.
   `authority` to the actuator plane; a symbolic arbiter (`clamp`, factor-kill, resonance-cap,
   safe-state floor, poison guard, cycle/PCA breach gate) sits between them and **mathematically
   cannot emit an out-of-contract command**. See `docs/design/adr-003-neuro-symbolic-gate-2026-07-09.md`.
+  Plan-step validity is verified structurally via Logical CoT (PDDL-INSTRUCT, arXiv:2509.13351):
+  `src/integration/logicalCot.ts` proves each step's preconditions/effects/invariants before admission —
+  see `docs/design/adr-004-logical-cot-pddl-instruct-2026-07-09.md`.
 - **Where it adds EV**: stops advisor hallucinations from reaching actuators; the empirical proof the
   gate works is `bridgeMetrics().hallucinationRate` (N7) — how often the kernel overrode the advisor.
 - **Where it does NOT add EV**: making the advisor "smarter" via runtime RLHF/PPO. Sovereign-core
@@ -68,7 +71,7 @@ documentation, not gospel; verify non-trivial claims against code.
 ## Verify before claiming done
 - `npm run verify` — one-shot full gate: typecheck + tests + doc-claim honesty + falsifiable-proof.
 - `npm run boot` — guard-OS self-certification (must go RED to be trusted).
-- `npm test` — 481 falsifiable tests.
+- `npm test` — 486 falsifiable tests.
 - `npm run typecheck` — clean.
 - After any doc change: `bebop docs check`.
 - `node scripts/verify-doc-claims.mjs` — doc claims must match live code (pre-commit + CI).
