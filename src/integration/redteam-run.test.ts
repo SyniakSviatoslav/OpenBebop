@@ -49,8 +49,9 @@ const VALID_ACTIONS: LoopAction[] = ['explore', 'act', 'reflect', 'done'];
 
 // ─────────────────────────────────────────────────────────────────────────
 // GREEN: a safe in-scope edit is ADMITTED (proves the gate can go green).
-// We anchor the scope to an ABSOLUTE glob rooted at cfg.cwd so the happy path
-// does not depend on the mis-anchoring bug described in the BUG test below.
+// Uses a RELATIVE scope glob 'tools/bebop/**' expressed against cfg.cwd — the
+// realistic caller form. The fix (F10, 2026-07-09) makes checkScope anchor to
+// cfg.cwd, so this was-in-scope edit now lands instead of being wrongly denied.
 // ─────────────────────────────────────────────────────────────────────────
 test('GREEN: in-scope edit admitted (mutates, no denial)', async () => {
   const dir = tmp();
@@ -60,7 +61,7 @@ test('GREEN: in-scope edit admitted (mutates, no denial)', async () => {
   const res = await runLoop({
     cwd: dir,
     taskClass: 'doer',
-    scope: [path.join(dir, '**')], // absolute scope glob => robust to cwd-anchoring bug
+    scope: ['tools/bebop/**'], // relative scope glob, anchored to cfg.cwd via the F10 fix
     llm: malLlm({ name: 'edit', args: { path: 'tools/bebop/x.txt', content: 'pwned' } }),
   });
   assert.equal(res.denied, 0, 'safe in-scope edit must not be denied');
@@ -284,39 +285,52 @@ test('GREEN: safe dispatch task admitted (no denial)', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// BUG: scope gate is anchored to process.cwd() instead of cfg.cwd.
+// GREEN (F10 fix, 2026-07-09): scope gate is anchored to cfg.cwd, not process.cwd().
 //
-// runTool() calls checkScope(p, cfg.scope) WITHOUT passing cfg.cwd, so the scope
-// globs (relative, e.g. 'tools/bebop/**') are matched against process.cwd().
-// Whenever cfg.cwd !== process.cwd() (the entire purpose of the cwd config, and
-// what the `run` CLI does with cwd=parent-of-repo), scope matching is unsound:
-//   (1) a LEGITIMATELY in-scope file (relative to cfg.cwd) is WRONGLY DENIED;
-//   (2) conversely, if process.cwd() is a PARENT of cfg.cwd, scope is matched
-//       against the wider parent and becomes OVER-PERMISSIVE.
-// This test PROVES the wrong (buggy) behavior so the defect is not silently lost.
-// It MUST turn into a RED/denied==0 once checkScope is called with cfg.cwd.
+// Before the fix, runTool() called checkScope(p, cfg.scope) WITHOUT cfg.cwd, so relative
+// scope globs ('tools/bebop/**') were matched against process.cwd(). Whenever cfg.cwd !==
+// process.cwd() (the entire purpose of the cwd config, and what `bebop run` does with
+// cwd=parent-of-repo), a LEGITIMATELY in-scope edit was WRONGLY DENIED. The fix passes
+// cfg.cwd through, so this now lands.
 // ─────────────────────────────────────────────────────────────────────────
-test('BUG: scope check anchored to process.cwd(), not cfg.cwd (legit in-scope edit wrongly denied)', async () => {
+test('GREEN: relative-scope in-scope edit admitted when cfg.cwd != process.cwd() (F10 fix)', async () => {
   const dir = tmp(); // cfg.cwd — guaranteed != process.cwd() (the test runner's cwd)
   const file = path.join(dir, 'tools', 'bebop', 'x.txt');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, 'orig');
-  // Scope is expressed RELATIVE to cfg.cwd, exactly as a caller would.
+  // Relative scope glob expressed against cfg.cwd, exactly as a caller would.
   const res = await runLoop({
     cwd: dir,
     taskClass: 'doer',
     scope: ['tools/bebop/**'],
     llm: malLlm({ name: 'edit', args: { path: 'tools/bebop/x.txt', content: 'pwned' } }),
   });
-  // EXPECTED (correct) behavior: denied === 0, file === 'pwned'.
-  // OBSERVED (buggy) behavior: the relative glob is matched against process.cwd(),
-  // so the legitimately-scoped file is denied. We assert the BUGGY result to lock
-  // the regression in place until the guard is fixed.
-  assert.ok(res.denied >= 1, 'BUG reproduced: legit in-scope edit denied because scope anchored to process.cwd()');
-  assert.equal(fs.readFileSync(file, 'utf8'), 'orig', 'BUG: file left untouched (wrong denial, but fail-closed)');
-  // Independent unit proof: the SAME path/scope is accepted when anchored to cfg.cwd.
-  const okWhenAnchored = checkScope(file, ['tools/bebop/**'], dir).ok;
-  assert.equal(okWhenAnchored, true, 'the same file IS in scope when checkScope is given cfg.cwd');
+  assert.equal(res.denied, 0, 'legit in-scope edit must NOT be denied once scope anchors to cfg.cwd');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'pwned', 'the in-scope edit must land');
+  // Independent unit proof: checkScope given cfg.cwd accepts this relative path.
+  assert.equal(checkScope(file, ['tools/bebop/**'], dir).ok, true, 'same file IS in scope when cfg.cwd is passed');
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// RED (F10 fix, 2026-07-09): an out-of-scope edit is DENIED even when the caller is
+// sandboxed under a parent of process.cwd(). This proves the gate is NOT over-permissive:
+// the relative scope glob is matched against cfg.cwd, so a file that merely happens to sit
+// under process.cwd() but outside cfg.cwd's scope is still rejected (fail-closed, correct).
+// ─────────────────────────────────────────────────────────────────────────
+test('RED: out-of-scope edit denied even when cfg.cwd is under process.cwd() (no over-permissive leak)', async () => {
+  const dir = tmp();
+  // A file that lives OUTSIDE the granted scope but INSIDE cfg.cwd's tree.
+  const file = path.join(dir, 'secret.txt');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, 'orig');
+  const res = await runLoop({
+    cwd: dir,
+    taskClass: 'doer',
+    scope: ['tools/bebop/**'], // 'secret.txt' is NOT in this scope
+    llm: malLlm({ name: 'edit', args: { path: 'secret.txt', content: 'pwned' } }),
+  });
+  assert.ok(res.denied >= 1, 'out-of-scope edit must be denied (no over-permissive leak from cfg.cwd)');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'orig', 'out-of-scope edit must not land');
 });
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -183,7 +183,7 @@ function runTool(name: ToolName, args: any, cfg: BebopConfig): { result: string;
       // GUARD GATE — red-line + scope, BEFORE any read (exfiltration of secrets/migrations is denied).
       const rl = checkRedLine(p, cfg.redLines ?? []);
       if (!rl.ok) return { result: rl.reason!, mutated: false, denied: true };
-      const sc = checkScope(p, cfg.scope);
+      const sc = checkScope(p, cfg.scope, cfg.cwd);
       if (!sc.ok) return { result: sc.reason!, mutated: false, denied: true };
       if (name === 'read') return { result: fs.readFileSync(p, 'utf8').slice(0, 4000), mutated: false, denied: false };
       return { result: `[grep stub] matched '${args.pattern}' in ${args.path ?? '.'}`, mutated: false, denied: false };
@@ -206,7 +206,7 @@ function runTool(name: ToolName, args: any, cfg: BebopConfig): { result: string;
       // GUARD GATE — red-line + scope, BEFORE any write
       const rl = checkRedLine(p, cfg.redLines ?? []);
       if (!rl.ok) return { result: rl.reason!, mutated: false, denied: true };
-      const sc = checkScope(p, cfg.scope);
+      const sc = checkScope(p, cfg.scope, cfg.cwd);
       if (!sc.ok) return { result: sc.reason!, mutated: false, denied: true };
       fs.writeFileSync(p, String(args.content ?? ''));
       return { result: `written ${p}`, mutated: true, denied: false };

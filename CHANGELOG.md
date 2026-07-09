@@ -4,6 +4,26 @@ All notable changes to Bebop are documented here. Format: keep it falsifiable �
 backed by a RED+GREEN test in `src/**/*.test.ts` (authoritative runner:
 `node --test --import tsx 'src/**/*.test.ts'`).
 
+## [0.3.3] — 2026-07-09 — "Red-team F10: scope gate cwd-anchoring fix"
+
+### Fixed
+- **Scope gate anchored to `process.cwd()` instead of `cfg.cwd` (loop + dispatch attack surface).**
+  `runTool()` in `src/loop.ts` called `checkScope(p, cfg.scope)` WITHOUT `cfg.cwd`, so relative
+  scope globs (`tools/bebop/**`) were matched against `process.cwd()`. Whenever `cfg.cwd !==
+  process.cwd()` — the entire purpose of the `cwd` config, and exactly what `bebop run` does
+  (`cwd: path.resolve(HERE,'..')`, i.e. the repo root is one level above the process cwd) — a
+  LEGITIMATELY in-scope edit was WRONGLY DENIED (fail-closed but broken), and if `process.cwd()`
+  were a parent of `cfg.cwd` the gate would go OVER-PERMISSIVE. Surfaced by the agent-driven
+  red-team subagent (loop/dispatch surface, left as a BUG, fixed here). Fix: pass `cfg.cwd` to
+  `checkScope` at both the read/grep and edit call sites.
+  - Tests: `redteam-run.test.ts` (GREEN relative-scope in-scope edit now admitted when
+    `cfg.cwd != process.cwd()`; RED out-of-scope edit still denied with no over-permissive leak).
+
+### Verification (fresh, on main)
+- `npm test` → 351 pass / 0 fail (v0.3.2 was 350). `pnpm run typecheck` → 0 errors.
+- Agent-driven red-team (3 subagents vs live CLI) is now fully RED+GREEN locked: F6/F7/F8/F9 (prior
+  release) + F10 (this release). No outstanding real weaknesses reported.
+
 ## [0.3.2] — 2026-07-09 — "Agent-driven red-team: 3 real bugs fixed, honest next-phase scaffolds"
 
 ### Fixed (each with a falsifiable RED+GREEN test)
