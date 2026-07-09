@@ -59,6 +59,7 @@
     "build": "cd crates/core && bash build.sh",
     "test": "node --test --import tsx $(find src -name '*.test.ts')",
     "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test && node scripts/verify-doc-claims.mjs && node scripts/guardrail-falsifiable-proof.mjs",
     "recall": "tsx bebop.ts recall"
   },
   "engines": {

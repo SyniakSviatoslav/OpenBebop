@@ -17,6 +17,10 @@ permissions:
 
 jobs:
   update-wiki:
+    # Fail-closed: this job is advisory (refreshes the agent wiki from diffs) and must NEVER
+    # redden a commit or block CI/merge. With OPENWIKI_API_KEY unset the job no-ops (if: false),
+    # and even if it is triggered and a step errors, continue-on-error keeps the suite green.
+    continue-on-error: true
     if: ${{ secrets.OPENWIKI_API_KEY != '' }}
     runs-on: ubuntu-latest
     env:

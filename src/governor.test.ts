@@ -7,6 +7,9 @@ import {
   Governor, pidStep, icir, spearman, loopResonance, landauerFloor, bitsErased,
   detectAnomaly, simulatePlant, clamp, type TelemetrySample,
 } from './governor.ts';
+import { pcaFit } from './integration/analytics/matrix.ts';
+import { DEFAULT_PCA_ANOMALY } from './integration/analytics/anomaly.ts';
+import { DEFAULT_CYCLE_CONSISTENCY } from './integration/analytics/cycle-consistency.ts';
 
 const baseCfg = {
   kp: 1.4, ki: 0.22, kd: 1.5, iMin: -1, iMax: 1, uMin: 0, uMax: 1,
@@ -190,4 +193,89 @@ test('GREEN: governor overrides PID authority for a dead factor (kill-switch bea
   }
   // dead factor → authority must be floored regardless of PID
   assert.equal(state.authority, baseCfg.uMin);
+});
+
+// ── L5 ANALYTICS: PCA-reconstruction anomaly (flag-OFF; wired 2026-07-09) ──
+// The governor scores a multidimensional `features` vector against a calibrated
+// "normal" PCA model and flags sharp excursions via an adaptive EMA threshold.
+
+function pcaCfg(): any {
+  // normal manifold: 4-dim telemetry, 3 correlated dims + a low-variance noise dim
+  const win: number[][] = [];
+  for (let i = 0; i < 40; i++) {
+    const a = (i - 20) * 0.1;
+    win.push([a, a + 0.05, a * 0.9, ((i % 7) - 3) * 0.01]); // 4th = small noise
+  }
+  const model = pcaFit(win);
+  return { ...baseCfg, pcaAnomaly: { model, cfg: DEFAULT_PCA_ANOMALY } };
+}
+
+test('GREEN: governor with pcaAnomaly does NOT flag steady in-manifold telemetry', () => {
+  const g = new Governor(pcaCfg());
+  let flagged = false;
+  for (let k = 0; k < 12; k++) {
+    const st = g.step(sample({ features: [0.1, 0.15, 0.09, 0.05] }));
+    flagged = flagged || st.pcaAnomaly;
+  }
+  assert.equal(flagged, false, 'steady normal telemetry must not flag');
+});
+
+test('RED: governor with pcaAnomaly FLAGS an alien telemetry vector', () => {
+  const g = new Governor(pcaCfg());
+  // warm up EMA floor on normal data first
+  for (let k = 0; k < 10; k++) g.step(sample({ features: [0.1, 0.15, 0.09, 0.05] }));
+  const st = g.step(sample({ features: [1000, -1000, 500, -500] })); // off-manifold
+  assert.equal(st.pcaAnomaly, true, 'alien vector must flag the L5 analytics anomaly');
+});
+
+test('GREEN: governor WITHOUT pcaAnomaly config never sets pcaAnomaly (flag-OFF default)', () => {
+  const g = mk(); // baseCfg has no pcaAnomaly
+  let flagged = false;
+  for (let k = 0; k < 12; k++) {
+    const st = g.step(sample({ features: [100, -100, 50, -50] })); // would flag if on
+    flagged = flagged || st.pcaAnomaly;
+  }
+  assert.equal(flagged, false, 'pcaAnomaly must stay OFF unless explicitly configured');
+});
+
+// ── L5 analytics: symmetrical-loop / cycle-consistency (flag-OFF) ──
+
+function cycleCfg(): any {
+  // well-conditioned 3D window (PCA basis ≈ identity, not degenerate)
+  const win: number[][] = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+    [1, 1, 1],
+  ];
+  const model = pcaFit(win);
+  return { ...baseCfg, cycleConsistency: { model, cfg: DEFAULT_CYCLE_CONSISTENCY } };
+}
+
+test('GREEN: governor with cycleConsistency stays QUIET on steady in-manifold state', () => {
+  const g = new Governor(cycleCfg());
+  let broken = false;
+  for (let k = 0; k < 12; k++) {
+    const st = g.step(sample({ features: [0.5, 0.5, 0.5] }));
+    broken = broken || st.cycleBroken;
+  }
+  assert.equal(broken, false, 'steady normal state must not break the symmetrical loop');
+});
+
+test('RED: governor with cycleConsistency BREAKS when a state field is dropped (asymmetric refactor)', () => {
+  const g = new Governor(cycleCfg());
+  // warm up the EMA floor on clean data first
+  for (let k = 0; k < 10; k++) g.step(sample({ features: [0.5, 0.5, 0.5] }));
+  const st = g.step(sample({ features: [0.5, 0.5, 0] })); // feature 2 silently lost
+  assert.equal(st.cycleBroken, true, 'dropped field must break the symmetrical loop in the governor');
+});
+
+test('GREEN: governor WITHOUT cycleConsistency config never sets cycleBroken (flag-OFF default)', () => {
+  const g = mk(); // baseCfg has no cycleConsistency
+  let broken = false;
+  for (let k = 0; k < 12; k++) {
+    const st = g.step(sample({ features: [0.5, 0.5, 0] })); // would break if on
+    broken = broken || st.cycleBroken;
+  }
+  assert.equal(broken, false, 'cycleBroken must stay OFF unless explicitly configured');
 });

@@ -16,6 +16,10 @@ export interface TelemetrySample {
   actualQuality: number; // observed quality ∈ [0,1]
   cost: number; // resource units consumed this step
   volume: number; // throughput (tokens/actions) this step
+  /** Optional multidimensional telemetry vector for the PCA-analytics anomaly
+   *  path (flag-OFF). When present AND cfg.pcaAnomaly is set, the governor
+   *  scores this vector for "weirdness". Ignored otherwise. */
+  features?: number[];
 }
 
 export type FactorStatus = 'unknown' | 'healthy' | 'volatile' | 'dead';
@@ -27,6 +31,8 @@ export interface GovernorState {
   factorStatus: FactorStatus;
   resonanceRisky: boolean;
   anomaly: boolean;
+  pcaAnomaly: boolean; // L5 analytics (flag-OFF); true on adaptive-EMA excursion of the features vector
+  cycleBroken: boolean; // L5 analytics (flag-OFF); symmetry-loop breach (F(G(x))≠x)
   thermoFloorHit: boolean;
   error: number;
   poisoned?: boolean; // true when a non-finite sample was rejected (RED-TEAM fix 2026-07-09)
@@ -135,6 +141,9 @@ export function bitsErased(volume: number): number {
 
 // ── anomaly detection (operator priority: flag telemetry breaching estimated bounds) ──
 
+import { pcaAnomalyScore, type PcaAnomalyState } from './integration/analytics/anomaly.ts';
+import { cycleConsistencyGate, type CycleConsistencyGateState } from './integration/analytics/cycle-consistency.ts';
+
 export function detectAnomaly(history: number[], x: number, k = 3): boolean {
   if (history.length < 2) return false;
   const m = history.reduce((s, v) => s + v, 0) / history.length;
@@ -153,6 +162,25 @@ export interface GovernorConfig extends PIDConfig {
   plantM: number; plantB: number; samplePeriod?: number;
   anomalyK?: number;
   volHistoryLen?: number;
+  /** L5 ANALYTICS (2026-07-09, flag-OFF): PCA-reconstruction anomaly over a
+   *  multidimensional telemetry vector. When set, the governor scores the
+   *  incoming feature vector against a calibrated "normal" PCA model and
+   *  raises `pcaAnomaly` on an adaptive-EMA excursion. Off unless this is
+   *  provided. Deterministic — no RNG/training; PCA === linear autoencoder. */
+  pcaAnomaly?: {
+    model: import('./integration/analytics/anomaly.ts').PCA;
+    cfg: import('./integration/analytics/anomaly.ts').PcaAnomalyConfig;
+  };
+  /** L5 ANALYTICS (2026-07-09, flag-OFF): symmetrical-loop (cycle-consistency)
+   *  invariant over a state snapshot. When set, the governor round-trips the
+   *  `features` vector through PCA (Decompose→Reconstruct) and raises
+   *  `cycleBroken` on a symmetry breach (F(G(x))≠x). Off unless provided.
+   *  Deterministic. Pairs with pcaAnomaly but has a different job: anomaly=
+   *  "is input weird?", cycle= "is the round-trip lossless?". */
+  cycleConsistency?: {
+    model: import('./integration/analytics/cycle-consistency.ts').PCA;
+    cfg: import('./integration/analytics/cycle-consistency.ts').CycleConsistencyConfig;
+  };
 }
 
 export class Governor {
@@ -166,10 +194,16 @@ export class Governor {
   resonanceRisky = false;
   thermoFloorHit = false;
   private last!: GovernorState;
+  // L5 analytics (flag-OFF): EMA-floored PCA-reconstruction anomaly state
+  pcaAnomaly = false;
+  private pcaState: PcaAnomalyState | null = null;
+  // L5 analytics (flag-OFF): symmetrical-loop (cycle-consistency) state
+  cycleBroken = false;
+  private cycleState: CycleConsistencyGateState | null = null;
 
   constructor(cfg: GovernorConfig) {
     this.cfg = cfg;
-    this.last = { authority: (cfg.uMin + cfg.uMax) / 2, pidU: 0, icir: null, factorStatus: 'unknown', resonanceRisky: false, anomaly: false, thermoFloorHit: false, error: 0 };
+    this.last = { authority: (cfg.uMin + cfg.uMax) / 2, pidU: 0, icir: null, factorStatus: 'unknown', resonanceRisky: false, anomaly: false, thermoFloorHit: false, error: 0, pcaAnomaly: false, cycleBroken: false };
   }
 
   get authority(): number { return this.last.authority; }
@@ -246,7 +280,32 @@ export class Governor {
     const floor = bitsErased(s.volume);
     this.thermoFloorHit = s.cost < floor;
 
-    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error });
+    // L5 ANALYTICS (flag-OFF): PCA-reconstruction anomaly. Only active when the
+    // caller BOTH (a) supplied a `features` vector AND (b) configured `pcaAnomaly`.
+    // The adaptive EMA threshold learns out slow drift (battery/weather) and flags
+    // only SHARP excursions — the deterministic twin of the prompt's ELBO anomaly.
+    if (this.cfg.pcaAnomaly && s.features && s.features.length === this.cfg.pcaAnomaly.model.mean.length) {
+      const prev = this.pcaState ? this.pcaState.threshold : 0;
+      const prevStep = this.pcaState ? this.pcaState.step : 0;
+      const st = pcaAnomalyScore(this.cfg.pcaAnomaly.model, s.features, this.cfg.pcaAnomaly.cfg, prev, prevStep);
+      this.pcaState = st;
+      this.pcaAnomaly = st.flag;
+    }
+
+    // L5 ANALYTICS (flag-OFF): symmetrical-loop / cycle-consistency. Active only
+    // when the caller BOTH (a) supplied `features` AND (b) configured
+    // `cycleConsistency`. Round-trips the feature vector (Decompose→Reconstruct);
+    // a symmetry breach means a module dropped/corrupted a field. Adaptive EMA
+    // floor learns slow drift, flags only sharp asymmetries. Off by default.
+    if (this.cfg.cycleConsistency && s.features && s.features.length === this.cfg.cycleConsistency.model.mean.length) {
+      const prev = this.cycleState ? this.cycleState.threshold : 0;
+      const prevStep = this.cycleState ? this.cycleState.step : 0;
+      const st = cycleConsistencyGate(this.cfg.cycleConsistency.model, s.features, this.cfg.cycleConsistency.cfg, prev, prevStep);
+      this.cycleState = st;
+      this.cycleBroken = st.broken;
+    }
+
+    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error, pcaAnomaly: this.pcaAnomaly, cycleBroken: this.cycleBroken });
   }
 }
 

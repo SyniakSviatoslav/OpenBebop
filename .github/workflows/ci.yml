@@ -23,3 +23,7 @@ jobs:
         run: npm run typecheck
       - name: Falsifiable tests
         run: npm test
+      - name: Doc-claim honesty gate
+        run: node scripts/verify-doc-claims.mjs
+      - name: Falsifiable-proof guardrail (every test can go RED)
+        run: node scripts/guardrail-falsifiable-proof.mjs

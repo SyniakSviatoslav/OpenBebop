@@ -84,10 +84,16 @@ try {
   failc = Number((out.match(/# fail\s+(\d+)/) || [])[1] ?? 1);
 }
 {
+  // Source of truth is `npm test` reality; assert BOTH doc surfaces (README + AGENTS)
+  // match it, so neither prose line can drift silently.
   const readme = read('README.md');
-  const claimed = Number((readme.match(/(\d+)\s*TS tests/) || [])[1] ?? -1);
-  check('test count honest: README claims match `npm test`', claimed === pass && failc === 0,
-    `README says ${claimed}, actual pass=${pass} fail=${failc}`);
+  const agents = read('AGENTS.md');
+  const readmeClaim = Number((readme.match(/(\d+)\s*TS tests/) || [])[1] ?? -1);
+  const agentsClaim = Number((agents.match(/npm test`\s*—\s*(\d+)\s*falsifiable tests/) || [])[1] ?? -1);
+  check('test count honest: README claims match `npm test`', readmeClaim === pass && failc === 0,
+    `README says ${readmeClaim}, actual pass=${pass} fail=${failc}`);
+  check('test count honest: AGENTS.md claims match `npm test`', agentsClaim === pass && failc === 0,
+    `AGENTS says ${agentsClaim}, actual pass=${pass} fail=${failc}`);
 }
 
 // --- G. No false-superiority comparison table (✅/❌ vs competitors) ---
@@ -123,6 +129,43 @@ try {
   check('ReAct denial is VISIBLE in reactTrace (not hidden as one perfect iter)',
     provesVisible,
     provesVisible ? 'loop.react.test asserts denied action shows FAIL in reactTrace' : 'no test proves the iteration trace is honest');
+}
+
+// --- J. L5 analytics wired into governor as flag-OFF state fields (blind-spot fix 2026-07-09) ---
+{
+  const gov = read('src/governor.ts');
+  // both L5 signals must be part of GovernorState AND default-off (only set when cfg provided)
+  const hasFields = /pcaAnomaly:\s*boolean/.test(gov) && /cycleBroken:\s*boolean/.test(gov);
+  const flagOff = /this\.cfg\.pcaAnomaly\s*&&/.test(gov) && /this\.cfg\.cycleConsistency\s*&&/.test(gov);
+  check('L5 analytics wired into governor (pcaAnomaly+cycleBroken, flag-OFF)', hasFields && flagOff,
+    hasFields && flagOff ? 'GovernorState exposes both signals; each only fires when its cfg is supplied'
+      : 'governor missing L5 state fields or they are not flag-gated');
+}
+
+// --- K. telemetry-ica-loop module exists + its test ships the EV and the RED blind-spot ---
+{
+  const modPath = 'src/integration/analytics/telemetry-ica-loop.ts';
+  const testPath = 'src/integration/analytics/telemetry-ica-loop.test.ts';
+  const modExists = existsSync(path.join(ROOT, modPath));
+  const tExists = existsSync(path.join(ROOT, testPath));
+  const t = tExists ? read(testPath) : '';
+  const hasEV = /localiz/i.test(t) && /sparse/i.test(t);
+  const hasRed = /gaussian/i.test(t) && /(blind|not separable|not recover)/i.test(t);
+  check('telemetry-ica-loop present + test asserts EV (sparse localization) AND RED (Gaussian blind-spot)',
+    modExists && tExists && hasEV && hasRed,
+    modExists && tExists && hasEV && hasRed ? 'EV + falsifiable RED both present'
+      : 'module/test missing or lacks the EV/RED pair');
+}
+
+// --- L. symmetrical-loops rule + cycle-consistency theorem doc present and referenced ---
+{
+  const agents = read('AGENTS.md');
+  const ruleThere = /symmetrical loops|cycle consistency/i.test(agents) && /F\(G\(X\)\)/.test(agents);
+  const docThere = existsSync(path.join(ROOT, 'docs/design/cycle-consistency-theorem.md'));
+  const referenced = /cycle-consistency-theorem\.md/.test(agents);
+  check('symmetrical-loops rule + theorem doc present and referenced', ruleThere && docThere && referenced,
+    ruleThere && docThere && referenced ? 'AGENTS rule + theorem doc exist and are cross-linked'
+      : 'rule missing, theorem doc absent, or not referenced from AGENTS');
 }
 
 console.log(`\n  ${fails ? `✗ ${fails} doc-claim check(s) FAILED — fix before commit/release` : '✓ all doc claims backed by live proof'}`);
