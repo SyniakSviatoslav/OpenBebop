@@ -24,3 +24,14 @@ memory.json
 # Rust build artifacts (keep the wasm binary src/bebop_core.wasm committed; never commit target/)
 crates/*/target/
 **/target/
+
+# Python venvs (do NOT commit — multi-GB)
+.venv/
+.venv2/
+
+# Build output
+dist/
+
+# pnpm lockfile (this repo is npm-based; package-lock.json is the source of truth)
+pnpm-lock.yaml
+pnpm-workspace.yaml

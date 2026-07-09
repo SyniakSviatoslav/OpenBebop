@@ -12,6 +12,7 @@ import path from 'node:path';
 import { checkRedLine, checkScope } from './guard.ts';
 import { validateToolArgs } from './validate.ts';
 import { searchFieldStateText, directiveFor, type FieldDirective } from './field.ts';
+import { adviseLoop, type LoopAction } from './integration/active-inference/loop-advisor.ts';
 import { route, enforceRouting, type TaskClass, type Model } from './router.ts';
 import { recall } from './knowledge.ts';
 import type { DispatchResult } from './backend.ts';
@@ -56,6 +57,11 @@ export interface BebopConfig {
   // candidate field and reports the physics directive (generate / reconsider / focus). Off by
   // default — pure, deterministic, no extra LLM call; it only reads the in-process VSA memory.
   field?: boolean;
+  // Active Inference (Free-Energy Principle) policy advisor: when set, the loop derives a belief over
+  // {stuck, progressing, done} from its own progress (steps, denials, completion) and asks the FEP
+  // engine to pick the next action. Complements the field oracle (field = where to look; FEP = what
+  // to do). Off by default. Grounded in real pymdp numbers (see src/integration/active-inference).
+  activeInference?: boolean;
 }
 
 export interface LoopContext {
@@ -365,6 +371,19 @@ export async function runLoop(cfg: BebopConfig): Promise<LoopResult> {
         (out.denied ? ' → rewrote draft for next iteration' : '');
       reactTrace.push({ iter, phase: 'reflect', reflection, evalScore: verdict.score, evalPassed: verdict.passed, ok: !out.denied });
       transcript.push(paint.dim(`  · REFLECT ${reflection}`));
+
+      // ── ACTIVE INFERENCE ADVISOR (FEP) ── complementary to the field oracle: derive a belief over
+      // {stuck, progressing, done} from the loop's running progress and ask the FEP engine for the
+      // next action. Advisory only (the guard gate still decides admission). Off unless cfg set.
+      if (cfg.activeInference) {
+        const total = Math.max(1, steps + denied);
+        const stuck = denied / total;
+        const progressing = steps / total;
+        const donePrior = steps > 0 && denied === 0 ? 0.2 : 0.0;
+        const belief = [stuck, progressing, donePrior].map((x) => x / (stuck + progressing + donePrior + 1e-9));
+        const fepAction = adviseLoop(belief, true);
+        transcript.push(paint.dim(`  fep → ${fepAction} (belief ${belief.map((x) => x.toFixed(2)).join(',')})`));
+      }
 
       if (out.denied) {
         halted = true;

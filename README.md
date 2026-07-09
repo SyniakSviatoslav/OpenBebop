@@ -82,13 +82,36 @@ Bebop is a **combiner above** other agentic CLIs, not a replacement. It credits 
   CLI is tighter (Bebop adds an indirection layer). If you need a hosted UI or first-party enterprise
   support, a vendor product beats a CLI wrapper.
 
+## Sovereign Node (integrations + autonomy)
+
+Bebop's deterministic kernel is the single authority ("as above, so below"). The reverse-engineered
+tools below are wired as **non-invasive, feature-flagged** layers that compose with the kernel's
+universal gate — they extend it, never fork it. Every wiring is RED+GREEN tested and falsifiable.
+
+| Layer | What it adds | Status |
+|---|---|---|
+| **zkVM `decide()` journal** | Every admitted command gets a tamper-evident digest over `(state, commandHash, seq)`. On by default at the kernel gate. Replay-verifiable; tampering any entry fails the chain. | LIVE (native TS port; RISC Zero STARK *receipt* gated behind `cfg.zkReceipt` when the prover is available) |
+| **TigerBeetle money boundary** | Structural conservation law (`amount>0`, `debit≠credit`, idempotent) composed into the kernel gate via `applyCommandChecked(.., money=true)`. | LIVE (engaged when `money` flag set) |
+| **Active Inference advisor** | FEP policy selector (`adviseLoop`) over `{stuck, progressing, done}` belief, behind `cfg.activeInference`. Advisory; the guard still decides admission. | LIVE (loop.ts) |
+| **Optical field recall** | SVETlANNa/Meep optical primitive re-ranks `recall` candidates by field correlation, behind `opts.opticalRecall`. Advisory only — graph score dominates. | LIVE (knowledge.ts) |
+| **Zenoh mesh** | Drop-in inter-node transport. Ships as an interface; swap in when a peer mesh exists. | INTERFACE (single-node: no-op) |
+| **FinalSpark wetware** | Bio-safe (50 mV) LIF co-processor research slot. Never in the guard gate. | RESEARCH ONLY |
+
+**Autonomy:** `bebop self evolve` now records each approved corpus mutation as a tamper-evident kernel
+command and exposes `verifySelfEvolution()` — the agent can prove its own evolution history is unbroken.
+`bebop self maintain` runs the **full** test suite (`npm test` now covers `src/integration/**`).
+
 ## Verification
 
 ```
-npm test            # 225 TS tests (RED+GREEN), 0 fail
+npm test            # 303 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
 cargo test -p bebop-core   # 7 Rust kernel tests
 npm run typecheck   # 0 errors
 ```
+
+> The authoritative runner is `node --test --import tsx 'src/**/*.test.ts'` — `npm test` now uses this
+> glob and covers the integration layer. (Older `pnpm run test` missed `src/integration/**`.)
+
 Full proof table: [`docs/VERIFICATION-MATRIX.md`](docs/VERIFICATION-MATRIX.md).
 
 ## Development & docs

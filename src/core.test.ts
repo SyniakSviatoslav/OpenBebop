@@ -18,7 +18,8 @@ import {
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { createTorrent, verifyPiece, assemble, wantBitfield, DEFAULT_PIECE_SIZE } from './torrent.ts';
 import { InMemoryNode, nodeAssemble } from './mesh.ts';
-import { decide, fold, replay, genesis, commandHash, applyCommand, type Command, type State } from './kernel.ts';
+import { decide, fold, replay, genesis, commandHash, applyCommand, applyCommandChecked, defaultChecker, type Command, type State } from './kernel.ts';
+import { verifyJournal } from './integration/zkvm/kernel-journal.ts';
 
 const enc = new TextEncoder();
 
@@ -156,4 +157,71 @@ test('GREEN: replay reconstructs state from an event log', () => {
   const events = ['a', 'b', 'c'].map((p) => ({ type: 'INGESTED' as const, contentHash: p }));
   const r = replay(events);
   assert.deepEqual(r.ingested, st.ingested);
+});
+
+// ── zkVM journal ON the real decision path (applyCommandChecked) ──
+test('GREEN: applyCommandChecked with journal=true emits a verifiable JOURNAL envelope', () => {
+  const cmd = mkCmd({ action: 'INGEST', payload: 'journaled' });
+  const res = applyCommandChecked(cmd, genesis(), defaultChecker, true);
+  assert.equal(res.quarantined, false);
+  const journalEnv = res.envelopes.find((e) => e.event.type === 'JOURNAL');
+  assert.ok(journalEnv, 'a JOURNAL envelope must be emitted when journal=true');
+  if (journalEnv!.event.type !== 'JOURNAL') throw new Error('expected JOURNAL');
+  // the digest must verify against the admitted state + cause + counter
+  const ok = verifyJournal(res.state, commandHash(cmd), journalEnv!.seq, hexToBytes(journalEnv!.event.digest));
+  assert.equal(ok, true, 'embedded digest must verify against the admitted state');
+});
+
+test('RED: the JOURNAL digest is tamper-evident (falsifiable)', () => {
+  const cmd = mkCmd({ action: 'INGEST', payload: 'tamper-me' });
+  const res = applyCommandChecked(cmd, genesis(), defaultChecker, true);
+  const journalEnv = res.envelopes.find((e) => e.event.type === 'JOURNAL')!;
+  if (journalEnv.event.type !== 'JOURNAL') throw new Error('expected JOURNAL');
+  // flip one admitted-state bit → the claimed digest must NO LONGER verify
+  const tampered = { ...res.state, lastBackend: 'evil' };
+  const ok = verifyJournal(tampered, commandHash(cmd), journalEnv.seq, hexToBytes(journalEnv.event.digest));
+  assert.equal(ok, false, 'tampering the state must break the journal digest');
+});
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+// ── TigerBeetle money boundary ON the real decision path (applyCommandChecked, money=true) ──
+test('GREEN: a non-money command still admits when the TB money boundary is engaged', () => {
+  const cmd = mkCmd({ action: 'INGEST', payload: 'plain payload' });
+  const res = applyCommandChecked(cmd, genesis(), defaultChecker, true, true);
+  assert.equal(res.quarantined, false, 'non-money cmd must pass the composed gate');
+});
+
+test('GREEN: a valid money-motion command passes the TB structural law (amount>0, debit!=credit)', () => {
+  const cmd = mkCmd({
+    action: 'INGEST',
+    payload: JSON.stringify({ amount: '5', debit: '1', credit: '2', id: 't1', code: 1 }),
+  });
+  const res = applyCommandChecked(cmd, genesis(), defaultChecker, true, true);
+  assert.equal(res.quarantined, false, 'valid money motion must admit');
+  assert.ok(res.envelopes.some((e) => e.event.type === 'JOURNAL'), 'journal still recorded');
+});
+
+test('RED: a money-motion with amount<=0 is quarantined by the TB boundary (falsifiable)', () => {
+  const cmd = mkCmd({
+    action: 'INGEST',
+    payload: JSON.stringify({ amount: '0', debit: '1', credit: '2', id: 't1', code: 1 }),
+  });
+  const res = applyCommandChecked(cmd, genesis(), defaultChecker, true, true);
+  assert.equal(res.quarantined, true, 'money mint (amount<=0) must be denied');
+  assert.match(res.reason ?? '', /amount must be > 0/);
+});
+
+test('RED: a money-motion with debit==credit is quarantined (no-op illegal)', () => {
+  const cmd = mkCmd({
+    action: 'INGEST',
+    payload: JSON.stringify({ amount: '5', debit: '1', credit: '1', id: 't1', code: 1 }),
+  });
+  const res = applyCommandChecked(cmd, genesis(), defaultChecker, true, true);
+  assert.equal(res.quarantined, true, 'debit==credit must be denied');
+  assert.match(res.reason ?? '', /debit == credit/);
 });

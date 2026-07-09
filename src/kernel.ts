@@ -13,6 +13,8 @@
 // plain `Command` + `State` + `Actor` — signing is a shell envelope, per GRAND-PLAN Phase-3 note.
 
 import { sha256hex } from './crypto.ts';
+import { journalize, digestToHex } from './integration/zkvm/kernel-journal.ts';
+import { moneyTransferChecker } from './integration/tigerbeetle/kernel-ledger.ts';
 
 // ── Command / Actor / Event vocab (the alphabet; exhaustive-fold gate) ──
 
@@ -33,7 +35,8 @@ export type Event =
   | { type: 'ROTATED'; from: string; to: string }
   | { type: 'PUBLISHED'; infoHash: string }
   | { type: 'REVOKED'; infoHash: string }
-  | { type: 'DENIED'; reason: string };
+  | { type: 'DENIED'; reason: string }
+  | { type: 'JOURNAL'; digest: string }; // zkVM decide() tamper-evident digest over admitted state
 
 export interface State {
   ingested: Set<string>; // content hashes we have accepted (idempotency / D2 dedupe)
@@ -130,6 +133,9 @@ export function fold(state: State, event: Event): State {
     case 'DENIED':
       // Denials are observable but change no state — the kernel stays total.
       break;
+    case 'JOURNAL':
+      // The zkVM digest is an observable audit stamp; it changes no kernel state.
+      break;
     default: {
       const _exhaustive: never = event;
       throw new DomainError(`unknown event: ${JSON.stringify(_exhaustive)}`);
@@ -190,6 +196,8 @@ export function applyCommandChecked(
   cmd: Command,
   state: State,
   checker: Checker,
+  journal = true,
+  money?: boolean,
 ): { state: State; envelopes: Envelope[]; quarantined: boolean; reason?: string } {
   const cause = commandHash(cmd);
   if (state.seen.has(cause)) return { state, envelopes: [], quarantined: false }; // replay no-op
@@ -198,7 +206,11 @@ export function applyCommandChecked(
   // project the would-be next state
   let projected = state;
   for (const ev of events) projected = fold(projected, ev);
-  const verdict = checker(cmd, state, projected, events);
+  // COMPOSE the caller's invariant with the optional TigerBeetle money boundary. Both must pass
+  // (as-above-so-below: the money law is part of the universal "above" gate when engaged).
+  const verdict = money
+    ? composeCheckers(checker, moneyTransferChecker())(cmd, state, projected, events)
+    : checker(cmd, state, projected, events);
   if (!verdict.ok) {
     // quarantine: do NOT admit; record the cause so we don't loop, emit a DENIED envelope
     const deniedState = { ...state, seen: new Set(state.seen).add(cause) };
@@ -211,7 +223,27 @@ export function applyCommandChecked(
   }
   // admit via the normal path
   const admitted = applyCommand(cmd, state);
-  return { ...admitted, quarantined: false };
+  if (!journal) return { ...admitted, quarantined: false };
+  // zkVM tamper-evident digest over the ADMITTED state, bound to this command + its envelope seq.
+  const counter = admitted.envelopes.length
+    ? admitted.envelopes[admitted.envelopes.length - 1].seq
+    : admitted.state.ingested.size;
+  const digest = journalize(admitted.state, cause, counter);
+  const journalEnv: Envelope = {
+    seq: counter,
+    cause,
+    event: { type: 'JOURNAL', digest: digestToHex(digest) },
+  };
+  return { ...admitted, envelopes: [...admitted.envelopes, journalEnv], quarantined: false };
+}
+
+/** Run two Checkers in series; the first failure short-circuits (fail-closed). */
+function composeCheckers(a: Checker, b: Checker): Checker {
+  return (cmd, before, after, events) => {
+    const va = a(cmd, before, after, events);
+    if (!va.ok) return va;
+    return b(cmd, before, after, events);
+  };
 }
 
 /**

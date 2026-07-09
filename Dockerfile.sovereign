@@ -2,40 +2,35 @@
 #
 # Operator directive (2026-07-08): package bebop as a self-contained Sovereign Node for a B2B
 # client's own hardware. No OpenAI/Anthropic egress. The deterministic core is the wasm32
-# bebop_core.wasm kernel (already built by crates/core/build.sh); the LLM periphery is a LOCAL
-# model via Ollama (CPU-capable small models; GPU optional). Ship as `docker save` tarball / USB.
+# bebop_core.wasm kernel (built by crates/core/build.sh); the LLM periphery is a LOCAL model via
+# Ollama (CPU-capable small models; GPU optional). Ship as `docker save` tarball / USB.
 #
-# This is a NEW parallel artifact. Prod `Dockerfile` + Fly deploy are untouched (ship discipline:
+# This is a NEW parallel artifact. Prod Dockerfile + Fly deploy are untouched (ship discipline:
 # sovereign node is feature-flagged, default off).
+#
+# Build context root = bebop-repo/ (see .dockerignore). bebop uses npm (package-lock.json).
 
 # ---- Stage 1: build the wasm kernel (proven real target) -------------------------------
 FROM rust:1-slim AS core-builder
 RUN rustup target add wasm32-unknown-unknown
 WORKDIR /core
 COPY crates/core ./
-RUN bash build.sh && ls -la /core/../src/bebop_core.wasm 2>/dev/null; \
-    # build.sh copies into its own ../src; re-copy explicitly to a known layer
-    mkdir -p /artifacts && cp target/wasm32-unknown-unknown/release/bebop_core.wasm /artifacts/
+# build.sh compiles to wasm32-unknown-unknown and copies the artifact to /core/../src/bebop_core.wasm
+RUN bash build.sh && ls -la /src/bebop_core.wasm
 
 # ---- Stage 2: node runtime (the TS agent shell) ----------------------------------------
 FROM node:22-slim AS runtime
 WORKDIR /app
 
-# Install pnpm (bebop uses pnpm in dev; we pin for reproducibility)
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-COPY package.json pnpm-lock.json ./
+# Runtime deps only (no dev/test toolchain in the sovereign box). npm ci needs package-lock.json.
+COPY package.json package-lock.json ./
+COPY bebop.ts ./
 COPY src ./src
-COPY llm-manifest.json ./llm-manifest.json 2>/dev/null || true
-# The deterministic kernel artifact from the core build
-COPY --from=core-builder /artifacts/bebop_core.wasm ./src/bebop_core.wasm
+COPY llm-manifest.json ./llm-manifest.json
+# The deterministic kernel artifact from the core build (build.sh wrote it to /src).
+COPY --from=core-builder /src/bebop_core.wasm ./src/bebop_core.wasm
 
-# Install ONLY runtime deps (no dev/test toolchain in the sovereign box)
-RUN pnpm install --frozen-lockfile --prod || pnpm install --prod
-
-# ---- Stage 3: Ollama sidecar (local LLM, no external egress) ---------------------------
-# Bound to 127.0.0.1 inside the compose network; never exposed publicly.
-# CPU-only by default; set OLLAMA_GPU=1 + mount the nvidia runtime for CUDA (Phase 1+GPU option).
+RUN npm ci --omit=dev || npm install --omit=dev
 
 # ---- Final: the sovereign runtime image -------------------------------------------------
 FROM runtime AS sovereign

@@ -48,3 +48,26 @@ test('GREEN: recall degrades honestly when §0·GP retriever absent (no spawn, n
 test('GREEN: estimateTokens returns null when VSA cli absent (no spawn)', () => {
   assert.equal(estimateTokens('hello world tokens'), null);
 });
+
+// ── optical advisory field recall (off by default; re-ranks, never filters) ──
+test('GREEN: opticalRecall re-ranks but never DROPS hits (advisory, id-set preserved)', () => {
+  const base = recall('kernel law');
+  const opt = recall('kernel law', { opticalRecall: true });
+  const baseIds = base.hits.map((h) => h.id).sort();
+  const optIds = opt.hits.map((h) => h.id).sort();
+  assert.deepEqual(optIds, baseIds, 'optical must not filter hits — same id-set as default');
+});
+
+test('RED: graph-score hits dominate optical re-ranking (falsifiable)', () => {
+  // A query that graph-matches at least one corpus concept (score 1) and also returns weaker hits.
+  const r = recall('kernel law', { opticalRecall: true });
+  const s = (x: { score?: number }) => x.score ?? 0;
+  const graphHits = r.hits.filter((h) => s(h) >= 1);
+  const weakHits = r.hits.filter((h) => s(h) < 1);
+  if (graphHits.length > 0 && weakHits.length > 0) {
+    // every graph hit must precede every weak hit — optical cannot promote weak above graph truth
+    const firstWeak = r.hits.findIndex((h) => s(h) < 1);
+    const lastGraph = r.hits.map(s).lastIndexOf(1);
+    assert.ok(lastGraph < firstWeak, 'graph-score hits must stay ranked above weak hits even with optical on');
+  }
+});

@@ -19,6 +19,8 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { livingMemory, type LivingMemory } from './memory.ts';
+import { opticalRecall } from './integration/optical/field-recall.ts';
+import { thinLensMask } from './integration/optical/optic.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // This is a standalone repo: src/ → bebop-repo root is ONE level up.
@@ -35,7 +37,26 @@ export interface Recall {
 // FALLBACK: bundled VSA vector recall (associative, by meaning) — a WEAKER signal; only used when the
 // graph finds nothing, and gated at a high noise floor so random/gibberish queries return nothing
 // (we never present a noisy vector match as confident). Merged, de-duplicated, scored.
-function recallLocal(query: string, k = 5): { id: string; text: string; score: number }[] {
+export interface RecallOpts {
+  /** Advisory optical field recall (SVETlANNa/Meep primitive) re-ranks hits by field correlation.
+   *  Off by default — the graph/vector score stays the source of truth; optical only re-orders
+   *  weak/equal-score bands as a third associative signal. */
+  opticalRecall?: boolean;
+}
+
+// Deterministic text → n×n real vector (char-bucketed). Same spirit as the bundled VSA codebook;
+// gives opticalRecall a stable projection to rank by field correlation.
+function projectText(text: string, n: number): number[] {
+  const v = new Array<number>(n * n).fill(0);
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    const idx = (code * 31 + i) % (n * n);
+    v[idx] += ((code % 7) - 3) / 4; // small bipolar value, deterministic
+  }
+  return v;
+}
+
+function recallLocal(query: string, k = 5, opts: RecallOpts = {}): { id: string; text: string; score: number }[] {
   const mem: LivingMemory = livingMemory();
   const byId = new Map<string, { id: string; text: string; score: number }>();
 
@@ -56,13 +77,36 @@ function recallLocal(query: string, k = 5): { id: string; text: string; score: n
       if (node) byId.set(n.id, { id: n.id, text: node.payload, score: Number(n.sim.toFixed(3)) });
     }
   }
-  return [...byId.values()].sort((a, b) => b.score - a.score);
+
+  const hits = [...byId.values()];
+
+  // 3) ADVISORY optical field recall — re-rank by optical correlation when enabled. The primary score
+  //    (graph=1 / vector sim) is preserved; optical supplies a secondary key so two hits with the same
+  //    primary score are ordered by field similarity to the query. Never overrides the graph truth.
+  if (opts.opticalRecall && hits.length > 1) {
+    const n = 8; // optical field grid (n×n = 64 vec dim)
+    const mask = thinLensMask(n, 0.5, 2); // passive mask, |t|<=1
+    const qVec = projectText(query, n);
+    const cands = hits.map((h) => projectText(h.text, n));
+    const order = opticalRecall(qVec, cands, mask); // indices into hits, DESC by optical correlation
+    // stable merge: keep primary-score sort, but within equal primary scores, prefer optical order.
+    const opticalRank = new Map<number, number>();
+    order.forEach((idx, rank) => opticalRank.set(idx, rank));
+    hits.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score; // graph/vector dominates
+      const ra = opticalRank.get(hits.indexOf(a)) ?? 0;
+      const rb = opticalRank.get(hits.indexOf(b)) ?? 0;
+      return ra - rb; // equal primary → optical correlation wins
+    });
+  }
+
+  return hits.sort((a, b) => b.score - a.score);
 }
 
 // Call the living-knowledge §0·GP retriever (optional, vendored from dowiz). Returns ranked
 // {id,text} hits. Degrades honestly to in-process memory when the retriever isn't present here.
-export function recall(query: string): Recall {
-  const hits = recallLocal(query).map((h) => ({ id: h.id, text: h.text, score: h.score }));
+export function recall(query: string, opts: RecallOpts = {}): Recall {
+  const hits = recallLocal(query, 5, opts).map((h) => ({ id: h.id, text: h.text, score: h.score }));
   const script = path.join(REPO_ROOT, 'spikes', 'living-knowledge', 'search.mjs');
   if (!fs.existsSync(script)) {
     return {
