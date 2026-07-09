@@ -411,21 +411,25 @@ try {
       : 'theory doc missing the PROBE/CORRECTION/velocity-Verlet/Hamiltonian/Rust sections');
 }
 
-// --- AK. Rust→WASM field core: real wasm32 core + 5 falsifiable tests (replaces JS field-sim) ---
+// --- AK. Rust→WASM field core: real wasm32 core + falsifiable tests (replaces JS field-sim) ---
 {
   const cargo = read('rust-core/Cargo.toml');
+  const cfg = read('rust-core/.cargo/config.toml');
   const lib = read('rust-core/src/lib.rs');
   const wrap = read('src/integration/field-rust.ts');
   const t = read('src/integration/field-rust.test.ts');
+  const tp = read('src/integration/analytics/field-planner.test.ts');
   const d = read('docs/design/bebop-rust-field-core-2026-07-09.md');
-  const exports = /field_build/.test(lib) && /field_spectral/.test(lib) && /field_active/.test(lib) && /vsa_similarity/.test(lib) && /field_cost/.test(lib) && /field_rank/.test(lib);
+  const exports = /field_build/.test(lib) && /field_spectral/.test(lib) && /field_active/.test(lib) && /vsa_similarity/.test(lib) && /field_cost/.test(lib) && /field_rank/.test(lib) && /field_build_f32/.test(lib) && /field_sensitivity/.test(lib);
   const wasm = /wasm32-unknown-unknown/.test(cargo) || /\[lib\]/.test(cargo);
-  const tests = /rust spectral propagator converges/.test(t) && /rust propagator is ONE call/.test(t) && /rust active-set pruning/.test(t) && /rust VSA similarity/.test(t) && /no leak/.test(t) && /dispose clears state/.test(t) && /rust field_cost/.test(t) && /rust arbiter/.test(t);
-  const doc = /Chebyshev/.test(d) && /active-set/.test(d) && /AK\.1/.test(d) && /field_reset/.test(d) && /Final Arbiter/.test(d);
-  const ok = exports && wasm && tests && doc;
-  check('Rust→WASM field core: wasm32 build + falsifiable tests (spectral + active-set + VSA + concurrency + memory/dispose + PDDL-field bridge)', ok,
-    ok ? 'rust-core/ compiles to wasm32 (air-gapped, no RNG/Date); 14 Rust kernel + 13 TS tests: spectral, active-set, VSA, deadlock-free concurrency, reset/rebuild, leak-free lifecycle, dispose, field_cost/field_rank bridge + Final Arbiter (permit/warn/override)'
-    : 'rust-core/ missing field_spectral/field_active/vsa_similarity/field_cost/field_rank exports, or field-rust tests/doc gaps');
+  const simd = /target-feature=\+simd128/.test(cfg);
+  const ceiling = /max-memory=1073741824/.test(cfg);
+  const tests = /rust spectral propagator converges/.test(t) && /rust propagator is ONE call/.test(t) && /rust active-set pruning/.test(t) && /rust VSA similarity/.test(t) && /no leak/.test(t) && /dispose clears state/.test(t) && /rust field_cost/.test(t) && /rust arbiter/.test(t) && /sensitivity bootstrap/i.test(tp);
+  const doc = /Chebyshev/.test(d) && /active-set/.test(d) && /AK\.1/.test(d) && /field_reset/.test(d) && /Final Arbiter/.test(d) && /Top-K Contours/.test(d) && /f32/.test(d) && /sensitivity bootstrap/i.test(d);
+  const ok = exports && wasm && simd && ceiling && tests && doc;
+  check('Rust→WASM field core 2026-07-09c: f32 CSR + SIMD128 + 1GiB ceiling + sensitivity bootstrap + Top-K Contours', ok,
+    ok ? 'rust-core/ compiles to wasm32 with +simd128 and --max-memory=1GiB; 16 Rust kernel + field-rust TS (13) + field-planner TS (5) + copilot TS (4): spectral, active-set, VSA, deadlock-free concurrency, reset/rebuild, leak-free, dispose, field_cost/field_rank bridge + Final Arbiter, f32 CSR, sensitivity bootstrap. field-sim explainer + Top-K Contours documented.'
+    : 'rust-core/ missing field_build_f32/field_sensitivity or config/claim gaps (simd128/1GiB/f32/contours)');
 }
 
 // --- AJ. Optical search + real-time change prediction (field-optical.ts + predictImpact) ---
@@ -442,6 +446,21 @@ try {
  check('Optical search + real-time change prediction: field/optical/VSA vs k-d tree, telemetry report', fn && test && doc,
    fn && test && doc ? 'predictImpact + opticalRecall + VSA ranking + benchmark vs k-d tree, all RED+GREEN, report with real telemetry'
      : 'field-optical/benchmark missing predictImpact/opticalNodeSearch/vsaNodeSearch/benchmarkFieldVsTree or test/doc gaps');
+}
+
+// --- AL.1 Multipilot + cosmo-noir outfit (2026-07-09c) — real artifacts, not claims ---
+{
+  const copilot = read('src/copilot.ts');
+  const outfit = read('src/outfit.ts');
+  const cli = read('bebop.ts');
+  const ct = read('src/copilot.test.ts');
+  const ok = /runMultiPilot/.test(copilot) && /defaultSynthesizer/.test(copilot)
+    && /OUTFIT/.test(outfit) && /outfitBanner/.test(outfit)
+    && /cmd === 'multipilot'/.test(cli) && /cmd === 'outfit'/.test(cli)
+    && /multipilot fans a task/.test(ct) && /outfit is a coherent identity/.test(ct);
+  check('Multipilot + cosmo-noir outfit: runMultiPilot fans N distinct pilots + distinct synthesizer, field arbiter veto, `bebop outfit` prints identity contract', ok,
+    ok ? 'copilot.ts runMultiPilot + defaultSynthesizer; src/outfit.ts OUTFIT contract; bebop.ts `multipilot` + `outfit` subcommands; copilot.test RED+GREEN (distinct-pilot invariant, field override blocks, outfit coherent). "Copilot is now a multipilot."'
+    : 'multipilot/outfit missing: runMultiPilot, OUTFIT, bebop multipilot/outfit subcommands, or copilot.test gaps');
 }
 
 console.log(`\n  ${fails ? `✗ ${fails} doc-claim check(s) FAILED — fix before commit/release` : '✓ all doc claims backed by live proof'}`);

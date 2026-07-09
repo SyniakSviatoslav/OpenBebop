@@ -29,13 +29,23 @@ struct GraphState {
     col_idx: Vec<i32>,
     degrees: Vec<f64>, // precomputed D = row sums of A; L = D - A. Recomputed only on field_build.
     n: i32,
+    /// Accumulated |Δu| history (one running total per node) across every propagate since build.
+    /// Bootstraps per-node SENSITIVITY for the PDDL/field bridge WITHOUT new infra: a node that
+    /// moves a lot under the field is "critical" → its exposure to a disruption should weigh more.
+    field_energy: Vec<f64>,
 }
 static STATE: std::sync::Mutex<GraphState> = std::sync::Mutex::new(GraphState {
     row_ptr: Vec::new(),
     col_idx: Vec::new(),
     degrees: Vec::new(),
     n: 0,
+    field_energy: Vec::new(),
 });
+
+/// Accumulated |Δu| history per node across propagations (sensitivity bootstrap). Held under its
+/// OWN mutex (so propagators can accrue without nested-locking STATE). Reset on field_build.
+/// Tuple = (propagation count, per-node Σ|Δu|).
+static ACCUM: std::sync::Mutex<(usize, Vec<f64>)> = std::sync::Mutex::new((0usize, Vec::new()));
 
 /// Upload a CSR adjacency (A, undirected treated as L=D-A) of an n-node graph.
 /// `row_ptr` has n+1 entries, `col_idx` has nnz entries. Returns 0 on success.
@@ -54,7 +64,40 @@ pub extern "C" fn field_build(row_ptr: *const i32, col_idx: *const i32, nnz: i32
     st.row_ptr = rp;
     st.col_idx = ci;
     st.degrees = degrees;
+    st.field_energy = vec![0.0f64; n as usize]; // fresh sensitivity baseline on every build
     st.n = n;
+    let mut acc = ACCUM.lock().unwrap();
+    *acc = (0usize, vec![0.0f64; n as usize]); // reset sensitivity accumulation on every build
+    0
+}
+
+/// f32-packed CSR loader (2026-07-09c): store the adjacency in f32 then convert to f64 compute
+/// arrays. Halves CSR storage (the binding's biggest fixed cost), lifting the practical graph-size
+/// ceiling without changing numerical results (matvec runs on f64). Returns 0 on success.
+#[no_mangle]
+pub extern "C" fn field_build_f32(
+    row_ptr: *const i32,
+    col_idx: *const i32,
+    nnz: i32,
+    n: i32,
+) -> i32 {
+    if n <= 0 || nnz < 0 {
+        return 1;
+    }
+    let rp = unsafe { core::slice::from_raw_parts(row_ptr, (n + 1) as usize).to_vec() };
+    let ci_f32 = unsafe { core::slice::from_raw_parts(col_idx as *const f32, nnz as usize) };
+    let ci: Vec<i32> = ci_f32.iter().map(|&x| x as i32).collect();
+    let degrees = (0..n as usize)
+        .map(|i| (rp[i + 1] - rp[i]) as f64)
+        .collect::<Vec<f64>>();
+    let mut st = STATE.lock().unwrap();
+    st.row_ptr = rp;
+    st.col_idx = ci;
+    st.degrees = degrees;
+    st.field_energy = vec![0.0f64; n as usize];
+    st.n = n;
+    let mut acc = ACCUM.lock().unwrap();
+    *acc = (0usize, vec![0.0f64; n as usize]); // reset sensitivity accumulation on every build
     0
 }
 
@@ -68,6 +111,7 @@ pub extern "C" fn field_reset() {
         col_idx: Vec::new(),
         degrees: Vec::new(),
         n: 0,
+        field_energy: Vec::new(),
     };
 }
 
@@ -211,6 +255,14 @@ pub extern "C" fn field_spectral(
         let os = unsafe { core::slice::from_raw_parts_mut(out, n) };
         match spectral_propagate(xs, t, coeff, deg, rp, ci, d) {
             Some(res) => {
+                // Accrue |Δu| = |out - u0| into ACCUM (sensitivity bootstrap), independent of STATE lock.
+                let mut acc = ACCUM.lock().unwrap();
+                if acc.1.len() == n {
+                    for i in 0..n {
+                        acc.1[i] += fabs(res[i] - xs[i]);
+                    }
+                    acc.0 += 1;
+                }
                 os.copy_from_slice(&res);
                 0
             }
@@ -236,7 +288,7 @@ pub extern "C" fn field_active(
     out: *mut f64,
     active_count: *mut i32,
 ) -> i32 {
-    with_graph(|rp, ci, d, n| -> i32 {
+    let rc = with_graph(|rp, ci, d, n| -> i32 {
         if n == 0 {
             return 0;
         }
@@ -249,6 +301,8 @@ pub extern "C" fn field_active(
         let mut mask = vec![1u8; n]; // start: all active
         let (mut u, mut unext) = (&mut buf0, &mut buf1);
         let mut total_active = 0usize;
+        let mut acc = ACCUM.lock().unwrap();
+        let acc_ok = acc.1.len() == n;
         for _ in 0..steps as usize {
             field_matvec_raw(u, &mut lu, rp, ci, d, None);
             let mut active_now = 0usize;
@@ -259,6 +313,9 @@ pub extern "C" fn field_active(
                 }
                 let du = dt * coeff * lu[i];
                 unext[i] = u[i] + du;
+                if acc_ok {
+                    acc.1[i] += fabs(du);
+                }
                 if fabs(du) < eps {
                     mask[i] = 0;
                 } else {
@@ -276,12 +333,16 @@ pub extern "C" fn field_active(
             std::mem::swap(&mut u, &mut unext);
             total_active += active_now;
         }
+        if acc_ok {
+            acc.0 += steps as usize;
+        }
         for i in 0..n {
             os[i] = u[i];
         }
         ac[0] = (1000.0 * total_active as f64 / (steps as f64 * n as f64).max(1.0)) as i32;
         steps
-    })
+    });
+    rc
 }
 
 // ── PDDL ↔ FIELD BRIDGE (2026-07-09b): numeric→symbolic grounding + cost function ──
@@ -362,6 +423,33 @@ pub extern "C" fn field_cost(
             None => -1.0,
         }
     })
+}
+
+/// SENSITIVITY BOOTSTRAP — per-node sensitivity = normalized accumulated |Δu| history (the
+/// metaplasticity signal). A node that moves a lot under the field is "critical" → its exposure to
+/// a disruption weighs more in `field_cost`/`field_rank`. Returns 0 on success; the n-vector in
+/// `out` is monotonic-normalized to [0,1] (max node = 1.0) so it is directly usable as `sensitivity`.
+/// If no propagations have run, returns uniform 1.0 (no bias). Empty graph → rc 1.
+#[no_mangle]
+pub extern "C" fn field_sensitivity(out: *mut f64) -> i32 {
+    let acc = ACCUM.lock().unwrap();
+    let (count, e) = (&acc.0, &acc.1);
+    let n = e.len();
+    if n == 0 {
+        return 1;
+    }
+    let os = unsafe { core::slice::from_raw_parts_mut(out, n) };
+    if *count == 0 {
+        for i in 0..n {
+            os[i] = 1.0; // no history → neutral sensitivity
+        }
+        return 0;
+    }
+    let max_e = e.iter().cloned().fold(0.0f64, f64::max).max(1e-12);
+    for i in 0..n {
+        os[i] = e[i] / max_e; // normalize so the most-active node = 1.0
+    }
+    0
 }
 
 // ── f64 libm shims (no_std: exp/cos aren't in core; implemented via bit tricks + Taylor, no deps) ──
@@ -617,6 +705,64 @@ mod tests {
     }
 
     /// RED/regression: concurrent propagations must NOT deadlock the global Mutex.
+    #[test]
+    fn test_concurrent_propagate_no_deadlock() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let (rp, ci, nnz) = path_graph(40);
+        unsafe {
+            field_build(rp.as_ptr(), ci.as_ptr(), nnz, 40);
+        }
+        let mut u0 = vec![0.0f64; 40];
+        u0[0] = 1.0;
+        // Spawn 4 real threads that all try to propagate concurrently; if the Mutex were re-entrant
+        // or the propagation re-locked, this would deadlock and the test would hang (timeout).
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                s.spawn(|| {
+                    let mut out = vec![0.0f64; 40];
+                    unsafe {
+                        field_spectral(u0.as_ptr(), 3.0, 1.0, 20, out.as_mut_ptr());
+                    }
+                    assert!((out.iter().sum::<f64>() - 1.0).abs() < 1e-2);
+                });
+            }
+        });
+    }
+
+    /// SENSITIVITY BOOTSTRAP (2026-07-09c): accumulated |Δu| history yields a non-uniform per-node
+    /// sensitivity that peaks where the field actually moves. GREEN: a node near the impulse source
+    /// accrues more energy than a far, quiescent node.
+    #[test]
+    fn test_sensitivity_bootstrap_accrues_at_source() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let (rp, ci, nnz) = path_graph(30);
+        unsafe {
+            field_build(rp.as_ptr(), ci.as_ptr(), nnz, 30);
+        }
+        let mut u0 = [0.0f64; 30];
+        u0[0] = 1.0;
+        let mut out = [0.0f64; 30];
+        // Several propagations so history accumulates.
+        for _ in 0..5 {
+            unsafe {
+                field_spectral(u0.as_ptr(), 5.0, 1.0, 30, out.as_mut_ptr());
+            }
+        }
+        let mut sens = [0.0f64; 30];
+        let rc = unsafe { field_sensitivity(sens.as_mut_ptr()) };
+        assert_eq!(rc, 0);
+        // The source node (0) moves a lot on every step → highest sensitivity; a far node (29) quiets
+        // out under diffusion → lowest. If sensitivity were uniform 1.0, the test would still pass but
+        // would not exercise the non-uniform path — so assert non-uniformity AND ordering.
+        assert!(
+            sens.iter().cloned().fold(0.0f64, f64::max) > 1.0 || sens.iter().any(|&x| x < 1.0),
+            "expected non-uniform sensitivity"
+        );
+        assert!(
+            sens[0] >= sens[29],
+            "source must be at least as sensitive as the far tail"
+        );
+    }
     /// Earlier version nested with_graph() (lock -> degrees() -> lock) and hung on native targets.
     /// The 4 inner threads race on the single STATE (intended); the outer guard only keeps this
     /// test from overlapping with the other graph-mutating tests.

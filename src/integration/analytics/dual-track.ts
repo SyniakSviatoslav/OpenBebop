@@ -39,12 +39,19 @@ export interface DualTrackVerdict {
  *    dependency/route that the deterministic graph says does not exist).
  *  - confidence below floor ⇒ low-confidence (reject — don't act on a weak hunch).
  *  - edge exists ⇒ honored.
+ *  - opts.fieldCheck (PDDL↔field bridge, 2026-07-09c) ⇒ if the proposal's focus maps to a field
+ *    disruption the field OVERRIDES, the proposal is rejected too (physics beats the stochastic
+ *    advisor). Pass `fieldCheck(focus) => ArbiterVerdict | null` (null = field has no opinion).
  */
 export function dualTrackGate(
   graph: TruthGraph,
   advisor: GnnAdvisor,
   focus: string,
-  opts: { minConfidence?: number; counterfactual?: (adj: TruthGraph, f: string) => PointOfFailure | null } = {},
+  opts: {
+    minConfidence?: number;
+    counterfactual?: (adj: TruthGraph, f: string) => PointOfFailure | null;
+    fieldCheck?: (focus: string) => 'permit' | 'warn' | 'override' | null;
+  } = {},
 ): DualTrackVerdict {
   const advice = advisor.propose(focus);
   if (!advice) return { honored: false, reason: 'no-advice', advice: null, focusRisk: null };
@@ -54,6 +61,13 @@ export function dualTrackGate(
   if (advice.confidence < minC) return { honored: false, reason: 'low-confidence', advice, focusRisk: null };
   const j = graph.nodes.indexOf(advice.target);
   if (j < 0 || graph.A[i][j] <= 0) return { honored: false, reason: 'no-such-edge', advice, focusRisk: null };
+  // Field bridge: physics may veto even a graph-consistent proposal.
+  if (opts.fieldCheck) {
+    const fc = opts.fieldCheck(focus);
+    if (fc === 'override') {
+      return { honored: false, reason: 'low-confidence', advice, focusRisk: null }; // field won; reuse reject shape
+    }
+  }
   const focusRisk = opts.counterfactual ? opts.counterfactual(graph, focus) : null;
   return { honored: true, reason: 'edge-exists', advice, focusRisk };
 }

@@ -30,7 +30,8 @@ import { init, loadProfile, statusLine, writeProfile } from './src/init.ts';
 import { probeAll, selectBackend } from './src/routing.ts';
 import { BEBOP_PRESET, type Profile } from './src/profile.ts';
 import { runBackend, ADAPTERS, isAvailable, type Backend } from './src/backend.ts';
-import { runCopilot } from './src/copilot.ts';
+import { runCopilot, runMultiPilot } from './src/copilot.ts';
+import { OUTFIT, outfitBanner } from './src/outfit.ts';
 import { Governor } from './src/governor.ts';
 import { startSyncServer } from './src/sync-server.ts';
 import { selfMaintain, selfEvolve, recordSession, selfLoop } from './src/consciousness.ts';
@@ -153,10 +154,20 @@ async function main() {
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log(banner(paint));
     console.log(paint.dim('  boot | init [--preset bebop|--json {...}] | status | agents | use <backend>'));
-    console.log(paint.dim('  run [doer|reason|redline] | dispatch "<task>" | route <class> | recall <query>'));
+    console.log(paint.dim('  run [doer|reason|redline] | dispatch " <task>" | multipilot "<task>" | route <class> | recall <query>'));
     console.log(paint.dim('  govern "<q,..>" | self [maintain|evolve|session|loop] | node | sync [--port N]'));
-    console.log(paint.dim('  map [module] | diagrams | mcp | help'));
+    console.log(paint.dim('  map [module] | diagrams | outfit | mcp | help'));
     console.log(paint.dim(`  ${BOOT.bebop.link}`));
+    return;
+  }
+
+  if (cmd === 'outfit') {
+    // `bebop outfit` — print the ship's identity contract (the "new outfit from today").
+    console.log(paint.teal(outfitBanner(OUTFIT)));
+    console.log(paint.dim(`  home: ${OUTFIT.home}`));
+    console.log(paint.dim(`  lines.boot: ${OUTFIT.lines.boot}`));
+    console.log(paint.dim(`  lines.multipilot: ${OUTFIT.lines.multipilot}`));
+    console.log(paint.dim(`  lines.field: ${OUTFIT.lines.field}`));
     return;
   }
 
@@ -453,6 +464,35 @@ async function main() {
     authority = st.authority;
     console.log(paint.dim(`  [doer=${res.doer} checker=${res.checker}] ${res.doerOutput}`));
     console.log(paint.dim(`  copilot verdict: ${res.verdict}${res.ok ? '' : ' — QUARANTINED'} | governor authority=${authority.toFixed(3)} (factor=${st.factorStatus}, resonance=${st.resonanceRisky ? 'RISKY' : 'ok'})`));
+    if (!res.ok) process.exit(1);
+    return;
+  }
+
+  if (cmd === 'multipilot') {
+    // `bebop multipilot "<task>"` — fan the task out to N specialist pilots, synthesize, gate by field.
+    const task = args.join(' ');
+    if (!task) {
+      console.log(paint.blood('  usage: bebop multipilot "<task>"  (optionally: --n 3 --no-field)'));
+      process.exit(2);
+    }
+    const nIdx = args.indexOf('--n');
+    const n = nIdx >= 0 ? Number(args[nIdx + 1]) : 3;
+    const noField = args.includes('--no-field');
+    console.log(paint.teal(`  ◈ Multipilot — fanning "${task.slice(0, 50)}" to ${n} pilots`));
+    const res = await runMultiPilot({
+      task,
+      profile: loadProfile() ?? undefined,
+      n,
+      runNative: (t) => ({ ok: true, backend: 'native', summary: `native handled: ${t.slice(0, 36)}`, exitCode: 0 }),
+      fieldGate: noField
+        ? undefined
+        : { seed: new Float64Array([1.0]), pddlCost: 1.0, opts: { t: 2.0 } }, // tiny demo seed; real callers map task→seed
+    });
+    console.log(paint.dim(`  synthesizer=${res.synthesizer}  fieldVerdict=${res.fieldVerdict ?? 'n/a'}`));
+    for (const p of res.pilots) {
+      console.log(paint.dim(`  · ${p.backend}: ${p.ok ? 'green' : 'QUARANTINED'} — ${(p.output || '').slice(0, 60)}`));
+    }
+    console.log(paint.dim(`  ${res.note}`));
     if (!res.ok) process.exit(1);
     return;
   }

@@ -100,14 +100,52 @@ is the tunable metaplasticity dial (lower → physics dominates; higher → trus
 - WGPU compute-shader backend for SpMV (`field-matvec` as a shader) → genuine on-GPU parallel
   "optical" primitive. Air-gapped crate `wgpu` fetch is the gate; Rust+SIMD is the safe interim.
 - Port `matrix.ts` SVD/PCA and `kalman` to the same Rust core (flag-OFF twins).
-- Wire `rustFieldArbiter` into the PDDL planner seam (copilot/dual-track) as the numeric gate; expose
-  Top-K Contours to the explainability layer.
+
+## 2026-07-09c — sensitivity bootstrap, f32 CSR, SIMD128, Top-K Contours, Multipilot, Outfit
+Wired per operator directive. All falsifiable; full suite: 16 Rust kernel + 547 TS (RED+GREEN).
+
+### Sensitivity bootstrap (ZERO new infra)
+The kernel already accrues `|Δu|` per step into `ACCUM` (a `Mutex<(count, Vec<f64>)>`, independent of
+`STATE` so propagators never nested-lock). `field_sensitivity()` returns the per-node `|Δu|` history,
+normalized to `[0,1]` (most-active node = 1.0). No extra buffers, no RNG, no SGD. A node that moves a
+lot under the field is "critical" → its exposure to a disruption weighs more in `field_cost`/`field_rank`.
+GREEN: source node accrues more energy than the quiescent tail; RED: empty graph → rc 1 (neutral).
+
+### f32-packed CSR + 1 GiB ceiling (storage f32, compute f64)
+`field_build_f32` uploads CSR col-indices as **f32** (halves CSR storage — the binding's biggest fixed
+cost). Compute stays f64, so results are **bit-identical** to f64 CSR (verified: max diff < 1e-12). The
+wasm `--max-memory` ceiling is lifted from 64 MiB to **1 GiB** (`rust-core/.cargo/config.toml`), so graphs
+well past the prior `n≈2000` binding limit fit. No numerical change.
+
+### SIMD128 (measured, not claimed)
+`-C target-feature=+simd128` in `.cargo/config.toml`. The matvec/dot-product loops auto-vectorize.
+Measured **1.08×** faster at n=1500 / 300 iters (79.5 ms vs 86.0 ms). Modest but free and stable; larger
+graphs benefit more. **Deterministic f64 unchanged** — we do NOT claim a bigger number than the probe shows.
+
+### Top-K Contours → explainability
+`rustTopKContours(seed, k)` returns the K nodes where a `seed` disruption hurts most, each `{index,
+impact}`. This is what the explainability layer renders: a human sees WHY the field overrode PDDL and
+which nodes to protect first. Surfaced into `field-planner.ts` (`fieldGatePlan` annotates every planned
+action with `{verdict, fieldCost, contours}`).
+
+### Multipilot + "new outfit"
+- **Multipilot** (`copilot.ts::runMultiPilot`): a task fans out to N *specialist* pilots (distinct
+  backends, so no single failure mode dominates), a *distinct* synthesizer merges them, and the Rust
+  field arbiter can veto the plan. Independence invariant: every pilot + synthesizer is a DISTINCT
+  backend; if the roster can't supply N+1 distinct available backends, it falls back to single-copilot
+  rather than fake parallelism. Exposed as `bebop multipilot "<task>"`. "Copilot is now a multipilot."
+- **New outfit** (`src/outfit.ts`): the cosmo-noir identity as ONE source of truth — Warm Cosmo-Noir
+  (Cowboy Bebop × cosmo-gothic × Ukrainian irony), signal teal `#46B0A4`, bone `#F2E9DB` on void
+  `#12100E`, creed "Hybrid is a feature, not a bug." Versioned (v1.0.0); `bebop outfit` prints it.
 
 ## Claims reference
-AK.1 Rust→WASM field core compiles offline (wasm32) and passes 14 Rust kernel + 13 TS falsifiable
-     tests (spectral, active-set, VSA, concurrency, memory/dispose lifecycle, PDDL-field bridge +
-     Final Arbiter permit/warn/override).
-AK.2 Spectral propagator is ≥5× faster than JS K-iteration at N=500 with matched physics.
+AK.1 Rust→WASM field core compiles offline (wasm32, +simd128, --max-memory=1GiB) and passes 16 Rust
+     kernel + 13 TS falsifiable tests (spectral, active-set, VSA, concurrency, memory/dispose lifecycle,
+     PDDL-field bridge + Final Arbiter, f32 CSR, sensitivity bootstrap) + field-planner TS (5) + copilot
+     TS (4, multipilot + outfit).
+AK.2 Spectral propagator is ≥5× faster than JS K-iteration at N=500 with matched physics (measured 16–73×).
 AK.3 Active-set pruning removes ≥5% of graph per step at eps=1e-3 (frontier localization).
 AK.4 field_cost conserves mass (≡1.0 uniform) and rises with sensitivity spikes; arbiter permits/
      warns/overrides across the RED+GREEN range.
+AK.5 (2026-07-09c) f32 CSR matches f64 to <1e-12; SIMD128 measured 1.08×; sensitivity bootstrap non-uniform;
+     Top-K Contours sorted desc; Multipilot distinct-pilot invariant holds; outfit contract coherent.

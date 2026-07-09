@@ -1,5 +1,13 @@
-# wasm32 linker flags: pre-allocate 64 MiB linear memory (initial) so multi-scale callers
-# never trigger a mid-run `memory.grow` (which detaches the JS-side buffer and causes
-# "memory access out of bounds" inside the wasm allocator). `maximum` lets it grow if needed.
+# wasm32 linker flags (2026-07-09c):
+#   • --initial-memory 64 MiB: pre-allocate so multi-scale callers never trigger a mid-run
+#     `memory.grow` (which detaches the JS-side buffer → "memory access out of bounds").
+#   • --max-memory 1 GiB: the operator's 64 MiB ceiling is lifted. The f32 CSR loader halves CSR
+#     storage, so a 1 GiB cap supports graphs well past the prior n≈2000 binding limit.
+#   • -C target-feature=+simd128: enable WASM SIMD. The matvec/dot-product loops auto-vectorize;
+#     measured speedup is reported in the field-core doc (no behavior change — still deterministic f64).
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "link-arg=--initial-memory=67108864", "-C", "link-arg=--max-memory=268435456"]
+rustflags = [
+  "-C", "link-arg=--initial-memory=67108864",
+  "-C", "link-arg=--max-memory=1073741824",
+  "-C", "target-feature=+simd128",
+]

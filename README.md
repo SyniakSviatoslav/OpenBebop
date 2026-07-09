@@ -20,6 +20,17 @@ What makes it **not just another wrapper** (verified, not claimed):
   tests itself, proposes corpus mutations through a checker gate, and records this session as a node.
 - **Narration + looks** — `bebop init` picks a voice (bebop / plain / sarcastic / corporate-killer)
   and a theme accent (bebop / claude / opencode / codex / custom). They actually change the CLI.
+- **New outfit (cosmo-noir)** — `bebop outfit` prints the ship's identity contract: Warm Cosmo-Noir
+  (Cowboy Bebop × cosmo-gothic × Ukrainian irony), signal teal `#46B0A4`, bone `#F2E9DB` on void
+  `#12100E`. *One meaningful color per view.* `bebop init` changes the accent for real.
+- **Multipilot** — `bebop dispatch` now fans a task to N *specialist* pilots (distinct backends so no
+  single failure mode dominates), a distinct synthesizer merges them, and the Rust field arbiter can
+  veto the plan. "Copilot is now a multipilot." Falsifiable, no RNG.
+- **Field-as-cost-surface (the unique feature)** — Bebop's planner reads a *deterministic graph-PDE
+  field* as its cost function. You can **see** where a disruption will hurt (not just that it will),
+  and **Top-K Contours** rank the worst-hit nodes so the arbiter's "no" is auditable. Visual explainer:
+  [`docs/diagrams/field-sim-explainer.svg`](docs/diagrams/field-sim-explainer.svg). Comparison report:
+  [`docs/design/field-sim-comparison-2026-07-09.md`](docs/design/field-sim-comparison-2026-07-09.md).
 - **Privacy by construction** — local-first, no telemetry, no account, no cloud control plane. Your
   keys stay in your `~/.bebop/settings.json`; the guard refuses to transmit your PQ identity.
 
@@ -47,6 +58,8 @@ bebop init              # pick narration + looks (real customization)
 | `use <backend>` | Switch + persist the default agent (refuses an unconnected one unless `--force`). |
 | `run [doer\|reason\|redline]` | Full loop; routes the task class to the cheapest adequate model. |
 | `dispatch "<task>"` | One-shot task through guard + copilot. Red-line tasks are **denied before any agent runs**. |
+| `multipilot "<task>"` | Fan the task to N specialist pilots + distinct synthesizer; field arbiter may veto. |
+| `outfit` | Print the ship's cosmo-noir identity contract (the "new outfit"). |
 | `route <class>` | Show the token-router decision. |
 | `recall <query>` | Query the bundled living memory (VSA + graph). |
 | `govern "<0.9,0.6,…>"` | L5 telemetry governor (PID authority + ICIR + resonance). |
@@ -103,9 +116,9 @@ command and exposes `verifySelfEvolution()` — the agent can prove its own evol
 
 ## Verification
 
-```
-npm test            # 538 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
-cargo test -p bebop-core   # 14 Rust kernel tests (spectral + active-set + VSA + concurrency + memory + PDDL-field bridge)
+```bash
+npm test            # 547 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
+cargo test -p bebop-core   # 16 Rust kernel tests (spectral + active-set + VSA + concurrency + memory + PDDL-field bridge + sensitivity bootstrap)
 npm run typecheck   # 0 errors
 ```
 

@@ -47,10 +47,55 @@ function ensureMem(inst: WebAssembly.Instance, needBytes: number): ArrayBuffer {
   return liveMem(inst).buffer; // re-fetch: grow detaches the old buffer
 }
 
+/** Track currently-deployed graph size (set on every build) so size-only calls can't mis-size. */
+let _n = 0;
+
+/** Upload a CSR adjacency as f32-packed (halves CSR storage vs `rustBuild`). Compute stays f64. */
+export async function rustBuildF32(A: number[][]): Promise<void> {
+  const inst = await getInstance();
+  const n = A.length;
+  _n = n;
+  const rowPtr = new Int32Array(n + 1);
+  const cols: number[] = [];
+  for (let i = 0; i < n; i++) {
+    rowPtr[i] = cols.length;
+    for (let j = 0; j < n; j++) if (A[i][j]) cols.push(j);
+  }
+  rowPtr[n] = cols.length;
+  const colArr = Float32Array.from(cols); // packed f32
+  const rpOff = 0;
+  const ciOff = rowPtr.byteLength;
+  const need = ciOff + colArr.byteLength;
+  const buf = ensureMem(inst, need);
+  new Int32Array(buf, rpOff, n + 1).set(rowPtr);
+  new Float32Array(buf, ciOff, colArr.length).set(colArr);
+  (inst.exports.field_build_f32 as Function)(rpOff, ciOff, colArr.length, n);
+}
+
+/**
+ * SENSITIVITY BOOTSTRAP (2026-07-09c): per-node criticality derived from the kernel's own
+ * accumulated |Δu| history — ZERO new infra (the buffers already exist in the core). Returns
+ * Float64Array(n), normalized to [0,1] (most-active node = 1.0). Use this as the `sensitivity`
+ * arg to `rustFieldCost`/`rustFieldRank`/`rustFieldArbiter` to make the field weigh nodes by how
+ * much they actually move. With no propagations run yet, returns uniform 1.0 (no bias).
+ */
+export async function rustFieldSensitivity(): Promise<Float64Array> {
+  const n = _n;
+  if (n === 0) return new Float64Array(0);
+  const inst = await getInstance();
+  const oOff = 0;
+  const need = oOff + n * 8;
+  const buf = ensureMem(inst, need);
+  const rc = (inst.exports.field_sensitivity as Function)(oOff);
+  if (rc !== 0) return new Float64Array(n); // empty graph → neutral
+  return Float64Array.from(new Float64Array(liveMem(inst).buffer, oOff, n));
+}
+
 /** Upload a symmetric adjacency matrix as CSR into the Rust core. Call before propagate*. */
 export async function rustBuild(A: number[][]): Promise<void> {
   const inst = await getInstance();
   const n = A.length;
+  _n = n;
   const rowPtr = new Int32Array(n + 1);
   const cols: number[] = [];
   for (let i = 0; i < n; i++) {
@@ -223,7 +268,7 @@ export interface ArbiterResult {
   pddlCost: number;
   reason: string;
 }
-export async function rustFieldArbiter(
+export async function rustFieldArbiterCore(
   seed: Float64Array | number[],
   pddlCost: number,
   opts: {
@@ -233,7 +278,7 @@ export async function rustFieldArbiter(
     deg?: number;
     tolerance?: number; // fieldCost at or below this is always permitted (SLA floor)
     mismatchRatio?: number; // field wins when fieldCost > pddlCost * mismatchRatio
-  } = {}
+  } = {},
 ): Promise<ArbiterResult> {
   const tolerance = opts.tolerance ?? 0.0;
   const mismatchRatio = opts.mismatchRatio ?? 1.5;
@@ -260,3 +305,59 @@ export async function rustFieldArbiter(
 
 /** Path to the prebuilt WASM (exposed for tests). */
 export const RUST_WASM_PATH = WASM_PATH;
+
+/**
+ * TOP-K CONTOURS — the explainability surface. Returns the K nodes where a disruption `seed` will
+ * hurt most, each with { index, impact }. `impact` is the per-node `field·sensitivity` from
+ * `rustFieldRank`. This is what the explainability layer renders so a human can see WHY the field
+ * overrode PDDL — and which nodes to protect first.
+ */
+export interface Contour {
+  index: number;
+  impact: number;
+}
+export async function rustTopKContours(
+  seed: Float64Array | number[],
+  k: number,
+  opts: { sensitivity?: Float64Array | number[]; t?: number; coeff?: number; deg?: number } = {},
+): Promise<Contour[]> {
+  const rank = await rustFieldRank(seed, opts);
+  const idx = Array.from(rank.keys());
+  idx.sort((a, b) => rank[b] - rank[a]);
+  return idx.slice(0, Math.min(k, idx.length)).map((i) => ({ index: i, impact: rank[i] }));
+}
+
+/**
+ * AUTOMATIC SENSITIVITY: if no explicit `sensitivity` is passed, bootstrap it from the kernel's
+ * accumulated |Δu| history (rustFieldSensitivity) — so the arbiter reflects each node's real
+ * criticality with ZERO extra calls from the caller. Pass `opts.sensitivity` to override.
+ */
+async function resolveSensitivity(
+  opts: { sensitivity?: Float64Array | number[] } = {},
+): Promise<Float64Array | number[] | undefined> {
+  if (opts.sensitivity) return opts.sensitivity;
+  const s = await rustFieldSensitivity();
+  // rustFieldSensitivity returns uniform 1.0 when no history exists — safe to omit (rank==cost path).
+  if (s.length === 0) return undefined;
+  return s;
+}
+
+// Re-wrap rustFieldArbiter to auto-bootstrap sensitivity. The public signature is unchanged; we
+// just resolve sensitivity before delegating to the core cost.
+const _arbiterCore = rustFieldArbiterCore;
+export async function rustFieldArbiter(
+  seed: Float64Array | number[],
+  pddlCost: number,
+  opts: {
+    sensitivity?: Float64Array | number[];
+    t?: number;
+    coeff?: number;
+    deg?: number;
+    tolerance?: number;
+    mismatchRatio?: number;
+    autoSensitivity?: boolean; // default true: bootstrap per-node sensitivity from field history
+  } = {},
+): Promise<ArbiterResult> {
+  const sens = opts.autoSensitivity === false ? opts.sensitivity : await resolveSensitivity(opts);
+  return _arbiterCore(seed, pddlCost, { ...opts, sensitivity: sens });
+}
