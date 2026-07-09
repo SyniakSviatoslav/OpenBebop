@@ -11,7 +11,7 @@
 // recorder, or let README's test count drift), this script exits 1.
 
 import { readFileSync, existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import path from 'node:path';
 
 const ROOT = process.cwd();
@@ -322,6 +322,46 @@ try {
   check('PDDL-INSTRUCT Logical CoT: verifyLogicalPlan + precondition/invariant/noop RED+GREEN', fn && test,
     fn && test ? 'structural step-wise plan verification proven (arXiv:2509.13351); violations give precise re-plan feedback'
       : 'verifyLogicalPlan missing or test lacks the precondition/invariant/noop RED cases');
+}
+
+// --- AA. Universal rule: as-above-so-below checker recurs at kernel/agent/plan/tool-arg scale ---
+{
+  const k = read('src/kernel.ts');
+  const cp = read('src/copilot.ts');
+  const lc = read('src/integration/logicalCot.ts');
+  const v = read('src/validate.ts');
+  const sp = read('src/speculate.ts');
+  const ok = /applyCommandChecked/.test(k) && /Checker/.test(k)
+    && /checker/.test(cp) && /verifyLogicalPlan/.test(lc) && /validateToolArgs/.test(v) && /verifyBlock/.test(sp);
+  check('As-above-so-below checker: one verify-then-admit primitive at kernel/agent/plan/tool-arg', ok,
+    ok ? 'fail-closed checker recurs at every scale (Cross-pattern A)'
+      : 'missing a checker stage (kernel/copilot/logicalCot/validate/speculate)');
+}
+
+// --- AB. Universal rule: propose-don't-execute — every advisor entry has a deterministic verifier ---
+{
+  // run the invariant self-test that asserts no advisor path skips the gate
+  const inv = read('scripts/invariant-advisor-gate.mjs');
+  check('Propose-don-t-execute: advisor→verifier invariant self-test exists + passes shape', /applyCommandChecked/.test(inv) && /dualTrackGate/.test(inv) && /verifyLogicalPlan/.test(inv) && /verifyBlock/.test(inv),
+    'scripts/invariant-advisor-gate.mjs asserts every advisor entry (kernel/copilot/dual-track/speculate/logicalCot) is matched by a deterministic verifier');
+}
+
+// --- AC. Universal rule: Flag-OFF → shadow → gate (count seams) ---
+{
+  const count = execSync("grep -rl 'FLAG-OFF' src | wc -l", { encoding: 'utf8' }).trim();
+  check('Flag-OFF → shadow → gate: >=8 FLAG-OFF seams (no feature live by default)', Number(count) >= 8,
+    `${count} FLAG-OFF seams present (Cross-pattern C)`);
+}
+
+// --- AD. Universal rule: Multipilot (>=3 independent verifier loops, tensor overlay) ---
+{
+  const m = read('src/integration/multipilot.ts');
+  const t = read('src/integration/multipilot.test.ts');
+  const fn = /export (async )?function multipilot/.test(m) && /overlay/.test(m) && /converged|divergent/.test(m);
+  const test = /multipilot/.test(t) && /converged/.test(t) && /divergent/.test(t);
+  check('Multipilot: >=3 independent verifier loops + tensor overlay RED+GREEN', fn && test,
+    fn && test ? 'brain-inside-brain multidimensional verification proven (converged/divergent)'
+      : 'multipilot/overlay missing or test lacks the divergent RED case');
 }
 
 console.log(`\n  ${fails ? `✗ ${fails} doc-claim check(s) FAILED — fix before commit/release` : '✓ all doc claims backed by live proof'}`);

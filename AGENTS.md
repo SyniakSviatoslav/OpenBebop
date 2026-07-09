@@ -45,6 +45,63 @@ Hermes, Codex, OpenCode, Aider, or Bebop itself) working in this repo.
 - **Implementation**: `src/governor.ts` (gate) + `src/integration/analytics/dual-track.ts` (seam).
   Causal blast-radius surfaced via `pointsOfFailure` (N4).
 
+## Universal rule — As-above-so-below checker (verify-then-admit at every scale)
+- **Definition**: the SAME fail-closed `Checker` abstraction that admits a command in the kernel
+  (`applyCommandChecked` in `kernel.ts`) recurs at every scale — kernel (decide/fold), agent
+  (copilot distinct-backend checker), plan (`logicalCot` step-wise logic auditor), tool-args
+  (`validate` boundary contract), draft (`speculate` guard-verifies). The primitive is always
+  *verify-then-admit, quarantine-on-failure*; the verifier is NEVER the same component that produced.
+- **Where it adds EV**: one uniform, auditable trust boundary instead of N ad-hoc checks; a violation
+  at any scale has the same shape and the same fail-closed semantics (localize → quarantine → re-plan).
+- **Where it does NOT add EV**: when the verifier and producer are collapsed into one component (defeats
+  independence). Enforce Cross-pattern B (propose-don't-execute) so the producer is always stochastic/
+  LLM and the verifier always deterministic/distinct.
+- **Implementation**: `kernel.ts applyCommandChecked` + `copilot.ts` + `logicalCot.ts` + `validate.ts`
+  + `speculate.ts`. See `docs/design/bebop-fundamental-principles-2026-07-09.md` (Cross-pattern A).
+
+## Universal rule — Propose-don't-execute (stochastic layer never gets the actuator)
+- **Definition**: any stochastic/advisor component (LLM, GNN, heuristic) MAY propose/name an intent but
+  NEVER writes to the actuator plane. Execution is always a deterministic function over a verified state.
+  Concretely: advisor proposes → deterministic verifier checks → deterministic executor applies (or the
+  planner returns NO PATH when preconditions are unmet).
+- **Where it adds EV**: it is the single topology that makes every other safety property possible —
+  kernel (ADR-003), dual-track (N6), copilot, speculate, logicalCot, GOAP (N8c) all rely on it. A
+  hallucinated plan physically cannot act because the executor enumerates transitions, not the model.
+- **Where it does NOT add EV**: letting an LLM call a tool directly (bypassing the gate) — that collapses
+  to propose-and-execute and re-introduces the failure mode. Enforced by `guard.ts` + `loop.ts` GUARD GATE.
+- **Implementation**: see `src/kernel.ts` (advisor proposes, kernel decides), `src/integration/analytics/
+  dual-track.ts`, `src/copilot.ts`, `src/speculate.ts`, `src/integration/logicalCot.ts`,
+  `src/integration/analytics/goap.ts`. See principles doc (Cross-pattern B).
+
+## Universal rule — Flag-OFF → shadow → gate (no feature goes live silently)
+- **Definition**: every new analytic/integration is FLAG-OFF by default (inert unless a caller supplies
+  its cfg). Deployment ladder: OFF → **shadow** (run in background, log drift, no blocking) → **gate**
+  (block on breach) — and red-line actions are NEVER gated on a statistical loop alone.
+- **Where it adds EV**: bounds the blast radius of a wrong/unproven module; proves the false-positive rate
+  in shadow before any blocking. Matches the cycle-consistency theorem deployment (§6).
+- **Where it does NOT add EV**: gating a safety-critical/red-line action on a single statistical signal
+  (use the deterministic contract checks + a ground-truth oracle instead).
+- **Implementation**: 8 FLAG-OFF seams (cycle-consistency, ica, kalman, degradation, mesh, arch-mine,
+  field, active-inference, dual-track, logicalCot, redteam, modelGateway, multipilot, shadow, etc.). See principles doc
+  (Cross-pattern C).
+
+## Universal rule — Multipilot (brain-inside-brain, multidimensional verification)
+- **Definition**: for any agentic prompt (reasoning / review / reverse-engineering / research / planning),
+  run ≥3 INDEPENDENT verifier loops in parallel over the same artifact and overlay their verdicts as a
+  tensor (disagreement = dimension). One checker (copilot) is necessary but not sufficient; N≥3 independent
+  checkers catch the failure modes any single one blind-spots (cf. cycle-consistency's self-inverse blind
+  spot). The orchestrator promotes the artifact only when the overlay converges; divergence is surfaced
+  for human triage, never silently averaged away.
+- **Where it adds EV**: turns single-point review into a multidimensional integrity signal; each verifier
+  is a distinct axis (e.g. structural/logical, adversarial/red-team, oracle/truth), so a hallucination that
+  fools axis 1 is caught by axis 2 or 3. Default for ALL agentic surfaces.
+- **Where it does NOT add EV**: colluding checkers (same model/prompt) — independence is the whole point.
+  Each loop MUST differ in method or model; identical checkers add latency, not integrity.
+- **Implementation**: `src/integration/multipilot.ts` — `multipilot(artifact, loops[])` runs N independent
+  verifier fns, returns the per-axis verdicts + an `overlay` (converged / divergent) + a recommended action.
+  FLAG-OFF seam; composable with copilot/redteam/logicalCot. See principles doc (Cross-pattern + the
+  "tensor overlay" directive 2026-07-09).
+
 ## Repo layout
 - `bebop.ts` — CLI entry (subcommands: boot, run, agents, use, recall, route, map, diagrams,
   **docs**, mcp, self, init, and the `/`-slash commands).
@@ -71,7 +128,7 @@ documentation, not gospel; verify non-trivial claims against code.
 ## Verify before claiming done
 - `npm run verify` — one-shot full gate: typecheck + tests + doc-claim honesty + falsifiable-proof.
 - `npm run boot` — guard-OS self-certification (must go RED to be trusted).
-- `npm test` — 486 falsifiable tests.
+- `npm test` — 494 falsifiable tests.
 - `npm run typecheck` — clean.
 - After any doc change: `bebop docs check`.
 - `node scripts/verify-doc-claims.mjs` — doc claims must match live code (pre-commit + CI).

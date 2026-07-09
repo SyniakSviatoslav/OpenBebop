@@ -22,6 +22,7 @@ import { runBackend, type Backend } from './backend.ts';
 import { selectBackend, rotate } from './routing.ts';
 import { selectZenoh } from './integration/zenoh/real-adapter.ts';
 import { mineGraph, type MineReport } from './integration/analytics/arch-mine.ts';
+import { shadowVerify } from './integration/shadow.ts';
 import { emptyLedger, record, type Ledger } from './token.ts';
 import type { Profile } from './profile.ts';
 import { preToolUse, type HookSpec } from './hooks.ts';
@@ -77,6 +78,10 @@ export interface BebopConfig {
   // report in the transcript + returns it on LoopResult.mine. Deterministic, no LLM call. Off by
   // default: no archMine ⇒ the pass never runs and mine is undefined.
   archMine?: { id: string; source: string; isMarkdown?: boolean }[];
+  // Shadow verification pass (flag-OFF, Universal rule Flag-OFF → shadow → gate): when set, every
+  // validated tool call is also run through logicalCot + dualTrack + validate in NON-BLOCKING shadow
+  // mode so we observe their false-positive rate before any is promoted to a hard gate. Never rejects.
+  shadowVerify?: boolean;
 }
 
 export interface LoopContext {
@@ -373,6 +378,13 @@ export async function runLoop(cfg: BebopConfig): Promise<LoopResult> {
       }
       const callArgs = valid; // typed, safe payload
       const actionLabel = `${callArgs.name}${callArgs.path ? ' ' + callArgs.path : callArgs.task ? ' ' + callArgs.task : ''}`;
+      // ── SHADOW VERIFY (flag-OFF, non-blocking) ── run the proven-but-flag-OFF seams in shadow so
+      // we observe their false-positive rate before promoting any to a hard gate. Shadow NEVER rejects;
+      // it only records what each axis would have said (tensor overlay for the operator).
+      if (cfg.shadowVerify) {
+        const shadow = shadowVerify(callArgs.name, callArgs as unknown as Record<string, unknown>);
+        transcript.push(paint.dim(`  · SHADOW ${shadow.note}`));
+      }
       reactTrace.push({ iter, phase: 'reason', thought: res.content, action: actionLabel, ok: true });
       transcript.push(paint.dim(`  ⟳ iter ${iter} · REASON: ${res.content ?? '(act)'}`));
 
