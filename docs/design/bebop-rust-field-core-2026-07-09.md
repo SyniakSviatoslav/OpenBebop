@@ -9,8 +9,25 @@
   external crates, no `std::rand`, no `std::time`, air-gapped build). Exposes `field_build`,
   `field_spectral`, `field_active`, `vsa_similarity` via C-ABI.
 - `src/integration/field-rust.ts` — TS/WASM bindings; mirrors the JS `laplacian` adjacency API.
-- `src/integration/field-rust.test.ts` — 5 tests (3 GREEN + 2 RED-falsifiable) loading the REAL
-  `.wasm` from `rust-core/target/.../bebop_core.wasm`.
+- `src/integration/field-rust.test.ts` — 7 tests (GREEN + RED-falsifiable) loading the REAL
+  `.wasm` from `rust-core/target/.../bebop_core.wasm`. Includes **memory-lifecycle** tests
+  (heap stable across 100 build→propagate→dispose cycles; dispose clears state → no stale graph).
+- `src/integration/field-rust.ts` — added `rustDispose()` (calls `field_reset`) and `rustMemoryBytes()` heap introspection.
+
+## Memory discipline (2026-07-09, operator: "garbage cleaning / leak avoidance")
+The kernel is now the primary field component, so memory hygiene is load-bearing, not cosmetic:
+- **Degrees precomputed once** in `field_build` and stored in `GraphState`; `field_matvec_raw`
+  reads the cached `degrees` slice instead of reallocating a fresh `Vec<f64>` every matvec.
+- **No per-call CSR clone**: propagators borrow the stored CSR by reference (lock held for the
+  whole compute, so no nested-lock deadlock) instead of `.to_vec()`-ing the graph on every call.
+- **Reused transient buffers**: spectral peak working set is **4·n** f64 (rotated `t_prev/t_cur/t_next`
+  + one `lu` scratch) — was `(deg+2)·n`; active-set uses **2·n** double-buffered `u` + one `lu` + mask.
+- **`field_reset()`** drops all stored `Vec`s → a running agent can reclaim between graphs. The
+  dispose-lifecycle tests prove the heap does not grow across 100 rebuild cycles (no leak) and that
+  computing on a disposed/empty state is refused (rc=1), so no dangling graph ever lingers.
+- Single-instance by ABI (one CSR in WASM linear memory at a time). Native `cargo test` serializes
+  graph-mutating tests on a guard; the concurrency/deadlock test still spawns 4 real threads inside
+  that guard, so the re-entrant-lock regression is genuinely exercised.
 
 ## Operator's four fixes — implemented
 | Fix | Implementation | Where |
@@ -60,6 +77,7 @@ Rust spectral core beats it on the simulation task while k-d wins raw latency on
 - Port `matrix.ts` SVD/PCA and `kalman` to the same Rust core (flag-OFF twins).
 
 ## Claims reference
-AK.1 Rust→WASM field core compiles offline (wasm32) and passes 5 falsifiable tests.
+AK.1 Rust→WASM field core compiles offline (wasm32) and passes 10 Rust kernel + 7 TS falsifiable
+     tests (spectral, active-set, VSA, concurrency, memory/dispose lifecycle).
 AK.2 Spectral propagator is ≥5× faster than JS K-iteration at N=500 with matched physics.
 AK.3 Active-set pruning removes ≥5% of graph per step at eps=1e-3 (frontier localization).
