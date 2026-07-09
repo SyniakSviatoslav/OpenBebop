@@ -397,3 +397,28 @@ test('RED: a rejected advice is NEVER silently dropped — bridgeMetrics reflect
   const after = g2.bridgeMetrics().rejectedAdvices;
   assert.equal(after, before + 1, 'a Safe-State override is counted (not absorbed)');
 });
+
+// ── N7++ degradation early-warning (Kalman-smoothed hallucination-rate trend) ──
+
+test('GREEN: a steady healthy run keeps degradationSignal=false (no false alarm)', () => {
+  const g = new Governor({ ...baseCfg, degradationQ: 0.01, degradationR: 1 });
+  // healthy advisor → never rejected → hallucinationRate stays 0 → smoothed rate flat → no signal
+  for (let k = 0; k < 30; k++) {
+    g.step(sample({ predictedQuality: 0.9, actualQuality: 0.89 }));
+  }
+  assert.equal(g.state.degradationSignal, false, 'flat healthy rate must not trip the early-warning');
+  assert.ok(g.state.hallucinationRateSmooth! < 0.01);
+});
+
+test('RED: a factor dying mid-run drives the rate UP → degradationSignal fires BEFORE any floor', () => {
+  const g = new Governor({ ...baseCfg, degradationQ: 0.05, degradationR: 1, degradationMargin: 0.05 });
+  // first 10 steps healthy (rate 0), then the advisor goes dead (anti-correlated) → rate climbs
+  for (let k = 0; k < 10; k++) g.step(sample({ predictedQuality: 0.9, actualQuality: 0.89 }));
+  assert.equal(g.state.degradationSignal, false, 'still healthy at step 10');
+  for (let k = 0; k < 40; k++) {
+    const hi = k % 2 === 0;
+    g.step(sample({ predictedQuality: hi ? 0.95 : 0.1, actualQuality: hi ? 0.1 : 0.95 }));
+  }
+  assert.equal(g.state.degradationSignal, true, 'rising reject-rate must trip the early-warning');
+  assert.ok(g.state.hallucinationRateSmooth! > 0.2, 'smoothed rate is now materially elevated');
+});

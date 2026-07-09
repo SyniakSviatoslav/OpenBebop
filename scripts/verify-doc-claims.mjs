@@ -236,5 +236,60 @@ try {
       : 'pointsOfFailure missing, untested, or not consumed by the dual-track seam');
 }
 
+// --- S. N4++ causal counterfactual under do-intervention: causalCounterfactual + RED+GREEN ---
+{
+  const am = read('src/integration/analytics/arch-mine.ts');
+  const t = read('src/integration/analytics/arch-mine.test.ts');
+  const fn = /export function causalCounterfactual/.test(am) && /CausalCounterfactual/.test(am);
+  const test = /causalCounterfactual/.test(t) && /do\(replace/.test(t) && /downstream closure/.test(t);
+  check('N4++ causal counterfactual (do-intervention): causalCounterfactual + RED+GREEN', fn && test,
+    fn && test ? 'transitive break-closure under do(X) proven (hub breaks all, leaf breaks none)'
+      : 'causalCounterfactual missing or its test lacks the reachability RED case');
+}
+
+// --- T. N8a Kalman filter: kalman1dStep/kalmanAnomaly + anomaly RED+GREEN ---
+{
+  const k = read('src/integration/analytics/kalman.ts');
+  const t = read('src/integration/analytics/kalman.test.ts');
+  const fn = /export function kalman1dStep/.test(k) && /export function kalmanAnomaly/.test(k);
+  const test = /kalman1dStep/.test(t) && /sudden jump/.test(t) && /innovation/.test(t);
+  check('N8a Kalman filter: kalman1dStep + kalmanAnomaly RED+GREEN', fn && test,
+    fn && test ? 'deterministic Kalman 1-D + innovation-anomaly proven (no ML/training)'
+      : 'kalman1dStep/kalmanAnomaly missing or test lacks the innovation-spike RED case');
+}
+
+// --- U. N8b ntfy alert sink: governorAlertNtfy + RED+GREEN (delivery seam) ---
+{
+  const n = read('src/integration/analytics/ntfy.ts');
+  const t = read('src/integration/analytics/ntfy.test.ts');
+  const fn = /export function governorAlertNtfy/.test(n) && /export function shouldAlert/.test(n);
+  const test = /governorAlertNtfy/.test(t) && /safe-state/.test(t) && /no alert/.test(t);
+  check('N8b ntfy alert sink: governorAlertNtfy + RED+GREEN (flag-OFF)', fn && test,
+    fn && test ? 'early-warning delivery seam proven (POST shape pure, no core I/O)'
+      : 'governorAlertNtfy/shouldAlert missing or test lacks the alert-shape RED+GREEN');
+}
+
+// --- V. N8c GOAP planner: plan + invariant firewall RED+GREEN (no-advisor-executes) ---
+{
+  const g = read('src/integration/analytics/goap.ts');
+  const t = read('src/integration/analytics/goap.test.ts');
+  const fn = /export function plan/.test(g) && /invariant/.test(g) && /unreachable/.test(g);
+  const test = /plan/.test(t) && /unreachable/.test(t) && /firewall|invariant/.test(t);
+  check('N8c GOAP planner: plan + symbolic invariant firewall RED+GREEN', fn && test,
+    fn && test ? 'advisor names goal; kernel plans; unreachable goal = no path (anti-hallucination)'
+      : 'GOAP plan/invariant missing or test lacks the unreachable/firewall RED case');
+}
+
+// --- W. N7++ degradation early-warning: Kalman-smoothed rate + degradationSignal RED+GREEN ---
+{
+  const gov = read('src/governor.ts');
+  const t = read('src/governor.test.ts');
+  const fn = /degradationSignal/.test(gov) && /degradationQ/.test(gov) && /hallucinationRateSmooth/.test(gov);
+  const test = /degradationSignal/.test(t) && /rising reject-rate/.test(t) && /early-warning/.test(t);
+  check('N7++ degradation early-warning: Kalman-smoothed rate + degradationSignal RED+GREEN', fn && test,
+    fn && test ? 'rate-trend early-warning proven (fires before any safe-state floor)'
+      : 'degradationSignal/degradationQ missing or test lacks the rising-rate RED case');
+}
+
 console.log(`\n  ${fails ? `✗ ${fails} doc-claim check(s) FAILED — fix before commit/release` : '✓ all doc claims backed by live proof'}`);
 process.exit(fails ? 1 : 0);

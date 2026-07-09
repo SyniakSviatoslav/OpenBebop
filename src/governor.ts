@@ -49,6 +49,12 @@ export interface GovernorState {
   rejectedAdvices?: number;
   /** N7: hallucination rate = rejectedAdvices / totalSteps ∈ [0,1]. */
   hallucinationRate?: number;
+  /** N7++: degradation signal. True when the Kalman-smoothed hallucination rate has climbed
+   *  past its adaptive baseline by `degradationMargin` — the "is it degrading 10 min before it
+   *  fails?" early-warning. Deterministic (EMA/Kalman), no ML, no Date. */
+  degradationSignal?: boolean;
+  /** N7++: smoothed hallucination rate (Kalman posterior) for dashboards. */
+  hallucinationRateSmooth?: number;
 }
 
 // ── pure math primitives ──────────────────────────────────────────────────────
@@ -158,6 +164,7 @@ import { pcaAnomalyScore, type PcaAnomalyState } from './integration/analytics/a
 import { cycleConsistencyGate, type CycleConsistencyGateState } from './integration/analytics/cycle-consistency.ts';
 import type { TelemetryICAPipeline } from './integration/analytics/telemetry-ica-loop.ts';
 import { scoreTelemetrySample } from './integration/analytics/telemetry-ica-loop.ts';
+import { kalman1dStep } from './integration/analytics/kalman.ts';
 
 export function detectAnomaly(history: number[], x: number, k = 3): boolean {
   if (history.length < 2) return false;
@@ -212,7 +219,21 @@ export interface GovernorConfig extends PIDConfig {
    *  must not hold the wheel. Off unless supplied. When supplied, `step()` must be called
    *  with the current monotonic clock ms (a 4th arg) OR the caller must feed `t` itself;
    *  if no time is ever supplied the watchdog is inert (cannot false-trip on a missing clock). */
+  /** N2 liveness contract (flag-OFF). If the stochastic agent (control-plane
+   *  advisor) goes silent for longer than `watchdogMs`, the kernel drops to SAFE STATE:
+   *  authority floored to uMin and `safeState=true`. This is the "Heartbeat / Watchdog"
+   *  from the Sandbox-Paradox research — a probabilistic advisor that hangs mid-thought
+   *  must not hold the wheel. Off unless supplied. When supplied, `step()` must be called
+   *  with the current monotonic clock ms (a 4th arg) OR the caller must feed `t` itself;
+   *  if no time is ever supplied the watchdog is inert (cannot false-trip on a missing clock). */
   watchdogMs?: number;
+  /** N7++ degradation early-warning (flag-OFF). When supplied, the governor Kalman-smooths the
+   *  per-step hallucinationRate and raises `degradationSignal` when the smoothed rate climbs past
+   *  its adaptive baseline by `degradationMargin` (fraction of the smoothed rate, ≥0). Deterministic
+   *  — no ML/no Date. Off unless `degradationQ`/`degradationR` are given. */
+  degradationQ?: number;
+  degradationR?: number;
+  degradationMargin?: number;
 }
 
 export class Governor {
@@ -243,6 +264,10 @@ export class Governor {
   private totalSteps = 0;
   private rejectedAdvices = 0;
   private analyticsLatencyEma = 0;
+  // N7++ degradation early-warning (flag-OFF): Kalman state over hallucinationRate
+  private kalmanRate: { x: number; P: number } = { x: 0, P: 1e6 };
+  private rateBaseline = 0;
+  private degradationSignal = false;
 
   constructor(cfg: GovernorConfig) {
     this.cfg = cfg;
@@ -309,6 +334,10 @@ export class Governor {
         subsystemFault: -1,
         safeState: silentTooLong,
         agentSilentMs: watchdogArmed ? agentSilentMs : 0,
+        rejectedAdvices: this.rejectedAdvices,
+        hallucinationRate: this.totalSteps > 0 ? this.rejectedAdvices / this.totalSteps : 0,
+        hallucinationRateSmooth: this.kalmanRate.x,
+        degradationSignal: this.degradationSignal,
       } as GovernorState);
     }
     const error = this.cfg.targetQuality - s.actualQuality;
@@ -391,15 +420,33 @@ export class Governor {
     const analyticsMs = performance.now() - tAnalytics0;
     this.analyticsLatencyEma = 0.1 * analyticsMs + 0.9 * this.analyticsLatencyEma;
 
-    // N7 hybrid-bridge observability: a "rejected advice" = the kernel overrode the
-    // advisor's requested authority `u` (safe-state floor, dead-factor kill, resonance cap,
-    // or any clamp). This is the honest "hallucination rate" the dump's architect test asks for.
+    // N7: a "rejected advice" = the kernel overrode the advisor's requested authority `u`.
     this.totalSteps += 1;
     const rejected = authority < u - 1e-12; // advisor asked for MORE than the kernel granted
     if (rejected) this.rejectedAdvices += 1;
     const hallucinationRate = this.totalSteps > 0 ? this.rejectedAdvices / this.totalSteps : 0;
 
-    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error, pcaAnomaly: this.pcaAnomaly, cycleBroken: this.cycleBroken, subsystemFault: this.subsystemFault, safeState, agentSilentMs: watchdogArmed ? agentSilentMs : 0, rejectedAdvices: this.rejectedAdvices, hallucinationRate });
+    // N7++ degradation early-warning (flag-OFF): Kalman-smooth the per-step rate; raise the signal
+    // when the smoothed rate climbs past its recent baseline by `degradationMargin` (fraction) AND
+    // the absolute rate is non-trivial (so a 0→0.01 blip doesn't trip). The baseline is a decaying
+    // running max of the smoothed rate, so a sustained UP-trend (rate rising from its prior level)
+    // trips "before any safe-state floor is hit" — the dump's "degrading 10 min before failure" tell.
+    // Deterministic; only active when degradationQ/R configured.
+    let hallucinationRateSmooth = hallucinationRate;
+    if (this.cfg.degradationQ !== undefined && this.cfg.degradationR !== undefined) {
+      const { state } = kalman1dStep(this.kalmanRate, hallucinationRate, { q: this.cfg.degradationQ, r: this.cfg.degradationR });
+      this.kalmanRate = state;
+      hallucinationRateSmooth = state.x;
+      const margin = this.cfg.degradationMargin ?? 0.05;
+      // lagging EMA baseline: tracks the established rate level but lags a rising rate, so a
+      // sustained UP-trend (rate climbing from its prior level) trips "before any safe-state floor
+      // is hit" — the dump's "degrading 10 min before failure" tell. Steady-state high rate does NOT
+      // trip (baseline catches up); only the TRANSITION trips. Deterministic; flag-OFF.
+      this.rateBaseline = 0.95 * this.rateBaseline + 0.05 * hallucinationRateSmooth;
+      this.degradationSignal = hallucinationRateSmooth > 0.2 && hallucinationRateSmooth > this.rateBaseline * (1 + margin);
+    }
+
+    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error, pcaAnomaly: this.pcaAnomaly, cycleBroken: this.cycleBroken, subsystemFault: this.subsystemFault, safeState, agentSilentMs: watchdogArmed ? agentSilentMs : 0, rejectedAdvices: this.rejectedAdvices, hallucinationRate, hallucinationRateSmooth, degradationSignal: this.degradationSignal });
   }
 
   /**

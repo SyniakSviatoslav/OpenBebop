@@ -21,6 +21,7 @@ import {
   extractWikilinks,
   mineGraph,
   pointsOfFailure,
+  causalCounterfactual,
 } from './arch-mine.ts';
 import { scanProjects, reverseEngineeringLoop } from './loop.ts';
 
@@ -221,4 +222,38 @@ test('RED: pointsOfFailure over a BROKEN edge is NOT silently absorbed (returns 
   assert.ok(pof, 'focus resolved even though it imports nothing');
   assert.deepEqual(pof!.downstream, ['p:app'], 'app→core edge is still surfaced (not absorbed)');
   assert.deepEqual(pof!.upstream, [], 'core supplies nothing after the edge was dropped (honest)');
+});
+
+// ── N4++ causal counterfactual under a do-intervention ─────────────────────────
+
+test('GREEN: do(replace leaf) breaks nothing reachable', () => {
+  const adj = buildAdjacency([
+    { id: 'p:core', source: "import { b } from './b.ts';" },
+    { id: 'p:b', source: "import { c } from './c.ts';" }, // b→c
+    { id: 'p:c', source: 'export const x = 1;' }, // leaf
+    { id: 'p:lonely', source: 'export const y = 2;' }, // orphan
+  ]);
+  const cf = causalCounterfactual(adj, 'p:lonely');
+  assert.ok(cf, 'known node');
+  assert.deepEqual(cf!.broken, [], 'orphan has no importers ⇒ changing it breaks nothing');
+  assert.deepEqual(cf!.direct, []);
+});
+
+test('RED: do(replace core hub) breaks the whole downstream closure', () => {
+  const adj = buildAdjacency([
+    { id: 'p:hub', source: 'export const x = 1;' }, // hub: imported by everyone below
+    { id: 'p:b', source: "import { x } from './hub.ts'; import { app } from './app.ts';" }, // b→hub, b→app
+    { id: 'p:c', source: "import { x } from './hub.ts';" }, // c→hub
+    { id: 'p:app', source: "import { x } from './hub.ts'; import { d } from './d.ts';" }, // app→hub, app→d
+    { id: 'p:d', source: "import { x } from './hub.ts';" }, // d→hub
+  ]);
+  const cf = causalCounterfactual(adj, 'p:hub');
+  // everything that imports hub (b, c, app, d) breaks
+  assert.deepEqual(cf!.broken.sort(), ['p:app', 'p:b', 'p:c', 'p:d'].sort());
+  assert.deepEqual(cf!.direct.sort(), ['p:b', 'p:c', 'p:app', 'p:d'].sort());
+});
+
+test('RED: do(replace unknown node) → null (not a silent empty set)', () => {
+  const adj = buildAdjacency([{ id: 'p:a', source: 'export const x = 1;' }]);
+  assert.equal(causalCounterfactual(adj, 'p:ghost'), null);
 });

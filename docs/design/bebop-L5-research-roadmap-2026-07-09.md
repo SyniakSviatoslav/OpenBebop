@@ -256,6 +256,73 @@ accepts it without kernel change.
 
 ---
 
+## 7b. Phase-3 extensions — IMPLEMENTED & VERIFIED (2026-07-09)
+
+Following the operator's "implement A+B+C + research next tools" directive, the three approved
+buildable upgrades landed (flag-OFF, RED+GREEN), plus a sovereign-core tooling triage of the
+requested list (Ifixai, Pi-hole, mvt-project, simple-login, Orca, Rowboat, ntfy, ComfyUI,
+Elasticsearch, Kalman filter).
+
+Final proof: `npm run verify` → **474 pass / 0 fail** (was 456; +18 = +3 kalman +5 goap +5 ntfy
++3 arch-mine(N4++) +2 governor(N7++)). `.git/hooks/pre-commit` → both gates GREEN (doc-claim
+checks M–W; falsifiable-proof 56/56). README/AGENTS counts bumped to 474.
+
+### N4++ — Causal counterfactual under a do-intervention (`arch-mine.ts`)
+- `causalCounterfactual(adj, focus)` — the transitive **downstream break-closure** under do(replace
+  focus): every importer (of importers…) that would break if focus's contract changed. Pure BFS over
+  the import graph, no RNG. This is the dump's "what breaks if I replace module X but keep its
+  interface?" answered deterministically (not a learned causal model).
+- Tests: GREEN (do(replace orphan) breaks nothing) · RED (do(replace hub) breaks the whole closure)
+  · RED (unknown focus → null, not a silent empty set).
+
+### N7++ — Degradation early-warning (`governor.ts`)
+- Kalman-smoothed `hallucinationRate` (N8a filter) + `degradationSignal` on `GovernorState`. The
+  signal trips when the smoothed rate **trends up** from its lagging-EMA baseline (the dump's
+  "degrading 10 min before it fails" tell) — fires BEFORE any safe-state floor is hit. Steady-state
+  high rate does NOT trip (baseline catches up); only the transition trips. FLAG-OFF (only active
+  with `degradationQ/R` cfg). The early failout/safe-state return path also carries the fields.
+- Tests: GREEN (steady healthy run → signal false) · RED (factor dies mid-run → rate ramps → signal
+  true, and `hallucinationRateSmooth > 0.2`).
+
+### N8a — Deterministic Kalman filter (`kalman.ts`)
+- `kalman1dStep` (1-D constant-model predict/update with Joseph-form covariance) + `kalmanAnomaly`
+  (innovation vs 3σ). No training, no RNG — upgrades N3 anomaly + N7 degradation. Also reusable for
+  telemetry smoothing anywhere a deterministic state estimate is wanted.
+- Tests: GREEN (steady measurement → innovation ≈0, no anomaly) · RED (sudden jump → flagged) ·
+  GREEN (posterior converges to the true mean).
+
+### N8b — ntfy alert sink (`ntfy.ts`)
+- `governorAlertNtfy(cfg, state)` builds the exact self-hosted ntfy POST for a tripped early-warning
+  (degradation / safe-state / hallucination-spike / cycle-broken / pca-anomaly). Pure function — the
+  caller does the `fetch`; the kernel stays air-gapped and offline. FLAG-OFF delivery seam.
+- Tests: GREEN (healthy → no alert) · RED (safe-state → alert w/ exact POST shape) · RED (spike ≥0.5)
+  · GREEN (POST shape built correctly).
+
+### N8c — GOAP deterministic planner (`goap.ts`)
+- The dump's ONE concrete correct core idea, reformulated for a CODING AGENT: the LLM/advisor picks
+  the **goal**; a symbolic A* planner searches the state space and executes. `plan(start, goal,
+  actions)` returns the cheapest action sequence or `ok:false` (anti-hallucination: an unreachable
+  goal yields NO PATH — the kernel physically cannot act on a hallucinated plan). Each action has an
+  optional `invariant` firewall checked before execution (e.g. "never deploy a dirty branch").
+  Deterministic, bounded (maxExpansions), no RNG/SDG. ADR-003 made executable. FLAG-OFF.
+- Tests: GREEN (reachable goal → plan) · GREEN (already-satisfied → empty plan) · RED (unreachable
+  goal → no path) · RED (invariant firewall blocks an action even when preconditions pass) · GREEN
+  (actionAllowed true when pre+invariant hold).
+
+### Tooling triage (sovereign-core lens — air-gapped, deterministic, no RNG/SDG/Date)
+- **INTEGRATED (real EV):** Kalman filter (N8a) · ntfy (N8b, delivery seam only).
+- **REFERENCE-ONLY / DEFERRED (not core):** Orca (paid CNAPP — CI-only if secrets exist, not a
+  coding-agent dependency) · Rowboat (whole agent framework — YAGNI vs the hand-rolled governor) ·
+  ComfyUI (GPU image-gen — deferred for dowiz demo assets, not core) · Elasticsearch (heavy infra —
+  YAGNI; the markdown corpus is already queryable).
+- **OUT OF DOMAIN (rejected as code-integrable):** mvt-project (mobile forensics) · Pi-hole (DNS
+  adblock) · simple-login (email aliasing) — infra/privacy tooling, no surface in a coding-agent core.
+- **NO DEPENDENCY NEEDED:** Ifixai's function (post-deploy architect/hallucination audit) is ALREADY
+  satisfied by N7 `hallucinationRate` + ADR-003 kernel-decides gate — we built it in. Noted as external
+  validation of the approach, not a library to adopt.
+
+---
+
 ## 8. Living-memory cross-links
 
 The L5 / Neuro-Symbolic Gate rationale lives in the living-memory corpus (the canonical "why"):

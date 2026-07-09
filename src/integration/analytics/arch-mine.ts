@@ -314,6 +314,47 @@ export function pointsOfFailure(adj: { nodes: string[]; A: Mat }, focus: string)
   return { focus, downstream, upstream, inCycle, isOrphan: downstream.length === 0 && upstream.length === 0 };
 }
 
+// ── N4++ (2026-07-09): CAUSAL COUNTERFACTUAL under a do-intervention ──────────
+// The dump's "Causal Graph / what breaks if I replace module X but keep its interface?"
+// is, for a DETERMINISTIC import graph, simple reachability closure — NOT a learned causal model
+// (no RNG/training). doReplace(focus) returns the transitive downstream set that would break if
+// `focus`'s contract changed. Pure BFS over A. Falsifiable RED+GREEN.
+export interface CausalCounterfactual {
+  /** the node we intervened on (the do(X)). */
+  focus: string;
+  /** transitive downstream closure: nodes that would break if focus changed. */
+  broken: string[];
+  /** direct dependents only (1-hop) — the immediate blast radius. */
+  direct: string[];
+}
+
+/**
+ * Counterfactual under do(focus): every node reachable from `focus` via A edges (A[j][i] > 0 means
+ * j imports i) is in the break set, because changing focus's contract propagates to all importers.
+ * BFS so the closure is deterministic and complete. Returns null if focus is unknown to the graph.
+ */
+export function causalCounterfactual(adj: { nodes: string[]; A: Mat }, focus: string): CausalCounterfactual | null {
+  const { nodes, A } = adj;
+  const start = nodes.indexOf(focus);
+  if (start < 0) return null;
+  const broken = new Set<string>();
+  const queue: number[] = [start];
+  // BFS over the downstream closure (importers of importers ...)
+  while (queue.length) {
+    const u = queue.shift()!;
+    for (let j = 0; j < nodes.length; j++) {
+      if (A[j][u] > 0 && !broken.has(nodes[j])) {
+        broken.add(nodes[j]);
+        queue.push(j);
+      }
+    }
+  }
+  broken.delete(focus); // focus itself isn't "broken by its own change"
+  const direct = new Set<string>();
+  for (let j = 0; j < nodes.length; j++) if (A[j][start] > 0) direct.add(nodes[j]);
+  return { focus, broken: [...broken], direct: [...direct] };
+}
+
 export function mineGraph(modules: { id: string; source: string; isMarkdown?: boolean }[]): MineReport {
   const adj = buildAdjacency(modules);
   let edgeCount = 0;
