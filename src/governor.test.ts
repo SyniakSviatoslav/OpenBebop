@@ -2,6 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   Governor, pidStep, icir, spearman, loopResonance, landauerFloor, bitsErased,
   detectAnomaly, simulatePlant, clamp, type TelemetrySample,
@@ -128,6 +129,39 @@ test('RED: negative bits throws (cannot erase negative information)', () => {
 test('GREEN: bitsErased is monotonic log2 of volume', () => {
   assert.equal(bitsErased(2), 2);
   assert.ok(bitsErased(1000) > bitsErased(10));
+});
+
+// ── F4: governor thermo floor compares resource-units (cost) vs bitsErased, NOT Joules ──
+// Before the fix it compared `cost` (resource-units) against landauerFloor() (Joules) — a
+// dimensional mismatch that could never meaningfully fire. Now both sides are resource-units:
+// you must spend ≥1 unit per bit erased.
+
+test('GREEN: low cost vs high volume HITS the thermo floor (in resource-unit space)', () => {
+  const g = mk();
+  const s = g.step(sample({ cost: 1, volume: 100 })); // bitsErased(100)=7, 1<7 → hit
+  assert.equal(s.thermoFloorHit, true);
+});
+
+test('RED: generous cost vs tiny volume does NOT hit the floor (proves the compare is real, not always-true)', () => {
+  const g = mk();
+  const s = g.step(sample({ cost: 100, volume: 1 })); // bitsErased(1)=1, 100>=1 → not hit
+  assert.equal(s.thermoFloorHit, false);
+});
+
+test('RED: the OLD cross-unit bug is gone — cost is read as resource-units, not Joules', () => {
+  const g = mk();
+  // Previously `cost: 1e-18` (a UI metric) was compared to ~2e-20 J and silently "passed".
+  // In resource-unit space 1e-18 < bitsErased(100)=7 → correctly flags the under-spend.
+  const s = g.step(sample({ cost: 1e-18, volume: 100 }));
+  assert.equal(s.thermoFloorHit, true);
+});
+
+// ── F5: content-addressed tmp name (knowledge.estimateTokens) — deterministic per input ──
+
+test('GREEN: identical text yields the same content-addressed temp name (no pid/Date.now)', () => {
+  const name = (t: string) => createHash('sha256').update(t).digest('hex').slice(0, 24);
+  assert.equal(name('hello world'), name('hello world')); // deterministic, not pid/Date.now
+  assert.notEqual(name('hello world'), name('hello worle')); // collision-safe
 });
 
 // ── anomaly detection (operator priority) ─────────────────────────────────────

@@ -16,7 +16,8 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { livingMemory, seedBebopCorpus, LivingMemory, runPlan, type Plan } from './memory.ts';
-import { applyCommandChecked, defaultChecker, type Command, type State, type Checker } from './kernel.ts';
+import { applyCommand, applyCommandChecked, defaultChecker, genesis, commandHash, type Command, type State, type Checker } from './kernel.ts';
+import { verifyJournal } from './integration/zkvm/kernel-journal.ts';
 import { runCopilot, type CheckerFn } from './copilot.ts';
 import { Governor, loopResonance } from './governor.ts';
 
@@ -28,6 +29,13 @@ const BEBOP_ROOT = path.resolve(HERE, '..');
 const SELF_GOV = new Governor({ kp: 1.4, ki: 0.22, kd: 1.5, iMin: -1, iMax: 1, uMin: 0, uMax: 1, targetQuality: 0.9, deadIC: 0.02, icirVolatile: 0.3, plantM: 1, plantB: 0.6, samplePeriod: 0, anomalyK: 3, maxStep: 1 });
 
 export function selfGovernor(): Governor { return SELF_GOV; }
+
+// SELF-EVOLUTION AUDIT TRAIL: every approved corpus mutation is also recorded as a tamper-evident
+// kernel command (zkVM journal, default on). This closes the cross-layer gap — the agent's own
+// evolution is auditable, not just written to the living memory. Pure + deterministic + free.
+interface EvolutionJournal { seq: number; cause: string; digest: string; command: Command; }
+const evolutionState: { current: State } = { current: genesis() };
+const evolutionChain: EvolutionJournal[] = [];
 
 export interface Health {
   ok: boolean;
@@ -107,7 +115,40 @@ export async function selfEvolve(idea: string): Promise<{ accepted: boolean; id?
   }
   const id = mem.remember(concept, payload, [mem.nearest('copilot default', 1)[0]?.id ?? '']);
   livingMemory().remember(`reflection:${Date.now()}`, `evolved: ${idea}`, [id]);
-  return { accepted: true, id, reason: 'approved by checker gate + resonance pre-check, persisted to living memory' };
+  // record this self-evolution as a tamper-evident kernel command (zkVM journal, default on)
+  const cmd: Command = {
+    actor: { kind: 'system', id: 'bebop-consciousness' },
+    action: 'PUBLISH',
+    payload: JSON.stringify({ concept, id }),
+    nonce: `ev-${commandHash({ concept, id } as unknown as Command)}`,
+  };
+  const journalRes = applyCommandChecked(cmd, evolutionState.current, defaultChecker, true);
+  evolutionState.current = journalRes.state;
+  const je = journalRes.envelopes.find((e) => e.event.type === 'JOURNAL');
+  if (je && je.event.type === 'JOURNAL') {
+    evolutionChain.push({ seq: je.seq, cause: je.cause, digest: je.event.digest, command: cmd });
+  }
+  return { accepted: true, id, reason: 'approved by checker gate + resonance pre-check, persisted to living memory + kernel journal' };
+}
+
+/**
+ * SELF-AUDIT: replay the self-evolution journal chain and verify every digest against the replayed
+ * kernel state. Tamper-evident: if any recorded mutation (or its digest) is altered, a digest fails
+ * → returns false. Pure, falsifiable. Lets the agent prove its own evolution history is unbroken.
+ */
+export function verifySelfEvolution(): boolean {
+  let st: State = genesis();
+  for (const entry of evolutionChain) {
+    st = applyCommand(entry.command, st).state; // replay the recorded command deterministically
+    if (!verifyJournal(st, entry.cause, entry.seq, hexToBytes(entry.digest))) return false;
+  }
+  return true;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
 }
 
 /**

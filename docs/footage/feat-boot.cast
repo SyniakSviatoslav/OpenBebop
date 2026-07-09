@@ -1,5 +1,9 @@
-{"version": 2, "width": 80, "height": 24, "timestamp": 1783533757, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop boot"}
-[0.005499, "o", "### bebop boot\r\n"]
-[1.206229, "o", "◈ Bebop ship powered up. Liftoff ready.\r\n"]
-[1.211646, "o", "  · gate 'redline-deny' certified: green on good, red on bad.\r\n  · gate 'scope-block' certified: green on good, red on bad.\r\n"]
-[1.21167, "o", "  ✓ Bebop guard OS certified: gates deny on red, pass on green.\r\n"]
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537847, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop "}
+[0.003421, "o", "### bebop \r\n"]
+[0.888454, "o", "\u001b[1G"]
+[0.888515, "o", "\u001b[0K"]
+[1.27022, "o", "\u001b[38;2;70;176;164m◈\u001b[0m \u001b[1m\u001b[38;2;242;233;219mBebop\u001b[0m\u001b[0m \u001b[2m— your kitchen, your ship, your cut.\u001b[0m\r\n"]
+[1.270296, "o", "\u001b[2m  boot | init [--preset bebop|--json {...}] | status | agents | use <backend>\u001b[0m\r\n\u001b[2m  run [doer|reason|redline] | dispatch \"<task>\" | route <class> | recall <query>\u001b[0m\r\n\u001b[2m  govern \"<q,..>\" | self [maintain|evolve|session|loop] | node | sync [--port N]\u001b[0m\r\n\u001b[2m  map [module] | diagrams | mcp | help\u001b[0m\r\n"]
+[1.270455, "o", "\u001b[2m  Link established. Let us get your kitchen off the leash.\u001b[0m\r\n"]
+[1.29339, "o", "\u001b[1G\u001b[0K⠙"]
+[1.294396, "o", "\u001b[1G\u001b[0K"]

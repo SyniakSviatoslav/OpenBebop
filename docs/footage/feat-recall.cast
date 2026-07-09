@@ -1,3 +1,7 @@
-{"version": 2, "width": 80, "height": 24, "timestamp": 1783533773, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop recall \"guard kernel\""}
-[0.007635, "o", "### bebop recall guard kernel\r\n"]
-[1.160986, "o", "  §0·GP recall — in-process livingMemory only (living-knowledge retriever not bundled in this repo)\r\n"]
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537900, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop recall \"kernel law\""}
+[0.008822, "o", "### bebop recall kernel law\r\n"]
+[0.863904, "o", "\u001b[1G"]
+[0.864187, "o", "\u001b[0K"]
+[1.222049, "o", "\u001b[2m  §0·GP recall — in-process livingMemory (VSA + graph) only — §0·GP retriever not bundled in this standalone repo\u001b[0m\r\n\u001b[38;2;70;176;164m  ◈ cbe3815b6d02834aa02cab766858ba06a5311d4a376539b9ccb18e1e8c29b99c: decide/fold/replay is pure; Envelope{cause} is the content-addressed truth\u001b[0m\r\n\u001b[38;2;70;176;164m  ◈ 89a0ac2bb562c88f3bde6a3d05f824efb865c4b0d06729e236fe340b19638f29: one decide/fold/SyncPort contract at every scale; fundamental math/physics\u001b[0m\r\n\u001b[38;2;70;176;164m  ◈ 04e7b617f59dbc01bf891859533f76cada1bc4109d2a52b6cb9246f015fc2927: every action produced by one model, checked in real time by a DIFFERENT one\u001b[0m\r\n\u001b[38;2;70;176;164m  ◈ 4e4d77ae5858cbb342600c4111331fe363ca953ad12ea79a0847331a7227f8b4: ML-DSA-65 + ML-KEM-768 + Ed25519 hybrid; node id = hash(pqPub||edPub)\u001b[0m\r\n\u001b[38;2;70;176;164m  ◈ 3b2603c5d80ce902763aa2da2c7140322d2373fdfa9391aea80abf4857ffac09: content split into pieces; infoHash is the self-certifying address\u001b[0m\r\n"]
+[1.25217, "o", "\u001b[1G\u001b[0K⠙"]
+[1.253194, "o", "\u001b[1G\u001b[0K"]

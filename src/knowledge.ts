@@ -1,17 +1,26 @@
 // Bebop knowledge seam — reuse the repo's existing intelligence, do not reinvent it.
 //
-// Ground truth: tools/vsa (VSA token economy — route.mjs / match.mjs) and
-// spikes/living-knowledge (deterministic recall@5 retriever, the §0·GP engine). We shell out to
-// them the same way scripts/agents-mesh.sh and the mesh already do — ground-truth over proxy.
+// This is a STANDALONE repo. It ships its own, dependency-free living memory in src/memory.ts
+// (VSA hypervectors + graph spreading-activation + forgetting + persistence). That memory is
+// ALWAYS consulted by recall().
+//
+// OPTIONALLY, if this repo also vendors the richer §0·GP retriever (spikes/living-knowledge) and
+// VSA codec (tools/vsa) — which in the canonical setup live in the dowiz monorepo, not here — recall
+// shells out to them too. When they are absent (the default for the standalone repo), recall degrades
+// HONESTLY to the bundled in-process memory and says so. No fabrication.
+//
 // PLUS: the in-process livingMemory() singleton (src/memory.ts) — ONE always-on memory shared by
-// every agentic CLI, this Hermes session included. recall() consults BOTH.
+// every agentic CLI, this Hermes session included. recall() consults it FIRST.
 
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { livingMemory } from './memory.ts';
+import { livingMemory, type LivingMemory } from './memory.ts';
+import { opticalRecall } from './integration/optical/field-recall.ts';
+import { thinLensMask } from './integration/optical/optic.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // This is a standalone repo: src/ → bebop-repo root is ONE level up.
@@ -23,25 +32,87 @@ export interface Recall {
   note: string;
 }
 
-// Query the in-process living memory (ONE memory, this session included) — content-addressed recall.
-export function recallLocal(query: string): { id: string; text: string }[] {
-  const mem = livingMemory();
-  const ids = mem.recall(query, 3);
-  if (ids.length === 0) return [];
-  // we don't expose payload via id cheaply; re-derive by nearest for display
-  return ids.map((id) => ({ id, text: id.slice(0, 12) }));
+// Query the in-process living memory (ONE memory, this session included).
+// PRIMARY: graph spreading-activation (deterministic concept match + edge traversal) — trustworthy.
+// FALLBACK: bundled VSA vector recall (associative, by meaning) — a WEAKER signal; only used when the
+// graph finds nothing, and gated at a high noise floor so random/gibberish queries return nothing
+// (we never present a noisy vector match as confident). Merged, de-duplicated, scored.
+export interface RecallOpts {
+  /** Advisory optical field recall (SVETlANNa/Meep primitive) re-ranks hits by field correlation.
+   *  Off by default — the graph/vector score stays the source of truth; optical only re-orders
+   *  weak/equal-score bands as a third associative signal. */
+  opticalRecall?: boolean;
 }
 
-// Call the living-knowledge §0·GP retriever. Returns ranked {id,text} hits.
-// Degrades honestly to in-process memory when the retriever isn't present in this repo.
-export function recall(query: string): Recall {
-  const hits = recallLocal(query).map((h) => ({ id: h.id, text: h.text, score: 1 }));
+// Deterministic text → n×n real vector (char-bucketed). Same spirit as the bundled VSA codebook;
+// gives opticalRecall a stable projection to rank by field correlation.
+function projectText(text: string, n: number): number[] {
+  const v = new Array<number>(n * n).fill(0);
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    const idx = (code * 31 + i) % (n * n);
+    v[idx] += ((code % 7) - 3) / 4; // small bipolar value, deterministic
+  }
+  return v;
+}
+
+function recallLocal(query: string, k = 5, opts: RecallOpts = {}): { id: string; text: string; score: number }[] {
+  const mem: LivingMemory = livingMemory();
+  const byId = new Map<string, { id: string; text: string; score: number }>();
+
+  // 1) graph spreading-activation (concept match + edge traversal) — deterministic, the source of truth
+  for (const id of mem.recall(query, 3)) {
+    const node = mem.node(id);
+    if (node) byId.set(id, { id, text: node.payload, score: 1 });
+  }
+
+  // 2) fallback vector recall — ONLY when the graph found nothing, and only above a high floor.
+  //    The bundled char-codebook VSA is a weak associative signal (bipolar noise floor is high), so we
+  //    refuse to surface it as confident. The richer §0·GP retriever (vendored from dowiz) is the real
+  //    embedding-based recall; without it, we stay humble.
+  if (byId.size === 0) {
+    for (const n of mem.nearest(query, k)) {
+      if (n.sim <= 0.85) continue; // high floor: exclude noise/gibberish
+      const node = mem.node(n.id);
+      if (node) byId.set(n.id, { id: n.id, text: node.payload, score: Number(n.sim.toFixed(3)) });
+    }
+  }
+
+  const hits = [...byId.values()];
+
+  // 3) ADVISORY optical field recall — re-rank by optical correlation when enabled. The primary score
+  //    (graph=1 / vector sim) is preserved; optical supplies a secondary key so two hits with the same
+  //    primary score are ordered by field similarity to the query. Never overrides the graph truth.
+  if (opts.opticalRecall && hits.length > 1) {
+    const n = 8; // optical field grid (n×n = 64 vec dim)
+    const mask = thinLensMask(n, 0.5, 2); // passive mask, |t|<=1
+    const qVec = projectText(query, n);
+    const cands = hits.map((h) => projectText(h.text, n));
+    const order = opticalRecall(qVec, cands, mask); // indices into hits, DESC by optical correlation
+    // stable merge: keep primary-score sort, but within equal primary scores, prefer optical order.
+    const opticalRank = new Map<number, number>();
+    order.forEach((idx, rank) => opticalRank.set(idx, rank));
+    hits.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score; // graph/vector dominates
+      const ra = opticalRank.get(hits.indexOf(a)) ?? 0;
+      const rb = opticalRank.get(hits.indexOf(b)) ?? 0;
+      return ra - rb; // equal primary → optical correlation wins
+    });
+  }
+
+  return hits.sort((a, b) => b.score - a.score);
+}
+
+// Call the living-knowledge §0·GP retriever (optional, vendored from dowiz). Returns ranked
+// {id,text} hits. Degrades honestly to in-process memory when the retriever isn't present here.
+export function recall(query: string, opts: RecallOpts = {}): Recall {
+  const hits = recallLocal(query, 5, opts).map((h) => ({ id: h.id, text: h.text, score: h.score }));
   const script = path.join(REPO_ROOT, 'spikes', 'living-knowledge', 'search.mjs');
   if (!fs.existsSync(script)) {
     return {
       found: hits.length > 0,
       hits,
-      note: `in-process livingMemory only (living-knowledge retriever not bundled in this repo)`,
+      note: `in-process livingMemory (VSA + graph) only — §0·GP retriever not bundled in this standalone repo`,
     };
   }
   try {
@@ -50,7 +121,7 @@ export function recall(query: string): Recall {
     return {
       found: true,
       hits: [...hits, ...remote],
-      note: `in-process livingMemory + living-knowledge §0·GP recall`,
+      note: `in-process livingMemory (VSA + graph) + living-knowledge §0·GP recall`,
     };
   } catch (e: any) {
     // local memory still works even if the repo retriever errors — degrade honestly
@@ -71,7 +142,10 @@ export function estimateTokens(text: string): number | null {
   const cli = path.join(REPO_ROOT, 'tools', 'vsa', 'cli.mjs');
   if (!fs.existsSync(cli)) return null; // VSA not bundled in this standalone repo
   try {
-    const tmp = path.join(os.tmpdir(), `.bebop-recall-${process.pid}-${Date.now()}.json`);
+    // content-addressed temp name (F5 fix): identical text → identical path, collision-safe,
+    // no pid/Date.now nondeterminism.
+    const digest = crypto.createHash('sha256').update(text).digest('hex').slice(0, 24);
+    const tmp = path.join(os.tmpdir(), `.bebop-recall-${digest}.json`);
     fs.writeFileSync(tmp, text);
     const out = execFileSync('node', [cli, 'tokens', tmp], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] });
     fs.unlinkSync(tmp);

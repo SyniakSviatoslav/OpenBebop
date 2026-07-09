@@ -37,12 +37,16 @@ export interface HookSpec {
 
 export interface BebopSettings {
   model?: string;
+  narration?: string; // voice axis from `bebop init` (bebop/plain/sarcastic/corporate-killer)
+  looks?: string;     // theme axis from `bebop init` (bebop/claude/opencode/codex/custom)
   permissions: { allow: string[]; deny: string[] };
   hooks: Record<string, HookSpec[]>;
 }
 
 export const EMPTY_SETTINGS: BebopSettings = {
   model: undefined,
+  narration: undefined,
+  looks: undefined,
   permissions: { allow: [], deny: [] },
   hooks: {},
 };
@@ -83,6 +87,8 @@ function applyProject(part: Record<string, any> | null, into: BebopSettings): vo
 function applyUser(part: Record<string, any> | null, into: BebopSettings): void {
   if (!part) return;
   if (typeof part.model === 'string') into.model = part.model;
+  if (typeof part.narration === 'string') into.narration = part.narration;
+  if (typeof part.looks === 'string') into.looks = part.looks;
   if (Array.isArray(part.permissions?.allow)) into.permissions.allow.push(...part.permissions.allow);
   if (Array.isArray(part.permissions?.deny)) into.permissions.deny.push(...part.permissions.deny);
   if (part.hooks && typeof part.hooks === 'object') {

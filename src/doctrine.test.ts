@@ -33,7 +33,10 @@ test('GREEN: applyCommandChecked admits a valid transition (doer below, checker 
   const c = cmd();
   const { quarantined, envelopes } = applyCommandChecked(c, genesis(), defaultChecker);
   assert.equal(quarantined, false);
-  assert.equal(envelopes.length, 1);
+  // admitted transition + a JOURNAL envelope (zkVM tamper-evident digest, on by default)
+  assert.equal(envelopes.length, 2);
+  assert.equal(envelopes[0].event.type, 'INGESTED');
+  assert.equal(envelopes[1].event.type, 'JOURNAL');
 });
 
 test('RED: applyCommandChecked QUARANTINES a transition that violates the invariant (fail-closed)', () => {

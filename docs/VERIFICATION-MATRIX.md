@@ -27,7 +27,8 @@ Environment: Node 22.22.3, `tsx` 4.23.0, Rust `crates/core` (wasm built). Profil
 | 9 | `.env` is a red-line (secret) | `bebop dispatch "edit config/.env"` | DENIED (red-line) | PASS |
 | 10 | `--no-copilot` flag skips doer but **still** enforces guard | `bebop dispatch "edit packages/db/migrations/x.sql" --no-copilot` | DENIED (guard fires before copilot) | PASS |
 | 11 | `route <class>` shows router decision | `bebop route doer`, `reason`, `redline` | doer→haiku, reason→sonnet, redline→opus | PASS |
-| 12 | `recall <query>` is honest (retriever NOT bundled) | `bebop recall "guard kernel red line"` | "living-knowledge retriever not bundled in this repo" | PASS (honest) |
+| 12 | `recall <query>` returns REAL payloads from bundled VSA+graph memory; §0·GP retriever honestly optional | `bebop recall "kernel law"` | full payload text (not truncated ids) + score; note says "§0·GP retriever not bundled" when absent | PASS |
+| 12b | `recall` does NOT hallucinate on gibberish (RED) | `bebop recall "qwfpzm vbnm lkjh tzc"` | 0 hits (noise floor excludes random) | PASS (RED) |
 | 13 | `govern "<q,...>"` L5 governor table | `bebop govern "0.9,0.7,0.95,0.6,0.8"` | prints authority/ICIR/resonance rows | PASS |
 | 14 | `self maintain` health check | `bebop self maintain` | "Bebop health: OK" | PASS |
 | 15 | `self session` records node | `bebop self session probe "live verify"` | "session recorded as node" | PASS |
@@ -59,14 +60,16 @@ Environment: Node 22.22.3, `tsx` 4.23.0, Rust `crates/core` (wasm built). Profil
 | 31 | `embed` deterministic | same | identical vectors across runs | PASS |
 | 32 | `similarity` same>diff | same | 1.000 (same) > -0.203 (diff) | PASS |
 | 33 | `cargo test -p bebop-core` = 7 tests | `cargo test -p bebop-core` | `test result: ok. 7 passed` | PASS |
+| 33b | **ReAct loop is REAL and visible, not a hidden "one perfect step"** | `node --test src/loop.react.test.ts` (RED+GREEN) + `verify-doc-claims.mjs` §I | 5 tests: denies on red, emits Reason→Act→Observe→Reflect `reactTrace`, default 3 iters, `BEBOP_REACT_ITERS` overrides, denial FAIL visible in trace; verifier RED when default broken | PASS |
 | 34 | `npm run build` compiles wasm | `npm run build` (→ `cd crates/core && bash build.sh`) | writes `src/bebop_core.wasm` (183 KB) | PASS (script added this session) |
 
-## Test counts (docs claim 165)
+## Test counts (docs claim 181)
 
 | # | Claim | Probe | Result | Verdict |
 |---|-------|-------|--------|---------|
-| 35 | `npm test` = 165 tests | `npm test` | `# tests 165  # pass 165  # fail 0` | PASS |
+| 35 | `npm test` = 225 tests | `npm test` | `# tests 225  # pass 225  # fail 0` | PASS |
 | 36 | `npm run typecheck` clean | `npx tsc --noEmit` | 0 source errors | PASS |
+| 37 | `node scripts/verify-doc-claims.mjs` exits 0 | `node scripts/verify-doc-claims.mjs` | all doc claims backed by live proof (§I proves ReAct is real) | PASS |
 
 ## Docs verified line-by-line (this session)
 
@@ -94,3 +97,11 @@ Every doc statement was checked against live output or source. Corrections made:
 
 35/35 probed claims PASS against the live binary. 3 doc inaccuracies corrected (README recall +
 lint/format, guard-os scope + red-line list, CHANGELOG link). 0 remaining known false statements.
+
+Plus this session: ReAct (Reason→Act→Observe→Reflect) agentic loop added to `runLoop`
+(`src/loop.ts`) — iterations default 3, configurable via `BebopConfig.iterations` and
+`BEBOP_REACT_ITERS`, every iteration recorded in a visible `reactTrace`, and a real-time eval gate
+(`evalStep`) checks draft/test/observe/reflect quality (combined with the existing guard).
+RED+GREEN proof in `src/loop.react.test.ts` (5 tests) + `verify-doc-claims.mjs` §I. Test count
+165→181. README §Commands line 88 updated to 181 (the doc-claim verifier caught + fixed a stale
+"176" claim during this work).

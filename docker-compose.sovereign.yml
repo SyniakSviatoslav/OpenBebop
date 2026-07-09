@@ -1,0 +1,66 @@
+# Bebop Sovereign Node — Phase 1 compose (offline, client-owned hardware)
+#
+# Single command bring-up on the client's warehouse box:
+#   docker compose -f docker-compose.sovereign.yml up -d
+#
+# Air-gap delivery: on the build host run
+#   docker compose -f docker-compose.sovereign.yml build
+#   docker compose -f docker-compose.sovereign.yml save > bebop-sovereign.tar
+# transfer bebop-sovereign.tar via USB/air-gap, then on the client box:
+#   docker load < bebop-sovereign.tar
+#   docker compose -f docker-compose.sovereign.yml up -d
+#
+# No port is published to the internet. The agent is reachable only on the client LAN
+# (internal network). Ollama is internal-only (no published port).
+
+services:
+  bebop:
+    build:
+      context: .
+      dockerfile: Dockerfile.sovereign
+    restart: unless-stopped
+    networks:
+      - sovereign
+    environment:
+      BEBOP_SOVEREIGN: "1"
+      BEBOP_CORE_PATH: /app/src/bebop_core.wasm
+      BEBOP_LLM_BASE_URL: http://ollama:11434
+      BEBOP_LLM_MODEL: qwen3-embedding:0.6b
+      BEBOP_ALLOW_EXTERNAL_LLM: "0"
+      BEBOP_TELEMETRY_SINK: local
+    # Optional GPU passthrough (Phase 1+GPU). Remove if the client box is CPU-only.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    volumes:
+      - bebop_memory:/app/.bebop
+      - bebop_logs:/app/logs
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    networks:
+      - sovereign
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      # CPU-only by default; set to 1 + add nvidia runtime on the bebop service for CUDA.
+      OLLAMA_GPU: "0"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Pull the pinned local model at first boot so the box is self-sufficient offline.
+    command: >
+      sh -c "ollama serve & sleep 5 && ollama pull ${OLLAMA_MODEL:-qwen3-embedding:0.6b} && wait"
+
+networks:
+  sovereign:
+    driver: bridge
+    internal: true   # no external egress; LAN-only reachability via an explicit published port if the client wants it
+
+volumes:
+  bebop_memory:
+  bebop_logs:
+  ollama_data:

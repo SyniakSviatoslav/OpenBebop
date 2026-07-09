@@ -8,18 +8,43 @@
 // The narrator is battle-hardened, cool, a little tired, defiant. "Hybrid is a feature, not a bug."
 
 export type Tone = 'brand' | 'plain';
+export type Narration = 'bebop' | 'plain' | 'sarcastic' | 'corporate-killer';
 
 export interface Line {
   text: string;
   tone: Tone;
 }
 
-// Boot / session
-export const BOOT = {
-  link: 'Link established. Let us get your kitchen off the leash.',
-  ready: 'Bebop online. The ship is yours.',
-  idle: 'Quiet night. Nothing on the pass yet.',
-} as const;
+// Narration axis (from `bebop init`): which voice the co-pilot speaks in.
+//   - 'bebop' / 'sarcastic'  → dry cosmo-noir wit on brand moments, PLAIN on money/auth (law 7)
+//   - 'plain' / 'corporate-killer' → NO wit anywhere (tone forced to 'plain')
+function witMode(n: Narration | undefined): boolean {
+  return n === undefined || n === 'bebop' || n === 'sarcastic';
+}
+
+// Boot / session — variant per narration so `init` actually changes the voice.
+export const BOOT: Record<Narration, { link: string; ready: string; idle: string }> = {
+  bebop: {
+    link: 'Link established. Let us get your kitchen off the leash.',
+    ready: 'Bebop online. The ship is yours.',
+    idle: 'Quiet night. Nothing on the pass yet.',
+  },
+  sarcastic: {
+    link: 'Connected. Try not to break anything this time.',
+    ready: 'Bebop online. Try to keep it that way.',
+    idle: 'Dead air. Riveting.',
+  },
+  plain: {
+    link: 'Session started.',
+    ready: 'Bebop online.',
+    idle: 'No pending tasks.',
+  },
+  'corporate-killer': {
+    link: 'Link established. Driving outcomes.',
+    ready: 'Bebop online. Optimizing your velocity.',
+    idle: 'Zero active workstreams.',
+  },
+};
 
 // Per-state copy. Brand moments carry the dry wit; money/auth/security are PLAIN (law 7).
 export const STATES: Record<string, Line> = {
@@ -47,8 +72,19 @@ export const STATES: Record<string, Line> = {
   'tool.denied': { text: 'Blocked by an invariant. The machine refuses to lie to you.', tone: 'plain' },
 };
 
-export function say(key: string): Line {
-  return STATES[key] ?? { text: key, tone: 'brand' };
+export function say(key: string, narration?: Narration): Line {
+  const line = STATES[key] ?? { text: key, tone: 'brand' as Tone };
+  // narration axis that forbids wit → force plain everywhere (money/auth already plain)
+  if (!witMode(narration)) return { ...line, tone: 'plain' };
+  return line;
+}
+
+/** Build a voice for a narration axis. Returns helpers that respect the axis. */
+export function voiceFor(narration?: Narration) {
+  return {
+    say: (key: string) => say(key, narration),
+    boot: BOOT[(narration as Narration)] ?? BOOT.bebop,
+  };
 }
 
 // The tagline — north star, operator-coined 2026-07-07.

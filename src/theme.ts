@@ -43,12 +43,40 @@ function colorEnabled(): boolean {
 
 export type Paint = (s: string) => string;
 
-export function makePaint(): { [k: string]: Paint } {
+// Looks axis (from `bebop init`): only the PRIMARY accent changes; field/bone/blood stay stable
+// so text stays readable. 'custom' reads BEBOP_THEME_ACCENT (hex) or falls back to bebop teal.
+export type Looks = 'bebop' | 'claude' | 'opencode' | 'codex' | 'custom';
+const ACCENT: Record<Looks, [string, string]> = {
+  bebop: [C.teal, '#46B0A4'],     // ship teal
+  claude: ['\x1b[38;2;220;38;38m', '#DC2626'],
+  opencode: ['\x1b[38;2;16;185;129m', '#10B981'],
+  codex: ['\x1b[38;2;124;58;237m', '#7C3AED'],
+  custom: ['\x1b[38;2;70;176;164m', '#46B0A4'],
+};
+function accentFor(looks?: string): [string, string] {
+  if (looks === 'custom') {
+    const hex = process.env.BEBOP_THEME_ACCENT;
+    if (hex && /^#[0-9a-fA-F]{6}$/.test(hex)) {
+      const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+      return [`\x1b[38;2;${r};${g};${b}m`, hex];
+    }
+    return ACCENT.custom;
+  }
+  return ACCENT[(looks as Looks)] ?? ACCENT.bebop;
+}
+
+/** Pure accent resolver (no TTY dependency) — used by tests and diagram generation. */
+export function accentHexFor(looks?: string): string {
+  return accentFor(looks)[1];
+}
+
+export function makePaint(looks?: string): { [k: string]: Paint } {
   const on = colorEnabled();
+  const [accent, accentHex] = accentFor(looks);
   const wrap = (code: string): Paint => (s: string) =>
     on ? `${code}${s}${C.reset}` : s;
   return {
-    teal: wrap(C.teal),
+    teal: wrap(accent),          // primary accent = looks axis
     tealDeep: wrap(C.tealDeep),
     void: wrap(C.void),
     hull: wrap(C.hull),

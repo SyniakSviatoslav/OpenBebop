@@ -7,6 +7,7 @@ import {
   selfMaintain,
   selfEvolve,
   recordSession,
+  verifySelfEvolution,
 } from './consciousness.ts';
 import { livingMemory } from './memory.ts';
 
@@ -48,6 +49,41 @@ test('RED: selfEvolve QUARANTINES a bulk mutation that would make self-evolution
   const r = await selfEvolve(bulk);
   assert.equal(r.accepted, false);
   assert.match(r.reason, /resonance/i);
+});
+
+// ── SELF-EVOLUTION AUDIT TRAIL (tamper-evident kernel journal) ──
+
+test('GREEN: an accepted self-evolution is recorded in a verifiable tamper-evident journal', async () => {
+  // accept a couple of mutations, then prove the audit chain verifies
+  await selfEvolve('audit-evolve-alpha-unique');
+  await selfEvolve('audit-evolve-beta-unique');
+  const ok = verifySelfEvolution();
+  assert.equal(ok, true, 'a clean self-evolution chain must verify');
+});
+
+test('RED: tampering a recorded self-evolution digest breaks the audit (falsifiable)', async () => {
+  // import the internals through a fresh module instance is not possible; instead prove the
+  // invariant via the kernel journal directly — mutate a digest → verifySelfEvolution-equivalent fails.
+  // We exercise the same primitive used by verifySelfEvolution to guarantee the RED case is real.
+  const { applyCommand, genesis, commandHash } = await import('./kernel.ts');
+  const { verifyJournal } = await import('./integration/zkvm/kernel-journal.ts');
+  const cmd = {
+    actor: { kind: 'system' as const, id: 'bebop-consciousness' },
+    action: 'PUBLISH' as const,
+    payload: JSON.stringify({ concept: 'audit-probe', id: 'x1' }),
+    nonce: 'audit-probe',
+  };
+  const st = applyCommand(cmd, genesis()).state;
+  const cause = commandHash(cmd);
+  const { journalize, digestToHex } = await import('./integration/zkvm/kernel-journal.ts');
+  const seq = st.ingested.size;
+  const digest = journalize(st, cause, seq);
+  // genuine digest verifies
+  assert.equal(verifyJournal(st, cause, seq, digest), true);
+  // tampered state must NOT verify
+  const tampered = { ...st, lastBackend: 'evil' };
+  assert.equal(verifyJournal(tampered, cause, seq, digest), false, 'tamper must break the digest');
+  void digestToHex;
 });
 
 // ── SESSION-AS-NODE (brain-in-brain) ──

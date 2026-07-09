@@ -16,6 +16,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { selfTest } from './src/guard.ts';
 import { runLoop } from './src/loop.ts';
@@ -41,11 +42,21 @@ import { DEFAULT_SCOPE_GLOBS, checkRedLine } from './src/guard.ts';
 import { subagent } from './src/loop.ts';
 import { loadSkills, findSkill } from './src/skills.ts';
 import { initCore } from './src/core-wasm.ts';
+import { initWasiCore } from './src/core-wasi.ts';
 import { setKernel } from './src/guard.ts';
 import { buildGraph, renderSvg } from './src/understand.ts';
 import { flowSchema, FEATURE_SCHEMAS } from './src/schema.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+// Recursive file walker (deterministic, depth-first) — used by `bebop docs check`.
+function* walk(dir: string): Generator<string> {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) yield* walk(p);
+    else yield p;
+  }
+}
 
 // Slash-command dispatcher — Claude Code's /help /clear /model /status /plan /compact /resume + bebop /review.
 async function handleSlash(name: string, args: string[]): Promise<void> {
@@ -134,7 +145,10 @@ async function main() {
 
   // Boot the self-contained Rust/WASM guard kernel (if the artifact is present). The guard then
   // delegates every red-line/scope decision to it; if absent it transparently uses the TS port.
-  setKernel(await initCore());
+  // Sovereign Node Phase 2: BEBOP_CORE_RUNTIME=wasi runs the kernel under WasmEdge (hardened core);
+  // any other value (default) uses the in-process WebAssembly loader. Both expose the same contract.
+  const coreRuntime = process.env.BEBOP_CORE_RUNTIME ?? 'inproc';
+  setKernel(coreRuntime === 'wasi' ? await initWasiCore() : await initCore());
 
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log(banner(paint));
@@ -142,12 +156,13 @@ async function main() {
     console.log(paint.dim('  run [doer|reason|redline] | dispatch "<task>" | route <class> | recall <query>'));
     console.log(paint.dim('  govern "<q,..>" | self [maintain|evolve|session|loop] | node | sync [--port N]'));
     console.log(paint.dim('  map [module] | diagrams | mcp | help'));
-    console.log(paint.dim(`  ${BOOT.link}`));
+    console.log(paint.dim(`  ${BOOT.bebop.link}`));
     return;
   }
 
   if (cmd === 'boot') {
-    await playLaunch({ paints: paint });
+    const profile = loadProfile() ?? BEBOP_PRESET;
+    await playLaunch({ paints: makePaint(profile.looks) });
     const t = selfTest();
     for (const l of t.log) console.log(paint.dim('  · ' + l));
     if (t.ok) {
@@ -264,6 +279,86 @@ async function main() {
     console.log(paint.teal(`  ◈ wrote ${n - 1} conceptual schemas (schema-*.svg)`));
     console.log(paint.dim(`  graph: ${graph.nodes.length} modules, ${graph.edges.length} real edges`));
     return;
+  }
+
+  if (cmd === 'docs') {
+    // `bebop docs` — the polished, repeatable documentation pipeline (Constant Doubt rule).
+    // Subcommands:
+    //   docs init     generate the OpenWiki agent-facing wiki (needs an LLM key: OPENWIKI_PROVIDER/KEY)
+    //   docs update   refresh the wiki from git diffs since last run
+    //   docs build    run every local pipeline: typecheck, tests, wasm, diagrams, footage + i18n checks
+    //   docs check    verify the repo is release-ready: gifs resolve, counts, manifests, wiki presence
+    const sub = args[0] ?? 'check';
+    const run = (argv: string[], opts: { env?: NodeJS.ProcessEnv } = {}) =>
+      spawnSync(argv[0], argv.slice(1), { stdio: 'inherit', cwd: HERE, env: { ...process.env, ...(opts.env ?? {}) } });
+
+    if (sub === 'init' || sub === 'update') {
+      // OpenWiki (langchain-ai/openwiki): writes openwiki/ and wires AGENTS.md/CLAUDE.md. Needs a key.
+      if (!process.env.OPENWIKI_PROVIDER && !process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY && !process.env.OPENROUTER_API_KEY) {
+        console.log(paint.amber('  ⚠ OpenWiki needs an LLM key. Set one, e.g.'));
+        console.log(paint.dim('    export OPENWIKI_PROVIDER=openrouter  OPENROUTER_API_KEY=sk-or-...'));
+        console.log(paint.dim('    then re-run `bebop docs init`. (No key in this environment — wiring only.)'));
+      }
+      const flag = sub === 'init' ? '--init' : '--update';
+      console.log(paint.teal(`  ◈ openwiki ${flag} — agent-facing wiki → openwiki/`));
+      const r = run(['npx', '-y', 'openwiki', flag]);
+      process.exit(r.status ?? 0);
+      return;
+    }
+
+    if (sub === 'build') {
+      console.log(paint.teal('  ◈ docs build — running every local pipeline (no LLM needed)'));
+      console.log(paint.dim('  · typecheck')); run(['npm', 'run', 'typecheck']);
+      console.log(paint.dim('  · tests'));      run(['npm', 'test']);
+      console.log(paint.dim('  · wasm kernel')); run(['npm', 'run', 'build']);
+      console.log(paint.dim('  · diagrams (real import graph + schemas)')); run(['npx', 'tsx', 'bebop.ts', 'diagrams']);
+      console.log(paint.dim('  · map'));         run(['npx', 'tsx', 'bebop.ts', 'map']);
+      console.log(paint.dim('  · i18n self-check')); run(['node', 'scripts/i18n-translate.mjs', '--check', 'README.md', 'README.uk.md']);
+      console.log(paint.dim('  · doc-claim self-correction (Constant Doubt)')); run(['node', 'scripts/verify-doc-claims.mjs']);
+      console.log(paint.teal('  ◈ build pipeline done. Run `bebop docs check` to verify release-readiness.'));
+      return;
+    }
+
+    // default: check
+    console.log(paint.teal('  ◈ docs check — release-readiness audit (Constant Doubt)'));
+    let fail = 0;
+    const expect = (cond: boolean, msg: string) => {
+      console.log(paint[cond ? 'teal' : 'blood'](`  ${cond ? '✓' : '✗'} ${msg}`));
+      if (!cond) fail++;
+    };
+    // 1) embedded gifs resolve
+    const docsDir = path.join(HERE, 'docs');
+    let gifRefs = 0, gifBroken = 0;
+    for (const f of walk(docsDir)) {
+      if (!f.endsWith('.md')) continue;
+      const txt = fs.readFileSync(f, 'utf8');
+      for (const m of txt.matchAll(/!\[[^\]]*\]\(([^)]+\.gif)[^)]*\)/g)) {
+        gifRefs++;
+        const p = path.resolve(path.dirname(f), m[1]);
+        if (!fs.existsSync(p)) gifBroken++;
+      }
+    }
+    expect(gifBroken === 0, `all ${gifRefs} embedded GIFs resolve (${gifBroken} broken)`);
+    // 2) manifests valid JSON
+    for (const m of ['llm-manifest.json', 'docs/mcp-tools.json']) {
+      try { JSON.parse(fs.readFileSync(path.join(HERE, m), 'utf8')); expect(true, `${m} valid JSON`); }
+      catch { expect(false, `${m} valid JSON`); }
+    }
+    // 3) test count claims match reality
+    const pkg = JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8'));
+    expect(pkg.version && /^\d+\.\d+\.\d+$/.test(pkg.version), `version ${pkg.version} is semver`);
+    // 4) OpenWiki wired?
+    const wiki = path.join(HERE, 'openwiki');
+    expect(fs.existsSync(wiki), 'openwiki/ present (run `bebop docs init` to generate)');
+    expect(fs.existsSync(path.join(HERE, '.github/workflows/openwiki-update.yml')), 'CI: openwiki update workflow present');
+    // 5) doc-claim self-correction layer (Constant Doubt, enforced) — never ship a false statement
+    const vres = spawnSync('node', ['scripts/verify-doc-claims.mjs'], { cwd: HERE, encoding: 'utf8' });
+    if (vres.status !== 0) {
+      console.log(vres.stdout || vres.stderr || '');
+      fail++;
+    }
+    console.log(paint[fail ? 'blood' : 'teal'](`  ${fail ? `✗ ${fail} issue(s) — fix before release` : '✓ release-ready'}`));
+    process.exit(fail ? 1 : 0);
   }
 
   if (cmd === 'remember') {

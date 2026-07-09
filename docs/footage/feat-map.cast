@@ -1,3 +1,6 @@
-{"version": 2, "width": 80, "height": 24, "timestamp": 1783533785, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop map"}
-[0.008555, "o", "### bebop map\r\n"]
-[1.195806, "o", "  ◈ wrote /root/bebop-repo/docs/diagrams/project-map.svg\r\n  35 modules, 71 real import edges\r\n"]
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537919, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop map"}
+[0.003806, "o", "### bebop map\r\n"]
+[0.850007, "o", "\u001b[1G\u001b[0K"]
+[1.201017, "o", "\u001b[38;2;70;176;164m  ◈ wrote /root/bebop-repo/docs/diagrams/project-map.svg\u001b[0m\r\n\u001b[2m  35 modules, 71 real import edges\u001b[0m\r\n"]
+[1.230319, "o", "\u001b[1G\u001b[0K⠙"]
+[1.231423, "o", "\u001b[1G\u001b[0K"]

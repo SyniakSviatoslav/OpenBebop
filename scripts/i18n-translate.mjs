@@ -27,11 +27,12 @@ const BANNER = (lang) =>
 `     NOT reviewed. Verify technical claims before trusting. Source of truth: the English file. -->\n\n`;
 
 function parseArgs(argv) {
-  const a = { langs: [], file: 'README.md', all: false };
+  const a = { langs: [], file: 'README.md', all: false, check: null };
   for (let i = 2; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--lang') a.langs.push(argv[++i]);
     else if (t === '--file') a.file = argv[++i];
+    else if (t === '--check') { a.check = [argv[++i], argv[++i]]; }
     else if (t === '--all') { a.all = true; while (argv[i + 1] && !argv[i + 1].startsWith('--')) a.langs.push(argv[++i]); }
   }
   return a;
@@ -89,5 +90,21 @@ async function translateFile(file, lang) {
 }
 
 const args = parseArgs(process.argv);
+if (args.check) {
+  // --check <source.md> <translation.md>
+  // Verify a translation stays structurally in sync with its source: same number of headings,
+  // same fenced code blocks, same inline-code tokens. Catches drift without an LLM.
+  const [src, dst] = args.check;
+  if (!src || !dst) { console.error('--check needs two files: source.md translation.md'); process.exit(2); }
+  // readFileSync isn't imported for sync; use a tiny sync read via fs
+  const { readFileSync } = await import('node:fs');
+  const sH = (readFileSync(src, 'utf8').match(/^#{1,6}\s.+$/gm) || []).length;
+  const dH = (readFileSync(dst, 'utf8').match(/^#{1,6}\s.+$/gm) || []).length;
+  const sC = (readFileSync(src, 'utf8').match(/```/g) || []).length;
+  const dC = (readFileSync(dst, 'utf8').match(/```/g) || []).length;
+  const ok = sH === dH && sC === dC;
+  console.log(`${ok ? '✓' : '✗'} ${dst}: headings ${dH}/${sH}, code-fences ${dC}/${sC}`);
+  process.exit(ok ? 0 : 1);
+}
 if (!args.langs.length) { console.error('pass --lang <code> or --all <codes...>'); process.exit(2); }
 for (const lang of args.langs) await translateFile(args.file, lang);

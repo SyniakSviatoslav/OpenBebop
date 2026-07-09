@@ -1,3 +1,7 @@
-{"version": 2, "width": 80, "height": 24, "timestamp": 1783533791, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop self maintain"}
-[0.007621, "o", "### bebop self maintain\r\n"]
-[6.442239, "o", "  self-maintain ok=true pass=165 fail=0\r\n"]
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537874, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop self maintain"}
+[0.004331, "o", "### bebop self maintain\r\n"]
+[0.865831, "o", "\u001b[1G"]
+[0.86617, "o", "\u001b[0K"]
+[7.091601, "o", "\u001b[2m  self-maintain ok=true pass=176 fail=0\u001b[0m\r\n"]
+[7.125109, "o", "\u001b[1G\u001b[0K⠙"]
+[7.127927, "o", "\u001b[1G\u001b[0K"]

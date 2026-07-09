@@ -125,3 +125,22 @@ test('GREEN: dispatch of a non-red-line task is allowed', async () => {
   });
   assert.equal(res.denied, 0);
 });
+
+// ── Active Inference advisor (FEP) wiring ──
+function doneOnly(): BebopConfig['llm'] {
+  return () => ({ content: 'done', tool_calls: [{ name: 'done', args: {} }] });
+}
+
+test('GREEN: with activeInference set, the FEP advisor surfaces in the transcript', async () => {
+  const dir = tmp();
+  const res = await runLoop({ cwd: dir, taskClass: 'doer', activeInference: true, llm: doneOnly() });
+  assert.equal(res.ok, true);
+  assert.ok(res.transcript.some((l) => l.includes('fep →')), 'FEP advisor must surface when flag is set');
+});
+
+test('RED: without activeInference, the FEP advisor is NOT invoked', async () => {
+  const dir = tmp();
+  const res = await runLoop({ cwd: dir, taskClass: 'doer', activeInference: false, llm: doneOnly() });
+  assert.equal(res.ok, true);
+  assert.ok(!res.transcript.some((l) => l.includes('fep →')), 'FEP advisor must stay off unless flag set');
+});
