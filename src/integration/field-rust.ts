@@ -16,8 +16,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// Pre-built by cargo (see rust-core/Cargo.toml). Located next to this file after a build.
-const WASM_PATH = join(__dirname, '../../rust-core/target/wasm32-unknown-unknown/release/bebop_core.wasm');
+// Pre-built by cargo (see rust-core/Cargo.toml). Two resolution paths:
+//   1. committed `rust-core/bebop_core.wasm` — present on every checkout, so tests run with no Rust toolchain (CI-friendly);
+//   2. cargo build output `rust-core/target/wasm32-unknown-unknown/release/bebop_core.wasm` — used when a dev rebuilds.
+const WASM_COMMITTED = join(__dirname, '../../rust-core/bebop_core.wasm');
+const WASM_BUILT = join(__dirname, '../../rust-core/target/wasm32-unknown-unknown/release/bebop_core.wasm');
+const WASM_PATH = (() => {
+  try { readFileSync(WASM_COMMITTED); return WASM_COMMITTED; } catch { return WASM_BUILT; }
+})();
 
 // Singleton instance (deterministic, single graph at a time — matches the Rust static scratch).
 let _module: WebAssembly.Instance | null = null;

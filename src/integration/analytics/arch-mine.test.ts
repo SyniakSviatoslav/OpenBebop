@@ -11,6 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import {
   buildAdjacency,
   couplingClusters,
@@ -124,8 +125,8 @@ test('GREEN+RED: architectureDrift ~0 for identical graphs, >0 when edges added'
 
 test('GREEN: real scan of bebop analytics + integration yields a non-trivial graph with no false merges', () => {
   const res = scanProjects([
-    { path: '/root/bebop-repo/src/integration/analytics', prefix: 'bebop-analytics' },
-    { path: '/root/bebop-repo/src/integration', prefix: 'bebop-int' },
+    { path: join(process.cwd(), 'src/integration/analytics'), prefix: 'bebop-analytics' },
+    { path: join(process.cwd(), 'src/integration'), prefix: 'bebop-int' },
   ]);
   assert.ok(res.scanned > 10, `scanned ${res.scanned}`);
   assert.ok(res.nodes.length > 10, `nodes ${res.nodes.length}`);
@@ -136,7 +137,7 @@ test('GREEN: real scan of bebop analytics + integration yields a non-trivial gra
 });
 
 test('GREEN: reverseEngineeringLoop runs end-to-end with gap detectors', () => {
-  const res = reverseEngineeringLoop({ roots: [{ path: '/root/bebop-repo/src/integration', prefix: 'bebop-int' }] });
+  const res = reverseEngineeringLoop({ roots: [{ path: join(process.cwd(), 'src/integration'), prefix: 'bebop-int' }] });
   assert.ok(res.scanned > 5);
   assert.ok(Array.isArray(res.isolated), 'isolated computed');
   assert.ok(res.cycle === null || Array.isArray(res.cycle), 'cycle computed');
