@@ -10,6 +10,7 @@ import {
 import { pcaFit } from './integration/analytics/matrix.ts';
 import { DEFAULT_PCA_ANOMALY } from './integration/analytics/anomaly.ts';
 import { DEFAULT_CYCLE_CONSISTENCY } from './integration/analytics/cycle-consistency.ts';
+import { buildTelemetryICAPipeline } from './integration/analytics/telemetry-ica-loop.ts';
 
 const baseCfg = {
   kp: 1.4, ki: 0.22, kd: 1.5, iMin: -1, iMax: 1, uMin: 0, uMax: 1,
@@ -278,4 +279,33 @@ test('GREEN: governor WITHOUT cycleConsistency config never sets cycleBroken (fl
     broken = broken || st.cycleBroken;
   }
   assert.equal(broken, false, 'cycleBroken must stay OFF unless explicitly configured');
+});
+
+// ── D2: ICA → governor telemetry stage (flag-OFF) ──
+
+test('GREEN: governor with icaTelemetry localizes a fault to the broken SUBSYSTEM (not a raw channel)', () => {
+  // calibration: 2 independent subsystems (slow drift s0 + sharp burst s1) mixed into 2 raw channels
+  const calib: number[][] = [];
+  for (let k = 0; k < 200; k++) {
+    const s0 = Math.sin(k / 20);          // slow navigation drift
+    const s1 = (k % 17 === 0) ? 1 : 0;    // comms burst
+    calib.push([s0 + 0.3 * s1, 0.8 * s0 + s1]); // raw mix A·s; rows = time
+  }
+  const pipe = buildTelemetryICAPipeline(calib);
+  const g = new Governor({ ...baseCfg, icaTelemetry: pipe });
+  // on-manifold known-good point (k=50 of the calibration mix): error≈0.25, below the fault gate
+  const onManifold = [Math.sin(2.5), 0.8 * Math.sin(2.5)];
+  for (let k = 0; k < 12; k++) g.step(sample({ features: onManifold }));
+  const clean = g.step(sample({ features: onManifold }));
+  assert.equal(clean.subsystemFault, -1, 'on-manifold telemetry → no fault localized');
+  // inject a sharp burst into subsystem #1 ONLY (raw shifts by the mix column for source 1)
+  const faultRaw = [onManifold[0] + 1.5, onManifold[1] + 5];
+  const st = g.step(sample({ features: faultRaw }));
+  assert.ok(st.subsystemFault >= 0, `a real fault must localize to a subsystem index, got ${st.subsystemFault}`);
+});
+
+test('RED: governor WITHOUT icaTelemetry config never localizes a fault (flag-OFF default)', () => {
+  const g = mk(); // baseCfg has no icaTelemetry
+  const st = g.step(sample({ features: [0.5 + 5, 0.8 * 0.5 + 5] })); // would localize if on
+  assert.equal(st.subsystemFault, -1, 'subsystemFault must stay -1 unless icaTelemetry is configured');
 });

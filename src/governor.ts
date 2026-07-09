@@ -33,6 +33,8 @@ export interface GovernorState {
   anomaly: boolean;
   pcaAnomaly: boolean; // L5 analytics (flag-OFF); true on adaptive-EMA excursion of the features vector
   cycleBroken: boolean; // L5 analytics (flag-OFF); symmetry-loop breach (F(G(x))≠x)
+  /** D2 ICA→governor: index of the localized broken SUBSYSTEM (−1 when none / not configured). */
+  subsystemFault: number;
   thermoFloorHit: boolean;
   error: number;
   poisoned?: boolean; // true when a non-finite sample was rejected (RED-TEAM fix 2026-07-09)
@@ -143,6 +145,8 @@ export function bitsErased(volume: number): number {
 
 import { pcaAnomalyScore, type PcaAnomalyState } from './integration/analytics/anomaly.ts';
 import { cycleConsistencyGate, type CycleConsistencyGateState } from './integration/analytics/cycle-consistency.ts';
+import type { TelemetryICAPipeline } from './integration/analytics/telemetry-ica-loop.ts';
+import { scoreTelemetrySample } from './integration/analytics/telemetry-ica-loop.ts';
 
 export function detectAnomaly(history: number[], x: number, k = 3): boolean {
   if (history.length < 2) return false;
@@ -181,6 +185,15 @@ export interface GovernorConfig extends PIDConfig {
     model: import('./integration/analytics/cycle-consistency.ts').PCA;
     cfg: import('./integration/analytics/cycle-consistency.ts').CycleConsistencyConfig;
   };
+  /** D2 ICA→governor telemetry stage (flag-OFF, 2026-07-09). When supplied, the governor runs each
+   *  incoming `features` vector through the fitted ICA+cycle-consistency pipeline and surfaces the
+   *  localized SUBSYSTEM fault (index into the separated sources, not a raw channel). The pipeline
+   *  is calibrated offline from known-good telemetry via `buildTelemetryICAPipeline`; the live
+   *  connector (feeding Dowiz telemetry rows into `features`) is operator-wired in apps/api.
+   *  `icaFaultError` = symmetry-gap threshold above which a fault is surfaced (the locator always
+   *  reports a candidate `breakAt`, so we gate on the actual reconstruction error, not its presence). */
+  icaTelemetry?: TelemetryICAPipeline;
+  icaFaultError?: number;
 }
 
 export class Governor {
@@ -200,10 +213,12 @@ export class Governor {
   // L5 analytics (flag-OFF): symmetrical-loop (cycle-consistency) state
   cycleBroken = false;
   private cycleState: CycleConsistencyGateState | null = null;
+  // D2 ICA→governor: localized subsystem fault index
+  subsystemFault = -1;
 
   constructor(cfg: GovernorConfig) {
     this.cfg = cfg;
-    this.last = { authority: (cfg.uMin + cfg.uMax) / 2, pidU: 0, icir: null, factorStatus: 'unknown', resonanceRisky: false, anomaly: false, thermoFloorHit: false, error: 0, pcaAnomaly: false, cycleBroken: false };
+    this.last = { authority: (cfg.uMin + cfg.uMax) / 2, pidU: 0, icir: null, factorStatus: 'unknown', resonanceRisky: false, anomaly: false, thermoFloorHit: false, error: 0, pcaAnomaly: false, cycleBroken: false, subsystemFault: -1 };
   }
 
   get authority(): number { return this.last.authority; }
@@ -246,6 +261,7 @@ export class Governor {
         thermoFloorHit: false,
         error: NaN,
         poisoned: true,
+        subsystemFault: -1,
       } as GovernorState);
     }
     const error = this.cfg.targetQuality - s.actualQuality;
@@ -305,7 +321,19 @@ export class Governor {
       this.cycleBroken = st.broken;
     }
 
-    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error, pcaAnomaly: this.pcaAnomaly, cycleBroken: this.cycleBroken });
+    // D2 ICA→GOVERNOR (flag-OFF): run the raw telemetry `features` vector through the fitted
+    // ICA+cycle-consistency pipeline and localize the BROKEN SUBSYSTEM (source index after
+    // unmixing), not a raw channel. Off unless cfg.icaTelemetry is supplied. The pipeline is
+    // calibrated offline from known-good Dowiz telemetry (buildTelemetryICAPipeline); the live
+    // feed is operator-wired in apps/api. Surface breakAt>=0 (a localized candidate) — the gate's
+    // `broken` flag is a stricter confirm; we expose the candidate so ops can triage every hit.
+    if (this.cfg.icaTelemetry && s.features && s.features.length === this.cfg.icaTelemetry.ica.mean.length) {
+      const r = scoreTelemetrySample(this.cfg.icaTelemetry, s.features);
+      const thr = this.cfg.icaFaultError ?? 1.0; // gate on real symmetry-gap, not the always-present candidate
+      if (r.breakAt >= 0 && r.error > thr) this.subsystemFault = r.breakAt;
+    }
+
+    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error, pcaAnomaly: this.pcaAnomaly, cycleBroken: this.cycleBroken, subsystemFault: this.subsystemFault });
   }
 }
 
