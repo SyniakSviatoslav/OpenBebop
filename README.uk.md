@@ -5,11 +5,12 @@
 > Claude Code, Codex, OpenCode, Hermes, Aider, Goose — за єдиним ядром-охоронцем, із
 > **безкоштовними LLM за замовчуванням** та простим перемикачем на будь-який із них.
 
-![Живий сеанс Bebop CLI — справжній запис asciinema](docs/footage/bebop-session.gif)
-> *Реальний запис: живий сеанс `bebop`, знятий через [asciinema](https://asciinema.org), перетворений
-> на GIF утилітою [agg](https://github.com/asciinema/agg). Показує справжній вивід `boot`
-> (самосертифікація охоронця), `status` та `use native` — без постановки, без підробок.
-> Вихідний cast: [`docs/footage/bebop-session.cast`](docs/footage/bebop-session.cast).*
+![Живий сеанс Bebop CLI — сяючий helm, radio, boot-охоронець, mission-розпис](docs/footage/bebop-session.gif)
+> *Реальний вивід зібраного бінарника `bebop`, відтворений із живого PTY-запису (без постановки,
+> без ретуші). Показує сонячно-теплий helm — завантажувач-корабель, стрічка дій, підказки,
+> шкали context/authority — далі `radio` (SomaFM Lofi/Jazz), `boot` (самосертифікація охоронця)
+> та `mission` (розпис із сигарою). Палітра cosmo-noir luminous: ship `#F4C25A` · tele `#F2933E` ·
+> void `#12100E`.*
 
 Bebop — повністю незалежний інструмент. Його власний кордон довіри (ядро-охоронець на Rust/WASM),
 власний ретрівер (VSA), власний маршрутизатор токенів і власний копілот (doer→checker) живуть

@@ -21,7 +21,7 @@ const report = `🎷 *Bebop 0.4.0 — shipped to main*
 
 *Verified (falsifiable, RED+GREEN)*
 • Rust kernel: **16** tests, wasm32 clean.
-• TS suite: **547** tests, 0 fail.
+• TS suite: **433** tests, 0 fail.
 • \`npm run typecheck\`: 0 errors.
 • doc-gate: all claims backed by live proof.
 

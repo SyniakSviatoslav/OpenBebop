@@ -1,0 +1,54 @@
+[package]
+name = "bebop"
+version = "0.4.0"
+edition = "2021"
+description = "Bebop — your own coding agent. Warm cosmo-noir, deterministic guard OS, living memory, post-quantum node identity. Native Rust + WASM. AGPL-3.0."
+license = "AGPL-3.0-or-later"
+default-run = "bebop"
+
+[[bin]]
+name = "bebop"
+path = "src/main.rs"
+
+[lib]
+name = "bebop"
+path = "src/lib.rs"
+
+[dependencies]
+# Host-side deps (the native CLI). NOT the air-gapped sovereign core — that stays dep-free in rust-core/.
+ratatui = "0.30"
+crossterm = { version = "0.28", features = ["event-stream"] }
+clap = { version = "4", features = ["derive", "cargo"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+# crypto (vault): AEAD + KDF, pure-Rust, audited (RUSTCRYPTO)
+chacha20poly1305 = "0.10"
+scrypt = "0.11"
+hkdf = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = "2"  # PQ-era self-certifying node identity (signing/verifying keys)
+rand = { version = "0.8", features = ["getrandom"] }  # OsRng for one-time keygen only
+
+[dependencies.bebop-core]
+path = "../../rust-core"
+
+[features]
+default = ["native"]
+# native = TUI binary. wasm = bindgen core for the web build pipeline.
+native = []
+wasm = ["dep:wasm-bindgen"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+
+[dev-dependencies]
+# none needed; tests are in-module #[cfg(test)]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

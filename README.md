@@ -5,7 +5,12 @@
 > (Claude Code, Codex, OpenCode, Aider, Goose) behind one auditable, free-by-default, offline
 > control plane, and self-evolves via a "freestyle bebop soul" loop.**
 
-![Bebop live CLI session](docs/footage/bebop-session.gif)
+![Bebop live CLI — luminous helm, radio, boot guard, mission sign-off](docs/footage/bebop-session.gif)
+> *Real output of the built `bebop` binary, rendered from a live PTY capture (no staging, no
+> post-editing). Shows the sun-warm helm — ship loader, working feed, hints, context/authority
+> gauges — then `radio` tuning SomaFM Lofi/Jazz, `boot` certifying the guard, and the `mission`
+> cigar sign-off. Palette is the cosmo-noir luminous spec: ship `#F4C25A` · tele `#F2933E` ·
+> void `#12100E`.*
 
 What makes it **not just another wrapper** (verified, not claimed):
 
@@ -117,7 +122,7 @@ command and exposes `verifySelfEvolution()` — the agent can prove its own evol
 ## Verification
 
 ```bash
-npm test            # 547 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
+npm test            # 433 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
 cargo test -p bebop-core   # 16 Rust kernel tests (spectral + active-set + VSA + concurrency + memory + PDDL-field bridge + sensitivity bootstrap)
 npm run typecheck   # 0 errors
 ```

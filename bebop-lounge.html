@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bebop — The Lounge (dock at loop's end)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js"></script>
+<script>
+  // disable FES after p5 is loaded (avoids the harmless pre-load reference error)
+  if (window.p5) p5.disableFriendlyErrors = true;
+</script>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #12100E; }
+  canvas { display: block; }
+  #hint {
+    position: fixed; left: 14px; bottom: 12px;
+    font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    color: #F2933E; opacity: 0.55; letter-spacing: 0.5px;
+    text-shadow: 0 1px 2px #000; pointer-events: none; user-select: none;
+  }
+</style>
+</head>
+<body>
+<div id="hint">move: steer orbit · click: puff smoke · [s] png · [r] reseed · [space] pause</div>
+<script>
+// === CONFIG (algorithm character, not cosmetics) ============================
+const CONFIG = {
+  seed: 0xBEEF,
+  stars: 220,        // density of the parallax field
+  smokeRate: 2.4,    // cigar puffs per frame
+  orbitSpeed: 0.0016,// ship drift rate (0.3x energy)
+  beatRate: 0.9,     // equalizer pulse base
+  grain: 0.05,       // film grain strength
+};
+
+// === PALETTE — bebop brand hues, expressed in HSB ==========================
+// void #12100E · ship #F4C25A · tele #F2933E · glow #FFD9A0 · bone #FBF3E7
+const P = {
+  void:  [37, 16, 7],
+  ship:  [40, 63, 96],
+  tele:  [28, 74, 95],
+  glow:  [36, 37, 100],
+  bone:  [38, 8, 98],
+  alert: [8, 78, 92],
+};
+const hsb = (c, a) => (a === undefined ? color(c[0], c[1], c[2]) : color(c[0], c[1], c[2], a));
+
+// === STATE ================================================================
+let stars = [];      // parallax field
+let smoke = [];      // cigar smoke particles
+let seeded = [];     // stars born from smoke (the invention)
+let t = 0;
+let paused = false;
+let bgBuf;           // precomputed nebula + gradient
+let bebop;           // docked figure anchor
+
+// === SETUP ================================================================
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(1);
+  colorMode(HSB, 360, 100, 100, 100);
+  reseed(CONFIG.seed);
+  bgBuf = createGraphics(width, height);
+  paintBackground(bgBuf);
+}
+
+function reseed(s) {
+  CONFIG.seed = s;
+  randomSeed(s); noiseSeed(s);
+  stars = [];
+  smoke = [];
+  seeded = [];
+  const layers = [0.10, 0.22, 0.42]; // parallax speeds
+  for (let i = 0; i < CONFIG.stars; i++) {
+    const L = floor(random(layers.length));
+    stars.push({
+      x: random(width), y: random(height),
+      r: random(0.6, 2.4) * (1 + L * 0.4),
+      sp: layers[L],
+      tw: random(TWO_PI),            // twinkle phase
+      hue: random() < 0.18 ? P.glow : (random() < 0.5 ? P.bone : P.ship),
+    });
+  }
+  bebop = createVector(width * 0.5, height * 0.66);
+}
+
+// === BACKGROUND — radial void gradient + fbm nebula + vignette ============
+function paintBackground(g) {
+  g.colorMode(HSB, 360, 100, 100, 100);
+  g.noStroke();
+  // base void
+  g.background(P.void[0], P.void[1], P.void[2]);
+  // soft radial glow toward lower-center (where the dock sits)
+  const cx = g.width * 0.5, cy = g.height * 0.62;
+  for (let r = Math.max(g.width, g.height); r > 0; r -= 6) {
+    const k = r / Math.max(g.width, g.height);
+    const b = lerpColor(hsb(P.void), hsb(P.tele), (1 - k) * 0.22);
+    g.fill(b);
+    g.ellipse(cx, cy, r * 2, r * 2);
+  }
+  // nebula: sparse fbm blotches in ship/tele hues
+  g.push();
+  for (let i = 0; i < 140; i++) {
+    const x = random(g.width), y = random(g.height);
+    const n = fbm(x * 0.004, y * 0.004, 4);
+    if (n > 0.55) {
+      const c = random() < 0.5 ? P.ship : P.tele;
+      g.fill(c[0], c[1] * 0.5, c[2], (n - 0.55) * 22);
+      g.ellipse(x, y, random(40, 160), random(40, 160));
+    }
+  }
+  g.pop();
+  // vignette
+  g.push();
+  for (let i = 0; i < 60; i++) {
+    const a = i / 60;
+    g.noFill();
+    g.stroke(0, 0, 0, a * 1.6);
+    g.strokeWeight(2);
+    g.rect(i * 3, i * 2, g.width - i * 6, g.height - i * 4);
+  }
+  g.pop();
+}
+
+// === fractal noise =======================================================
+function fbm(x, y, oct = 4) {
+  let v = 0, amp = 1, freq = 1, sum = 0;
+  for (let i = 0; i < oct; i++) {
+    v += noise(x * freq, y * freq) * amp;
+    sum += amp; amp *= 0.5; freq *= 2;
+  }
+  return v / sum;
+}
+
+// === DRAW ================================================================
+function draw() {
+  if (paused) { renderGrain(); return; }
+  t++;
+  image(bgBuf, 0, 0);
+  drawStars();
+  drawStationRing();
+  drawShip();
+  drawEqualizer();
+  updateSmoke();
+  drawBebop();
+  drawSeededStars();
+  renderGrain();
+}
+
+// --- parallax starfield ----------------------------------------------------
+function drawStars() {
+  noStroke();
+  for (const s of stars) {
+    s.y += s.sp;                       // gentle downward drift
+    s.x += Math.sin((t * 0.002) + s.tw) * s.sp * 0.6;
+    if (s.y > height + 4) { s.y = -4; s.x = random(width); }
+    const tw = 0.55 + 0.45 * Math.sin(t * 0.03 + s.tw);
+    fill(s.hue[0], s.hue[1], s.hue[2], tw * 90);
+    circle(s.x, s.y, s.r);
+  }
+}
+
+// --- the dock: a luminous ring the ship orbits & smoke condenses into -----
+function drawStationRing() {
+  const cx = bebop.x, cy = bebop.y - height * 0.16;
+  push();
+  translate(cx, cy);
+  noFill();
+  // outer halo
+  for (let i = 6; i >= 1; i--) {
+    stroke(P.glow[0], P.glow[1], P.glow[2], 4 + i * 1.5);
+    strokeWeight(i * 1.4);
+    const wob = 1 + 0.015 * Math.sin(t * 0.01);
+    ellipse(0, 0, width * 0.34 * wob, width * 0.34 * wob * 0.62);
+  }
+  // crisp ring
+  stroke(P.ship[0], P.ship[1], P.ship[2], 80);
+  strokeWeight(1.4);
+  ellipse(0, 0, width * 0.34, width * 0.34 * 0.62);
+  // dock ticks
+  stroke(P.tele[0], P.tele[1], P.tele[2], 70);
+  strokeWeight(2);
+  for (let a = 0; a < TWO_PI; a += TWO_PI / 24) {
+    const r = width * 0.17;
+    const x1 = Math.cos(a) * r, y1 = Math.sin(a) * r * 0.62;
+    const x2 = Math.cos(a) * (r + 10), y2 = Math.sin(a) * (r + 10) * 0.62;
+    line(x1, y1, x2, y2);
+  }
+  pop();
+}
+
+// --- the ship: drifts on the ring, sun-gold, glowing ----------------------
+function drawShip() {
+  const baseA = t * CONFIG.orbitSpeed * 1000;
+  // mouse nudges the orbit
+  const mx = (mouseX / width - 0.5);
+  const my = (mouseY / height - 0.5);
+  const a = baseA + mx * 1.2;
+  const rx = width * 0.17, ry = width * 0.17 * 0.62;
+  const cx = bebop.x, cy = bebop.y - height * 0.16;
+  const sx = cx + Math.cos(a) * rx;
+  const sy = cy + Math.sin(a) * ry + my * 30;
+
+  push();
+  translate(sx, sy);
+  // halo
+  for (let i = 5; i >= 1; i--) {
+    noStroke();
+    fill(P.glow[0], P.glow[1], P.glow[2], 6 + i);
+    circle(0, 0, 26 + i * 6 + 4 * Math.sin(t * 0.1));
+  }
+  // hull (chevron ◈▶◈)
+  const ang = Math.atan2(Math.cos(a) * 0.62, -Math.sin(a));
+  rotate(ang);
+  noStroke();
+  fill(P.ship[0], P.ship[1], P.ship[2], 100);
+  beginShape();
+  vertex(13, 0); vertex(-9, -7); vertex(-3, 0); vertex(-9, 7);
+  endShape(CLOSE);
+  fill(P.glow[0], P.glow[1], P.glow[2], 90);
+  circle(-3, 0, 4); // cockpit glow
+  pop();
+}
+
+// --- lofi equalizer mounted on a dock pedestal (simulated beat; mic hook) -
+function drawEqualizer() {
+  const bars = 3;
+  const bw = 22, gap = 12;
+  const total = bars * bw + (bars - 1) * gap;
+  const x0 = bebop.x - 150 - total / 2;   // clearly left of Spike
+  const baseY = bebop.y + 14;             // pedestal top, on the dock
+  const pedW = total + 24, pedH = 10;
+  const pedX = x0 - 12, pedY = baseY + 6;
+  // thin cable linking the pedestal to the dock edge (visual tether)
+  stroke(P.bone[0], P.bone[1], P.bone[2], 35); strokeWeight(1.5);
+  noFill();
+  beginShape();
+  vertex(pedX + pedW, pedY + pedH / 2);
+  bezierVertex(pedX + pedW + 40, pedY, bebop.x - 70, bebop.y + 40, bebop.x - 40, bebop.y + 44);
+  endShape();
+  // pedestal block (the dock mount)
+  noStroke();
+  fill(P.tele[0], P.tele[1], P.tele[2], 45);
+  rect(pedX, pedY, pedW, pedH, 3);
+  fill(P.glow[0], P.glow[1], P.glow[2], 30);
+  rect(pedX, pedY, pedW, 3, 3);
+  for (let i = 0; i < bars; i++) {
+    // layered sines + noise = organic lofi pulse
+    const beat = 0.5 + 0.5 * Math.sin(t * 0.05 * CONFIG.beatRate + i * 1.1)
+                     + 0.25 * fbm(t * 0.01 + i, i * 3.3, 3) - 0.12;
+    const h = constrain(map(beat, 0, 1.1, 6, 64), 6, 64);
+    const bx = x0 + i * (bw + gap);
+    // baseline tick so it reads as a meter, not decoration
+    stroke(P.bone[0], P.bone[1], P.bone[2], 50); strokeWeight(1);
+    line(bx, baseY + 4, bx + bw, baseY + 4);
+    noStroke();
+    const c = i === 1 ? P.ship : P.tele;
+    fill(c[0], c[1], c[2], 90);
+    rect(bx, baseY - h, bw, h, 3);
+    // cap glow
+    fill(P.glow[0], P.glow[1], P.glow[2], 80);
+    rect(bx, baseY - h, bw, 3, 3);
+  }
+}
+
+// --- cigar smoke: curl-noise advection; condenses to stars at the ring ----
+function updateSmoke() {
+  // emit from the cigar tip (Spike's hand)
+  const ex = bebop.x + 12, ey = bebop.y - 50;
+  for (let i = 0; i < CONFIG.smokeRate; i++) {
+    smoke.push({
+      x: ex + random(-2, 2), y: ey,
+      vx: random(-0.2, 0.2), vy: random(-0.7, -0.4),
+      life: 1, size: random(3, 7), seed: random(1000),
+    });
+  }
+  const ringTop = bebop.y - height * 0.16 - width * 0.17 * 0.62;
+  noStroke();
+  for (let i = smoke.length - 1; i >= 0; i--) {
+    const p = smoke[i];
+    // curl-ish noise force
+    const n = fbm(p.x * 0.01 + p.seed, p.y * 0.01 - t * 0.003, 3);
+    const ang = n * TWO_PI * 2;
+    p.vx += Math.cos(ang) * 0.03;
+    p.vy += Math.sin(ang) * 0.01 - 0.004; // buoyancy
+    p.x += p.vx; p.y += p.vy;
+    p.life -= 0.006;
+    p.size += 0.12;
+    if (p.y < ringTop && p.life > 0.3 && random() < 0.06) {
+      // THE INVENTION: smoke condenses into a new star at the ring
+      seeded.push({ x: p.x, y: p.y, r: random(0.8, 2.0), tw: random(TWO_PI), life: 1 });
+      smoke.splice(i, 1);
+      continue;
+    }
+    if (p.life <= 0 || p.y < -10) { smoke.splice(i, 1); continue; }
+    fill(P.glow[0], P.glow[1] * 0.8, P.glow[2], p.life * 38);
+    circle(p.x, p.y, p.size);
+  }
+}
+
+function drawSeededStars() {
+  noStroke();
+  for (let i = seeded.length - 1; i >= 0; i--) {
+    const s = seeded[i];
+    s.life -= 0.004;
+    s.tw += 0.05;
+    if (s.life <= 0) { seeded.splice(i, 1); continue; }
+    const a = s.life * (0.6 + 0.4 * Math.sin(s.tw)) * 100;
+    fill(P.ship[0], P.ship[1], P.ship[2], a);
+    circle(s.x, s.y, s.r);
+  }
+}
+
+// --- bebop as Spike Spiegel: thin slouch, dark mop, heavy lids, cig in hand -
+function drawBebop() {
+  const x = bebop.x, y = bebop.y;
+  push();
+  translate(x, y);
+  scale(1.9);                 // bigger so the face reads
+  // slight slouch: lean the whole figure a touch to viewer-right
+  rotate(0.05);
+
+  const ink = P.bone;      // ivory line-art (warm)
+  const hair = P.void;     // near-black hair (void hue)
+  const cherry = P.ship;   // ember = sun-gold glow
+  const tip = P.tele;      // cigarette body = orange
+
+  // ===== BODY (thin line-art, NOT a filled block) =====
+  stroke(ink[0], ink[1], ink[2], 92);
+  strokeWeight(2.0);
+  noFill();
+  // spine, leaning
+  line(0, 20, 4, -10);
+  // shoulders (narrow)
+  line(-11, -4, 15, -8);
+  // left arm hangs, hand near hip
+  line(-11, -4, -16, 14);
+  line(-16, 14, -19, 22);
+  // right arm bent up to mouth (cigarette hand)
+  line(15, -8, 22, -4);
+  line(22, -4, 27, -16);
+  // hips
+  line(-5, 20, 7, 20);
+  // legs: long, one knee bent (slouch)
+  line(-5, 20, -12, 50);
+  line(-12, 50, -19, 56);
+  line(7, 20, 13, 44);
+  line(13, 44, 18, 44);
+  line(18, 44, 26, 50);
+
+  // ===== HEAD (separate, higher, tilted) =====
+  push();
+  translate(5, -26);
+  rotate(-0.12);             // chin tuck
+  // neck
+  stroke(ink[0], ink[1], ink[2], 92); strokeWeight(2.0);
+  line(0, 12, -1, 4);
+  // face: thin vertical oval
+  noFill(); stroke(ink[0], ink[1], ink[2], 96); strokeWeight(1.6);
+  ellipse(0, -6, 15, 20);
+  // HAIR: dark cap that drapes over the brow (Spike's fringe)
+  noStroke();
+  fill(hair[0], hair[1], hair[2], 100);
+  beginShape();
+  vertex(-8, -4);
+  bezierVertex(-10, -22, 10, -22, 8, -4);
+  // fringe flops down over left brow
+  bezierVertex(7, -9, 3, -12, 1, -7);
+  bezierVertex(0, -10, -4, -11, -3, -5);
+  bezierVertex(-5, -8, -7, -7, -8, -4);
+  endShape(CLOSE);
+  // stray strands
+  stroke(ink[0], ink[1], ink[2], 35); strokeWeight(0.7);
+  line(-6, -8, -7, 0); line(0, -11, -1, -2); line(4, -11, 5, -3);
+  // EYES: heavy-lidded half-lines (sleepy Spike) — thicker so they read
+  stroke(ink[0], ink[1], ink[2], 98); strokeWeight(1.7);
+  line(-4, -7, -0.5, -7);   // left lid
+  line(2, -7, 5, -7);       // right lid
+  // nose
+  strokeWeight(1.1);
+  line(1, -6, 0, -3);
+  // mouth: slack, nearly-flat (unimpressed Spike — not a frown)
+  noFill(); strokeWeight(1.3);
+  line(-3, 1, 3, 0.5);
+  pop();
+
+  // ===== CIGARETTE at the mouth, ember glowing at the lips =====
+  push();
+  // anchor the lit end at the mouth (head frame ~ (5,-26) in figure space)
+  translate(5, -26);
+  rotate(0.5);              // angle the cig outward/down from the lips
+  // ember (sun-gold, pulsing) — right at the mouth
+  const pulse = 0.5 + 0.5 * Math.abs(Math.sin(t * 0.18));
+  for (let i = 5; i >= 1; i--) {
+    noStroke();
+    fill(cherry[0], cherry[1], cherry[2], 10 + i * 8 + 10 * pulse);
+    circle(0, 0, i * 2.6);
+  }
+  // cig body extends from the mouth out to the hand
+  noStroke();
+  fill(tip[0], tip[1], tip[2], 95);
+  rect(0, -1.5, 18, 3, 1.5);
+  // ash tip (outer end)
+  fill(ink[0], ink[1], ink[2], 35);
+  rect(15.5, -1.5, 2.5, 3, 1);
+  // two fingers pinching the outer end
+  stroke(ink[0], ink[1], ink[2], 88); strokeWeight(1.7);
+  line(16, 5, 22, 0); line(16, 9, 22, 3);
+  pop();
+
+  pop();
+}
+
+// --- film grain (the "print" texture) --------------------------------------
+function renderGrain() {
+  // cheap deterministic speckle, redrawn each frame for liveliness
+  loadPixels();
+  const d = pixelDensity();
+  const len = 4 * width * d * height * d;
+  for (let i = 0; i < len; i += 4) {
+    if (Math.random() < 0.04) {
+      const g = (Math.random() * 2 - 1) * CONFIG.grain * 255;
+      pixels[i] += g; pixels[i + 1] += g; pixels[i + 2] += g;
+    }
+  }
+  updatePixels();
+}
+
+// === EVENTS ===============================================================
+function mousePressed() {
+  // puff: a burst of extra smoke from Spike's cigar
+  const ex = bebop.x + 12, ey = bebop.y - 50;
+  for (let i = 0; i < 30; i++) {
+    smoke.push({
+      x: ex + random(-4, 4), y: ey,
+      vx: random(-0.6, 0.6), vy: random(-1.0, -0.5),
+      life: 1, size: random(4, 9), seed: random(1000),
+    });
+  }
+}
+function keyPressed() {
+  if (key === 's' || key === 'S') saveCanvas('bebop-lounge', 'png');
+  if (key === 'r' || key === 'R') reseed(floor(Math.random() * 99999));
+  if (key === ' ') paused = !paused;
+}
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  bgBuf = createGraphics(width, height);
+  paintBackground(bgBuf);
+  bebop = createVector(width * 0.5, height * 0.66);
+}
+</script>
+</body>
+</html>

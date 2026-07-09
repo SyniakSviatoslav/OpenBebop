@@ -28,6 +28,17 @@ crates/*/target/
 # Python venvs (do NOT commit — multi-GB)
 .venv/
 .venv2/
+.venv-render/
+
+# Headless-browser download (used only to verify p5 sketches; multi-hundred-MB)
+chrome/
+
+# Scratch recorder/renderer scripts for footage (kept out of the repo)
+record-session.py
+record-any.py
+render-cast.py
+capture-lounge.cjs
+docs/footage/*.cast.tmp
 
 # Build output
 dist/

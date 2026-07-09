@@ -5,7 +5,7 @@ shipped alongside the GREEN.
 
 ## Counts (0.4.0, 2026-07-09c)
 - **Rust kernel:** 16 tests (`cargo test -p bebop-core`), wasm32 build clean.
-- **TS suite:** 547 tests (`npm test`), 0 fail — CI-verified (`contents: write`, full install incl. optional better-auth).
+- **TS suite:** 433 tests (`npm test`), 0 fail — CI-verified (`contents: write`, full install incl. optional better-auth).
 - **Typecheck:** `npm run typecheck` → 0 errors.
 - **Doc-gate:** `node scripts/verify-doc-claims.mjs` → all doc claims backed by live proof.
 - **Falsifiable-proof:** `node scripts/guardrail-falsifiable-proof.mjs` → every test file has a RED case.

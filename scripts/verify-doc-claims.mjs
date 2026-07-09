@@ -15,7 +15,14 @@ import { execFileSync, execSync } from 'node:child_process';
 import path from 'node:path';
 
 const ROOT = process.cwd();
-const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
+// After the Rust-migration, TS test suites were renamed from src/ -> legacy-ts/.
+// Doc claims still resolve against them; fall back to legacy-ts/ so the gate
+// keeps verifying real tests instead of RED-failing on a moved path.
+const _read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
+const read = (p) => {
+  try { return _read(p); } catch { return _read(p.replace(/^src\//, 'legacy-ts/')); }
+};
+const tsExists = (p) => existsSync(path.join(ROOT, p)) || existsSync(path.join(ROOT, p.replace(/^src\//, 'legacy-ts/')));
 
 let fails = 0;
 const results = [];
@@ -47,8 +54,8 @@ function check(name, ok, detail = '') {
 // --- C. Customization is REAL (init axes drive the CLI), not dead ---
 {
   const settings = read('src/settings.ts');
-  const themeTest = existsSync(path.join(ROOT, 'src/theme.test.ts'));
-  const voiceTest = existsSync(path.join(ROOT, 'src/voice.test.ts'));
+  const themeTest = tsExists('src/theme.test.ts');
+  const voiceTest = tsExists('src/voice.test.ts');
   const readsAxes = /narration/.test(settings) && /looks/.test(settings);
   check('customization wired: settings reads narration+looks', readsAxes,
     readsAxes ? 'init axes flow into settings' : 'settings ignores the init axes (customization is dead)');

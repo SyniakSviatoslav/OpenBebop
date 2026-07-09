@@ -102,7 +102,7 @@ is the tunable metaplasticity dial (lower → physics dominates; higher → trus
 - Port `matrix.ts` SVD/PCA and `kalman` to the same Rust core (flag-OFF twins).
 
 ## 2026-07-09c — sensitivity bootstrap, f32 CSR, SIMD128, Top-K Contours, Multipilot, Outfit
-Wired per operator directive. All falsifiable; full suite: 16 Rust kernel + 547 TS (RED+GREEN).
+Wired per operator directive. All falsifiable; full suite: 16 Rust kernel + 433 TS (RED+GREEN).
 
 ### Sensitivity bootstrap (ZERO new infra)
 The kernel already accrues `|Δu|` per step into `ACCUM` (a `Mutex<(count, Vec<f64>)>`, independent of

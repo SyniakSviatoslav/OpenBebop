@@ -36,7 +36,7 @@ Codename: **"Multipilot + the new outfit."** Field core, planner, and identity w
 
 ### Verified
 - Rust kernel: **16** tests (`cargo test -p bebop-core`), wasm32 build clean.
-- TS suite: **547** tests (`npm test`), 0 fail.
+- TS suite: **433** tests (`npm test`), 0 fail.
 - `npm run typecheck`: 0 errors.
 - `node scripts/verify-doc-claims.mjs`: all doc claims backed by live proof.
 
