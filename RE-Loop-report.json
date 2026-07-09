@@ -1,0 +1,218 @@
+{
+  "selfRE": {
+    "label": "SELF-RE (analytics harness on itself)",
+    "scanned": 11,
+    "nodes": 11,
+    "edges": 7,
+    "maxDegree": 2,
+    "spectralRadius": 2.767421786638178,
+    "couplingClusters": [
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "analytics:anomaly.test",
+          "analytics:anomaly"
+        ]
+      },
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "analytics:arch-mine",
+          "analytics:arch-mine.test",
+          "analytics:loop"
+        ]
+      },
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "analytics:cycle-consistency.test",
+          "analytics:cycle-consistency"
+        ]
+      }
+    ],
+    "isolatedCount": 0,
+    "isolatedSample": [],
+    "cycle": null,
+    "crossEdgeCount": 0,
+    "crossEdgeSample": []
+  },
+  "loop1_wholeProject": {
+    "label": "LOOP1 whole project",
+    "scanned": 841,
+    "nodes": 841,
+    "edges": 279.5,
+    "maxDegree": 40,
+    "spectralRadius": 6.3470163832713276,
+    "couplingClusters": [
+      {
+        "strength": 6.3470163832713276,
+        "members": [
+          "dowiz-tools:loop-harness/src/autoupgrade",
+          "dowiz-tools:loop-harness/src/cli",
+          "dowiz-tools:loop-harness/src/index"
+        ]
+      },
+      {
+        "strength": 6.3470163832713276,
+        "members": [
+          "dowiz-tools:bebop/bebop",
+          "dowiz-tools:bebop/src/loop",
+          "dowiz-tools:bebop/src/conductor.test",
+          "dowiz-tools:bebop/src/copilot"
+        ]
+      },
+      {
+        "strength": 6.3470163832713276,
+        "members": [
+          "bebop:consciousness.test",
+          "bebop:consciousness",
+          "bebop:governor",
+          "bebop:governor.test",
+          "bebop:copilot"
+        ]
+      },
+      {
+        "strength": 6.3470163832713276,
+        "members": [
+          "bebop:conductor.test",
+          "bebop:loop"
+        ]
+      }
+    ],
+    "isolatedCount": 467,
+    "isolatedSample": [
+      "bebop:dispatch-cli.test",
+      "bebop:optional-deps.d",
+      "bebop:schema",
+      "bebop:integration/README",
+      "bebop:integration/redteam-recall.test",
+      "bebop:integration/zkvm/NOTES",
+      "bebop:integration/zenoh/NOTES",
+      "bebop:integration/wetware/NOTES",
+      "bebop:integration/tigerbeetle/NOTES",
+      "bebop:integration/optical/NOTES",
+      "bebop:integration/active-inference/NOTES",
+      "dowiz-tools:vsa/BENCH-VIZ"
+    ],
+    "cycle": null,
+    "crossEdgeCount": 0,
+    "crossEdgeSample": []
+  },
+  "loop2_livingMemory": {
+    "label": "LOOP2 living-memory corpus",
+    "scanned": 151,
+    "nodes": 151,
+    "edges": 196,
+    "maxDegree": 49,
+    "spectralRadius": 11.629409341443795,
+    "couplingClusters": [
+      {
+        "strength": 11.629409341443795,
+        "members": [
+          "lm:ground-truth-over-proxy-2026-07-07",
+          "lm:next-arc-agent-tooluse-hook-antirot-2026-07-07",
+          "lm:vsa-token-economy-2026-07-05",
+          "lm:session-resume-2026-07-05",
+          "lm:rebuild-decision-rust-astro-2026-07-04",
+          "lm:model-routing-policy-2026-07-03",
+          "lm:sovereign-core-phase-zero-2026-07-05",
+          "lm:max-lanes-parallelism-rule-2026-07-03",
+          "lm:harness-hardening-living-knowledge-2026-07-07"
+        ]
+      },
+      {
+        "strength": 11.629409341443795,
+        "members": [
+          "lm:fe-polish-batch-2026-06-23",
+          "lm:staging-full-audit-2026-06-23"
+        ]
+      }
+    ],
+    "isolatedCount": 7,
+    "isolatedSample": [
+      "lm:MEMORY-ATTIC",
+      "lm:oss-teardown-research",
+      "lm:red-proof-0b5-completed-2026-07-07",
+      "lm:session-2026-07-07-fresh",
+      "lm:session-2026-07-07-late-phase2-2-2-3",
+      "lm:session-2026-07-07-late-summary",
+      "lm:session-2026-07-07-phase2-reliability-redline"
+    ],
+    "cycle": [
+      "lm:ground-truth-over-proxy-2026-07-07",
+      "lm:model-routing-policy-2026-07-03",
+      "lm:knowledge-as-circuits-and-eye-2026-07-05"
+    ],
+    "crossEdgeCount": 0,
+    "crossEdgeSample": []
+  },
+  "loop3_integratedTools": {
+    "label": "LOOP3 integrated tools",
+    "scanned": 42,
+    "nodes": 42,
+    "edges": 19.5,
+    "maxDegree": 2,
+    "spectralRadius": 2.767421786638178,
+    "couplingClusters": [
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "bebop-analytics:anomaly.test",
+          "bebop-analytics:anomaly"
+        ]
+      },
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "bebop-analytics:arch-mine",
+          "bebop-analytics:arch-mine.test",
+          "bebop-analytics:loop"
+        ]
+      },
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "bebop-analytics:cycle-consistency.test",
+          "bebop-analytics:cycle-consistency"
+        ]
+      },
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "bebop-zkvm:kernel-journal",
+          "bebop-zkvm:prover-adapter",
+          "bebop-zkvm:prover-adapter.test"
+        ]
+      },
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "bebop-zkvm:verify",
+          "bebop-zkvm:zkvm.test"
+        ]
+      },
+      {
+        "strength": 2.767421786638178,
+        "members": [
+          "bebop-zenoh:real-adapter.test",
+          "bebop-zenoh:real-adapter"
+        ]
+      }
+    ],
+    "isolatedCount": 6,
+    "isolatedSample": [
+      "bebop-zenoh:NOTES",
+      "bebop-zkvm:NOTES",
+      "bebop-ai:NOTES",
+      "bebop-optical:NOTES",
+      "bebop-wetware:NOTES",
+      "bebop-tb:NOTES"
+    ],
+    "cycle": null,
+    "crossEdgeCount": 0,
+    "crossEdgeSample": []
+  },
+  "gapsAndFailurePoints": [
+    "LIVING-MEMORY: 7 orphan notes (referenced by nothing / dangling wikilink): lm:MEMORY-ATTIC, lm:oss-teardown-research, lm:red-proof-0b5-completed-2026-07-07, lm:session-2026-07-07-fresh, lm:session-2026-07-07-late-phase2-2-2-3, lm:session-2026-07-07-late-summary, lm:session-2026-07-07-phase2-reliability-redline"
+  ]
+}

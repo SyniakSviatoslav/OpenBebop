@@ -38,6 +38,11 @@ export interface GovernorState {
   thermoFloorHit: boolean;
   error: number;
   poisoned?: boolean; // true when a non-finite sample was rejected (RED-TEAM fix 2026-07-09)
+  /** N2 liveness contract (flag-OFF): true when the agent has been silent longer than
+   *  `watchdogMs` ⇒ kernel dropped to Safe State (authority floored, no advisory honored). */
+  safeState?: boolean;
+  /** N2: ms since the last advisory (heartbeat age). 0 until the first step with a clock. */
+  agentSilentMs?: number;
 }
 
 // ── pure math primitives ──────────────────────────────────────────────────────
@@ -194,6 +199,14 @@ export interface GovernorConfig extends PIDConfig {
    *  reports a candidate `breakAt`, so we gate on the actual reconstruction error, not its presence). */
   icaTelemetry?: TelemetryICAPipeline;
   icaFaultError?: number;
+  /** N2 liveness contract (2026-07-09, flag-OFF). If the stochastic agent (control-plane
+   *  advisor) goes silent for longer than `watchdogMs`, the kernel drops to SAFE STATE:
+   *  authority floored to uMin and `safeState=true`. This is the "Heartbeat / Watchdog"
+   *  from the Sandbox-Paradox research — a probabilistic advisor that hangs mid-thought
+   *  must not hold the wheel. Off unless supplied. When supplied, `step()` must be called
+   *  with the current monotonic clock ms (a 4th arg) OR the caller must feed `t` itself;
+   *  if no time is ever supplied the watchdog is inert (cannot false-trip on a missing clock). */
+  watchdogMs?: number;
 }
 
 export class Governor {
@@ -215,10 +228,13 @@ export class Governor {
   private cycleState: CycleConsistencyGateState | null = null;
   // D2 ICA→governor: localized subsystem fault index
   subsystemFault = -1;
+  // N2 liveness contract (flag-OFF): Safe State flag + last advisory clock
+  safeState = false;
+  private lastAdvisoryMs: number | null = null;
 
   constructor(cfg: GovernorConfig) {
     this.cfg = cfg;
-    this.last = { authority: (cfg.uMin + cfg.uMax) / 2, pidU: 0, icir: null, factorStatus: 'unknown', resonanceRisky: false, anomaly: false, thermoFloorHit: false, error: 0, pcaAnomaly: false, cycleBroken: false, subsystemFault: -1 };
+    this.last = { authority: (cfg.uMin + cfg.uMax) / 2, pidU: 0, icir: null, factorStatus: 'unknown', resonanceRisky: false, anomaly: false, thermoFloorHit: false, error: 0, pcaAnomaly: false, cycleBroken: false, subsystemFault: -1, safeState: false, agentSilentMs: 0 };
   }
 
   get authority(): number { return this.last.authority; }
@@ -245,7 +261,24 @@ export class Governor {
     return 'healthy';
   }
 
-  step(s: TelemetrySample): GovernorState {
+  step(s: TelemetrySample, nowMs?: number): GovernorState {
+    // N2 liveness contract (flag-OFF): if the agent has been silent longer than
+    // watchdogMs, drop to SAFE STATE. We only arm the watchdog once a clock has
+    // ever been supplied (lastAdvisoryMs !== null) so a caller that never passes
+    // time cannot false-trip on a missing clock. `nowMs` should be a monotonic
+    // clock (performance.now()); it is intentionally NOT Date.now() to keep the
+    // unit-test surface deterministic.
+    let agentSilentMs = 0;
+    if (nowMs !== undefined && nowMs !== null && Number.isFinite(nowMs)) {
+      // each step with a valid clock IS a heartbeat; measure gap vs the prior
+      // advisory, then advance the heartbeat to "now" so a responsive agent
+      // never accumulates silence. Only arms after the first clocked step.
+      if (this.lastAdvisoryMs === null) this.lastAdvisoryMs = nowMs;
+      agentSilentMs = Math.max(0, nowMs - this.lastAdvisoryMs);
+      this.lastAdvisoryMs = nowMs;
+    }
+    const watchdogArmed = this.cfg.watchdogMs !== undefined && this.lastAdvisoryMs !== null;
+    const silentTooLong = watchdogArmed && agentSilentMs > (this.cfg.watchdogMs ?? 0);
     // FAILOUT/Poison guard (RED-TEAM finding 2026-07-09): a non-finite sample (NaN/Infinity from a
     // degraded upstream) must NOT corrupt the integral accumulator — once NaN enters `this.pid`,
     // every future `authority` is NaN (silent poison that the L5 authority gate trusts). On bad input
@@ -262,12 +295,14 @@ export class Governor {
         error: NaN,
         poisoned: true,
         subsystemFault: -1,
+        safeState: silentTooLong,
+        agentSilentMs: watchdogArmed ? agentSilentMs : 0,
       } as GovernorState);
     }
     const error = this.cfg.targetQuality - s.actualQuality;
     const c = this.cfg;
     const { u, integral } = pidStep(c, this.pid, error);
-    this.pid = { integral, prevError: error, u };
+    this.pid = { integral, prevError: error, u: u };
 
     const icirV = this.pushFactor(s.predictedQuality, s.actualQuality);
     const status = this.factorStatus(icirV);
@@ -276,6 +311,13 @@ export class Governor {
     let authority = u;
     if (status === 'dead') authority = c.uMin;
     if (status === 'volatile') authority = Math.min(authority, (c.uMin + c.uMax) / 2);
+
+    // N2 liveness contract (flag-OFF): if the agent has been silent past watchdogMs,
+    // drop to SAFE STATE — floor authority regardless of what the advisor computed.
+    // A responsive agent resets the heartbeat every clocked step, so this only fires
+    // when the gap between two advisories exceeds the budget (the advisor "hung").
+    const safeState = silentTooLong;
+    if (safeState) authority = c.uMin;
 
     // resonance: estimate closed-loop ζ of the PROPOSED step; if risky, cap the change magnitude
     const res = loopResonance(c.kp, c.kd, c.plantM, c.plantB, c.samplePeriod ?? 0);
@@ -333,7 +375,7 @@ export class Governor {
       if (r.breakAt >= 0 && r.error > thr) this.subsystemFault = r.breakAt;
     }
 
-    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error, pcaAnomaly: this.pcaAnomaly, cycleBroken: this.cycleBroken, subsystemFault: this.subsystemFault });
+    return (this.last = { authority: clamp(authority, c.uMin, c.uMax), pidU: u, icir: icirV, factorStatus: status, resonanceRisky: this.resonanceRisky, anomaly: this.anomaly, thermoFloorHit: this.thermoFloorHit, error, pcaAnomaly: this.pcaAnomaly, cycleBroken: this.cycleBroken, subsystemFault: this.subsystemFault, safeState, agentSilentMs: watchdogArmed ? agentSilentMs : 0 });
   }
 }
 

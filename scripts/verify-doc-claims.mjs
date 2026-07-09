@@ -168,5 +168,27 @@ try {
       : 'rule missing, theorem doc absent, or not referenced from AGENTS');
 }
 
+// --- M. N1 Open-System Symmetry: cycle-consistency exposes symmetryTol cfg + tolerance-band test ---
+{
+  const cc = read('src/integration/analytics/cycle-consistency.ts');
+  const t = read('src/integration/analytics/cycle-consistency.test.ts');
+  const cfgThere = /symmetryTol/.test(cc);
+  const tolTest = /symmetryTol/.test(t) && /tolerates/.test(t) && /SHARP asymmetry/.test(t);
+  check('N1 Open-System Symmetry: symmetryTol cfg + tolerance-band RED+GREEN test', cfgThere && tolTest,
+    cfgThere && tolTest ? 'relaxed-band breach gate present + tolerance/break RED+GREEN proven'
+      : 'symmetryTol missing from cycle-consistency or its test lacks the tolerance/break pair');
+}
+
+// --- N. N2 liveness contract: governor exposes safeState + watchdog + authority clamp on silence ---
+{
+  const gov = read('src/governor.ts');
+  const t = read('src/governor.test.ts');
+  const fields = /safeState/.test(gov) && /watchdogMs/.test(gov) && /agentSilentMs/.test(gov);
+  const clampTest = /Safe State/.test(t) && /floors authority to uMin/.test(t) && /watchdogMs/i.test(t);
+  check('N2 liveness contract: safeState + watchdog + authority-clamp RED+GREEN test', fields && clampTest,
+    fields && clampTest ? 'governor drops to Safe State on silence + RED+GREEN proves it'
+      : 'governor missing safeState/watchdog fields or the safe-state test is absent');
+}
+
 console.log(`\n  ${fails ? `✗ ${fails} doc-claim check(s) FAILED — fix before commit/release` : '✓ all doc claims backed by live proof'}`);
 process.exit(fails ? 1 : 0);

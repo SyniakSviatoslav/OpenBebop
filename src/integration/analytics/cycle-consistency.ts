@@ -124,6 +124,13 @@ export interface CycleConsistencyConfig {
   warmup: number;
   /** hysteresis margin: flag only when error > floor·(1+margin). */
   margin: number;
+  /** Open-System Symmetry relaxation (Sandbox Paradox fix, 2026-07-09). Absolute
+   *  tolerance band on the symmetry gap. 0 = exact legacy F(G(X))==X (hard
+   *  equality, brittle in a noisy real world). >0 ⇒ only an excursion EXCEEDING
+   *  the margin-scaled floor by MORE than `symmetryTol` flags — slow drift and
+   *  tiny sensor noise are tolerated, sharp asymmetries still break. Flag-OFF
+   *  by default (0). */
+  symmetryTol?: number;
 }
 
 export const DEFAULT_CYCLE_CONSISTENCY: CycleConsistencyConfig = {
@@ -132,6 +139,7 @@ export const DEFAULT_CYCLE_CONSISTENCY: CycleConsistencyConfig = {
   emaAlpha: 0.1,
   warmup: 8,
   margin: 0.1,
+  symmetryTol: 0, // exact legacy by default
 };
 
 export interface CycleConsistencyGateState {
@@ -163,6 +171,19 @@ export function cycleConsistencyGate(
     ? staticTh
     : cfg.emaAlpha * prevThreshold + (1 - cfg.emaAlpha) * v.error;
   const floor = cfg.threshold && cfg.threshold > 0 ? cfg.threshold : threshold;
-  const broken = step > cfg.warmup && v.error > floor * (1 + cfg.margin);
+  const tol = cfg.symmetryTol ?? 0; // 0 ⇒ exact legacy; >0 ⇒ Open-System Symmetry band
+  // Breach rule:
+  //  • with tol=0 → legacy hard-equality band: gap must exceed the hysteresis
+  //    floor (floor·(1+margin)). Any non-zero excursion past the floor breaks.
+  //  • with tol>0 (Open-System Symmetry) → the EMA floor still absorbs slow
+  //    DRIFT, but a SHARP jump beyond the *established previous* gap (prevThreshold)
+  //    by more than the absolute band `tol` breaks. This is the Sandbox-Paradox
+  //    fix: the world is stochastic, so we tolerate a steady-state gap and gradual
+  //    drift, and only flag an abrupt symmetry break. Comparing against prevThreshold
+  //    (the baseline we already smoothed) avoids the spurious self-inclusion of the
+  //    current sample into its own gate.
+  const breachFloor = floor * (1 + cfg.margin);
+  const breachBand = prevThreshold + tol;
+  const broken = step > cfg.warmup && v.error > Math.max(breachFloor, breachBand);
   return { error: v.error, threshold: floor, broken, breakAt: v.breakAt, residual: v.residual, step };
 }

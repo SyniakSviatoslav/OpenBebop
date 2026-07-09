@@ -138,3 +138,66 @@ test('GREEN: governor-style gate stays QUIET on steady in-manifold data (flag-OF
   }
   assert.equal(broken, false, 'steady normal state must not break the loop');
 });
+
+// ── N1: Open-System Symmetry (Sandbox Paradox fix, 2026-07-09) ──
+// Relaxes the hard F(G(X))==X to a tolerance band so slow DRIFT / steady-state
+// noise is tolerated, while a SHARP jump beyond the established baseline breaks.
+
+test('GREEN: symmetryTol>0 tolerates a SMALL in-band gap near the established baseline', () => {
+  const win = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+    [1, 1, 1],
+  ];
+  const model = fitConsistencyModel(win);
+  const cfg = { ...DEFAULT_CYCLE_CONSISTENCY, warmup: 6, symmetryTol: 0.3 };
+  let prev = 0, step = 0;
+  for (let i = 0; i < 7; i++) {
+    const r = cycleConsistencyGate(model, [0.5, 0.5, 0.5], cfg, prev, step);
+    prev = r.threshold; step = r.step;
+  }
+  // a 0.05 drift on the latent z-axis stays within the band ⇒ NOT broken
+  const r = cycleConsistencyGate(model, [0.5, 0.5, 0.55], cfg, prev, step);
+  assert.ok(r.error > 0, 'a small drift still leaves a non-zero gap (integrity measured)');
+  assert.equal(r.broken, false, 'gap within the tolerance band of the baseline must NOT break');
+});
+
+test('RED: symmetryTol>0 STILL breaks a SHARP asymmetry (band does not hide real faults)', () => {
+  const win = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+    [1, 1, 1],
+  ];
+  const model = fitConsistencyModel(win);
+  const cfg = { ...DEFAULT_CYCLE_CONSISTENCY, warmup: 6, symmetryTol: 0.3 };
+  let prev = 0, step = 0;
+  for (let i = 0; i < 7; i++) {
+    const r = cycleConsistencyGate(model, [0.5, 0.5, 0.5], cfg, prev, step);
+    prev = r.threshold; step = r.step;
+  }
+  // a dropped z-field produces a ~0.5 gap = baseline + tol ⇒ MUST break
+  const r = cycleConsistencyGate(model, [0.5, 0.5, 0], cfg, prev, step);
+  assert.equal(r.broken, true, 'sharp asymmetry past prevThreshold+tol must break even with band');
+  assert.equal(r.breakAt, 2, 'locator still points at the dropped feature');
+});
+
+test('RED: symmetryTol=0 === exact legacy (a non-zero gap breaks, proving the default is hard equality)', () => {
+  const win = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+    [1, 1, 1],
+  ];
+  const model = fitConsistencyModel(win);
+  const cfg = { ...DEFAULT_CYCLE_CONSISTENCY, warmup: 6, symmetryTol: 0 };
+  let prev = 0, step = 0;
+  for (let i = 0; i < 7; i++) {
+    const r = cycleConsistencyGate(model, [0.5, 0.5, 0.5], cfg, prev, step);
+    prev = r.threshold; step = r.step;
+  }
+  // tol=0 ⇒ the hard-equality contract: even a tiny 0.05 gap exceeds the floor ⇒ breaks
+  const r = cycleConsistencyGate(model, [0.5, 0.5, 0.55], cfg, prev, step);
+  assert.equal(r.broken, true, 'tol=0 must recover the brittle exact-equality breach');
+});

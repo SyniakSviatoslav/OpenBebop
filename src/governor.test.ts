@@ -309,3 +309,49 @@ test('RED: governor WITHOUT icaTelemetry config never localizes a fault (flag-OF
   const st = g.step(sample({ features: [0.5 + 5, 0.8 * 0.5 + 5] })); // would localize if on
   assert.equal(st.subsystemFault, -1, 'subsystemFault must stay -1 unless icaTelemetry is configured');
 });
+
+// ── N2: liveness contract / safe-state watchdog (flag-OFF, 2026-07-09) ──
+// The stochastic advisor "holds the wheel" only while it keeps heartbeating.
+// If it goes silent past watchdogMs, the kernel drops to Safe State.
+
+test('GREEN: responsive advisor (heartbeat each step) never trips the watchdog', () => {
+  const g = new Governor({ ...baseCfg, watchdogMs: 1000 });
+  let safe = false;
+  for (let k = 0; k < 10; k++) {
+    const st = g.step(sample({ predictedQuality: 0.9, actualQuality: 0.88 }), k * 200);
+    safe = safe || st.safeState === true;
+  }
+  assert.equal(safe, false, 'a heartbeating advisor must stay out of Safe State');
+  const final = g.step(sample({ predictedQuality: 0.9, actualQuality: 0.88 }), 2000);
+  assert.equal(final.safeState, false, 'consecutive clocked steps keep the agent alive');
+  assert.equal(final.agentSilentMs, 200, 'silence measured since the prior heartbeat');
+});
+
+test('RED: advisor silent past watchdogMs drops the kernel to Safe State (authority floored)', () => {
+  const g = new Governor({ ...baseCfg, watchdogMs: 1000 });
+  // first heartbeat arms the watchdog
+  g.step(sample({ predictedQuality: 0.9, actualQuality: 0.88 }), 0);
+  // a gap far exceeding the budget ⇒ the advisor "hung" ⇒ Safe State
+  const st = g.step(sample({ predictedQuality: 0.9, actualQuality: 0.88 }), 5000);
+  assert.equal(st.safeState, true, 'silence past watchdogMs must engage Safe State');
+  assert.equal(st.agentSilentMs, 5000, 'reported silence equals the gap');
+  assert.equal(st.authority, baseCfg.uMin, 'Safe State floors authority to uMin');
+});
+
+test('GREEN: watchdog is inert when no clock is ever supplied (cannot false-trip)', () => {
+  const g = new Governor({ ...baseCfg, watchdogMs: 1000 });
+  // never pass nowMs — simulates a caller that uses the governor without a clock
+  let safe = false;
+  for (let k = 0; k < 30; k++) {
+    const st = g.step(sample({ predictedQuality: 0.9, actualQuality: 0.88 }));
+    safe = safe || st.safeState === true;
+  }
+  assert.equal(safe, false, 'without a clock the watchdog must never engage');
+  assert.equal(g.state.agentSilentMs, 0, 'no clock ⇒ no silence reported');
+});
+
+test('GREEN: governor WITHOUT watchdogMs config never engages Safe State (flag-OFF default)', () => {
+  const g = mk(); // baseCfg has no watchdogMs
+  const st = g.step(sample({ predictedQuality: 0.9, actualQuality: 0.88 }), 999999);
+  assert.notEqual(st.safeState, true, 'Safe State must stay OFF unless watchdogMs is configured');
+});
