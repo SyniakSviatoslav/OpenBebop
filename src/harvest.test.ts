@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { livingMemory } from './memory.ts';
 import { harvest, candidateSkills, patternMap, crossPatterns, recallField } from './harvest.ts';
+import type { Skill } from './skills.ts';
 
 // Seed a deterministic, structured memory: a spreading neighbourhood + a cyclic one.
 function seed(): string[] {
@@ -87,9 +88,16 @@ test('GREEN: crossPatterns surface the explore→reflect coupling in a structure
 
 test('GREEN: harvest() report bundles candidates + patterns + cross + existing skills', () => {
   const concepts = seed();
-  const rep = harvest(concepts);
+  // Inject a deterministic skill list so the assertion does not depend on which skills happen to
+  // be installed on the local machine (~/.hermes/skills/ differs per environment → was flaky on CI,
+  // where 'review' was absent and the test failed). harvest() accepts an optional skills param.
+  const skills: Skill[] = [
+    { name: 'review', description: 'code review', body: '', dir: '/tmp/skills/review' },
+    { name: 'deploy', description: 'deploy', body: '', dir: '/tmp/skills/deploy' },
+  ];
+  const rep = harvest(concepts, skills);
   assert.ok(Array.isArray(rep.candidates));
   assert.ok(Array.isArray(rep.patterns));
   assert.ok(Array.isArray(rep.cross));
-  assert.ok(rep.existingSkills.includes('review'), 'existing on-disk skill "review" should be listed');
+  assert.deepEqual(rep.existingSkills.sort(), ['deploy', 'review'], 'injected skills are listed as existing');
 });

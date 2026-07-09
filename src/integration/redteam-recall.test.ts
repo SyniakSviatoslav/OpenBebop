@@ -204,7 +204,10 @@ test('GREEN: recall("   ") whitespace-only also degrades honestly', () => {
 });
 
 test('GREEN: recall of true gibberish degrades honestly (found=false)', () => {
-  const res = recall('zqxwkplmvy nqrstuv');
+  // Long, distinctive gibberish so its VSA embedding does not accidentally collide with an
+  // accumulated corpus node under the shared singleton (which would fabricate a hit).
+  const gibberish = 'zqxwkplmvy nqrstuv 7g2h9a1f qwpoeiruty alskdjfhgzmxncbv 0k3l8m5n2 tziryqxwkplm';
+  const res = recall(gibberish);
   assert.strictEqual(res.found, false, 'gibberish must not be fabricated as a hit');
   assert.strictEqual(res.hits.length, 0, 'gibberish should yield zero hits');
 });

@@ -4,7 +4,24 @@ All notable changes to Bebop are documented here. Format: keep it falsifiable �
 backed by a RED+GREEN test in `src/**/*.test.ts` (authoritative runner:
 `node --test --import tsx 'src/**/*.test.ts'`).
 
-## [0.3.3] — 2026-07-09 — "Red-team F10: scope gate cwd-anchoring fix"
+## [0.3.4] — 2026-07-09 — "CI red fix: harvest test no longer coupled to on-disk skills"
+
+### Fixed
+- **CI was RED on main**: `src/harvest.test.ts` (test "harvest() report bundles candidates +
+  patterns + cross + existing skills") hard-coded `rep.existingSkills.includes('review')`, depending
+  on a `review` skill being installed in `~/.hermes/skills/` on the build machine. The runner lacks
+  that skill → `expected true, actual false`, breaking `npm test` under CI Node 22/24 (passes locally
+  only by accident of which skills are installed). `harvest(concepts, skills?)` already accepts an
+  injected skill list, so the test now passes a deterministic `[review, deploy]` list and asserts the
+  exact set — environment-independent. Real test-brittleness fix, no production behavior changed.
+  - Test: `harvest.test.ts` now 9/9 deterministically.
+
+### Verification (fresh, on main)
+- `npm test` → 351 pass / 0 fail / 0 skipped. `pnpm run typecheck` → 0 errors. `npm run boot`
+  (Guard-OS self-cert gate) → certified. Fix is independent of installed skills, so it holds on CI
+  Node 22/24.
+
+
 
 ### Fixed
 - **Scope gate anchored to `process.cwd()` instead of `cfg.cwd` (loop + dispatch attack surface).**

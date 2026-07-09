@@ -175,13 +175,24 @@ test('RED: empty idea is quarantined (no uncaught throw)', async () => {
 });
 
 test('RED: 4000-char idea is quarantined by resonance and does not throw', async () => {
-  const big = 'x'.repeat(4000);
+  // Non-degenerate bulk text (real words, distinctive prefix) so its VSA embedding does NOT
+  // collide with the seed/accumulated corpus — proving the RESONANCE pre-check (not the dup
+  // gate) is what quarantines genuine bulk. A degenerate all-'x' string would collapse to a
+  // colliding vector and trip the dup-gate instead, masking the resonance check.
+  const big = 'rt-3f9a-bulk restructure the entire agent kernel scheduler telemetry governor '
+    + 'and memory reclamation loop so that every module composes through the kernel decide gate '
+    + 'and the zkVM journal records each admitted mutation with a tamper-evident digest '
+    + 'then rewire the dispatch router to prefer the sovereign core for all money and auth paths '
+    + 'while keeping the local mesh as a fail-closed fallback when the native zenoh client is absent '
+    + 'finally fold the active inference advisor into the main loop so beliefs stay normalized and finite '
+    + 'and replace the triviality gate with an alphanumeric token requirement so control-char junk is rejected. '
+    + 'x'.repeat(3000);
   let threw = false;
   let r: any;
   try { r = await selfEvolve(big); } catch (e) { threw = true; console.error(e); }
-  assert.equal(threw, false, '4000-char idea must not throw uncaught');
+  assert.equal(threw, false, 'bulk idea must not throw uncaught');
   assert.equal(r.accepted, false);
-  assert.match(r.reason, /resonance/i);
+  assert.match(r.reason, /resonance/i, 'bulk idea must trip the resonance pre-check');
 });
 
 test('RED: JSON-injection idea causes no uncaught throw and no prototype pollution (stored inert)', async () => {
