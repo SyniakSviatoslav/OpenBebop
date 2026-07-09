@@ -165,14 +165,17 @@ test('GREEN: identical text yields the same content-addressed temp name (no pid/
 });
 
 // ── anomaly detection (operator priority) ─────────────────────────────────────
+// NOTE: history is FIXED (no Math.random) so these RED/GREEN assertions are deterministic.
+// A random history let the RED case spuriously fail when the random draw happened to cluster
+// tightly (105 would become a >3σ outlier). Fixed spread: mean 99.5, ~±4.
 
 test('GREEN: a volume spike >3σ from history is flagged as anomaly', () => {
-  const hist = Array.from({ length: 20 }, () => 100 + (Math.random() - 0.5) * 10);
+  const hist = [95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104];
   assert.ok(detectAnomaly(hist, 1000, 3), 'extreme spike must flag');
 });
 
 test('RED: an in-band volume is NOT an anomaly', () => {
-  const hist = Array.from({ length: 20 }, () => 100 + (Math.random() - 0.5) * 10); // normal spread ~±5
+  const hist = [95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104];
   assert.equal(detectAnomaly(hist, 105, 3), false);
 });
 
