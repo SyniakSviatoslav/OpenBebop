@@ -323,6 +323,44 @@ checks M–W; falsifiable-proof 56/56). README/AGENTS counts bumped to 474.
 
 ---
 
+## 7c. Phase-3b — tool reverse-engineering applied (SpoofDPI / T3MP3ST / compressO / superfile / Portkey)
+
+The operator asked to reverse-engineer five more tools and apply the findings. Triage (sovereign-core
+lens — deterministic, air-gapped, no RNG/SDG/Date at runtime):
+
+- **T3MP3ST** (autonomous red-teaming / zero-day hunter) — HIGH EV. Its *method* (auto-mutate agent
+  inputs until the safety kernel breaks, then report the bypass-rate) maps exactly onto bebop's
+  admission-gate thesis (N7 / ADR-003 / redteam-self). Applied as `redteam.ts`: `redTeamProbe(seeds,
+  gate)` deterministically mutates prompts (control chars / zero-width / BOM / RTL / JSON-proto /
+  bulk) and tallies which BYPASS the gate → `breakRate` + enumerated `bypasses`. No RNG (fixed mutation
+  grammar + seeded rotation). **Integrated.**
+- **Portkey-AI/gateway** (LLM gateway: virtual keys + fallback + guardrails) — MEDIUM EV. Its *schema*
+  mirrors our TOKEN/MODEL ROUTING (router.ts). Applied as `modelGateway.ts`: `gatewayRoute(req, cfg)`
+  layers virtual-key indirection + ordered fallback chain + a pre-call red-line guardrail on top of the
+  existing pure router. No server/network. **Integrated** (abstraction only; the real router is untouched).
+- **SpoofDPI** (DPI-bypass proxy, Go) — OUT OF CORE. It is a network-layer anti-censorship proxy, not a
+  coding-agent primitive. Recorded as an OPS note: if a deploy/Staging sits behind DPI, front the
+  gateway/ntfy with SpoofDPI — operational guidance, not code in the core.
+- **superfile** (TUI file manager, Go) — OUT OF DOMAIN (now). A terminal UX tool; no agent-core surface.
+  Deferred as a reference for a future bebop interactive TUI (the launch animation already proves TTY
+  capability exists). Not integrated.
+- **compressO** (media compressor, video/image→tiny) — OUT OF DOMAIN (now). Relevant only to the dowiz
+  demo-asset pipeline (OG images / video montage). Deferred; when dowiz needs on-the-fly asset
+  compression, compressO is the candidate — not a bebop-core dependency.
+
+### redteam.ts (T3MP3ST-method)
+- `redTeamProbe(seeds, gate, cfg)` — deterministic adversarial mutation probe against ANY gate (incl.
+  the live `selfEvolve`/checker). Reports `breakRate` + `bypasses` so a fail-open gate CANNOT hide.
+- Tests: GREEN (fail-closed gate → breakRate 0) · RED (fail-open gate → breakRate>0, bypasses listed,
+  deterministic) · RED (maxMutations bounds the run).
+
+### modelGateway.ts (Portkey-method)
+- `gatewayRoute(req, cfg)` — virtual-key resolution + ordered fallback + red-line guardrail on top of
+  `router.ts`. Refuses to forward a red-line task to a non-opus lane (fail-closed); never fabricates a
+  missing key.
+- Tests: GREEN (doer→haiku+vk, fallback chain) · GREEN (redline→opus) · RED (guardrail refuses
+  redline→haiku) · RED (missing key → refused, no fabricate).
+
 ## 8. Living-memory cross-links
 
 The L5 / Neuro-Symbolic Gate rationale lives in the living-memory corpus (the canonical "why"):

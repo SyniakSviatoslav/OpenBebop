@@ -291,5 +291,27 @@ try {
       : 'degradationSignal/degradationQ missing or test lacks the rising-rate RED case');
 }
 
+// --- X. Phase-3 tools: T3MP3ST-method red-team probe + RED+GREEN ---
+{
+  const r = read('src/integration/redteam.ts');
+  const t = read('src/integration/redteam.test.ts');
+  const fn = /export function redTeamProbe/.test(r) && /breakRate/.test(r) && /bypasses/.test(r);
+  const test = /redTeamProbe/.test(t) && /FAIL-OPEN gate is caught/i.test(t) && /breakRate/.test(t);
+  check('Phase-3 T3MP3ST-method: redTeamProbe + fail-open RED+GREEN', fn && test,
+    fn && test ? 'adversarial bypass-rate probe proven; fail-open gate surfaced (no hide)'
+      : 'redTeamProbe/breakRate missing or test lacks the fail-open RED case');
+}
+
+// --- Y. Phase-3 tools: Portkey-method model gateway seam + RED+GREEN ---
+{
+  const g = read('src/integration/modelGateway.ts');
+  const t = read('src/integration/modelGateway.test.ts');
+  const fn = /export function gatewayRoute/.test(g) && /VirtualKey/.test(g) && /fallback/.test(g);
+  const test = /gatewayRoute/.test(t) && /REFUSE to forward a red-line/.test(t) && /no fabricate/.test(t);
+  check('Phase-3 Portkey-method: gatewayRoute + guardrail/fallback RED+GREEN', fn && test,
+    fn && test ? 'normalized gateway: virtual keys + fallback + red-line guardrail proven'
+      : 'gatewayRoute/VirtualKey missing or test lacks the guardrail/fallback RED case');
+}
+
 console.log(`\n  ${fails ? `✗ ${fails} doc-claim check(s) FAILED — fix before commit/release` : '✓ all doc claims backed by live proof'}`);
 process.exit(fails ? 1 : 0);
