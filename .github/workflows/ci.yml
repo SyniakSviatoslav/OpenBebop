@@ -15,8 +15,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      # Core deps only — better-auth is optional and lazy-loaded.
-      - run: npm install --omit=optional
+      # Full install (incl. optional better-auth) so the auth test suite runs and is verified in CI.
+      # better-auth stays optional/lazy-loaded at RUNTIME; this only ensures the test count is real.
+      - run: npm install
       - name: Guard-OS self-certification
         run: npm run boot
       - name: Typecheck
