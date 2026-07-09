@@ -27,6 +27,15 @@ export type LoopAction = 'explore' | 'act' | 'reflect' | 'done';
  */
 export function adviseLoop(belief: number[], preferDone = true): LoopAction {
   if (belief.length !== 3) throw new Error('adviseLoop: belief must be length 3');
+  // Validate: finite, non-negative, and normalized (sum≈1). A degenerate belief (zeros, negatives,
+  // or un-normalized) is not a valid FEP belief — admit nothing on it rather than emitting a silently
+  // wrong directive. Red-team finding: [1,1,1]/[-1,1,1]/[0,0,0] previously returned 'done'/'explore'.
+  if (!belief.every((x) => Number.isFinite(x) && x >= 0)) {
+    throw new Error('adviseLoop: belief must be finite and non-negative');
+  }
+  const sum = belief.reduce((a, b) => a + b, 0);
+  if (sum <= 0) throw new Error('adviseLoop: belief sums to 0 — no information');
+  const b = belief.map((x) => x / sum); // normalize so downstream math is well-defined
   const A = [
     [0.8, 0.15, 0.05], // obs0 likely from state0 (stuck)
     [0.15, 0.8, 0.05], // obs1 likely from state1 (progressing)
@@ -40,7 +49,7 @@ export function adviseLoop(belief: number[], preferDone = true): LoopAction {
   ];
   // preference: want to be in 'done' (state2). log-domain: done high, others low.
   const C = preferDone ? [-3, -1, 2] : [0, 0, 0];
-  const D = belief.slice();
+  const D = b.slice();
   const model: PomdpModel = { A, B, C, D, actions: 3 };
   const { policy } = selectPolicy(model, 1, 1);
   const action = policy[0]; // 0=explore, 1=act, 2=reflect
@@ -48,7 +57,7 @@ export function adviseLoop(belief: number[], preferDone = true): LoopAction {
   // Compute the post-action belief to decide if we've reached 'done'.
   const next: number[] = [0, 0, 0];
   for (let sp = 0; sp < 3; sp++) {
-    for (let s = 0; s < 3; s++) next[sp] += belief[s] * B[action][sp][s];
+    for (let s = 0; s < 3; s++) next[sp] += b[s] * B[action][sp][s];
   }
   if (next[2] > next[0] && next[2] >= next[1]) return 'done'; // belief landed in done
   return (['explore', 'act', 'reflect'] as const)[action];

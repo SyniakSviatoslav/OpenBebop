@@ -60,10 +60,12 @@ function recallLocal(query: string, k = 5, opts: RecallOpts = {}): { id: string;
   const mem: LivingMemory = livingMemory();
   const byId = new Map<string, { id: string; text: string; score: number }>();
 
-  // 1) graph spreading-activation (concept match + edge traversal) — deterministic, the source of truth
-  for (const id of mem.recall(query, 3)) {
-    const node = mem.node(id);
-    if (node) byId.set(id, { id, text: node.payload, score: 1 });
+  // 1) graph spreading-activation (concept match + edge traversal) — deterministic, the source of truth.
+  //    Use recallScored: each node carries its REAL activation energy as `score` (exact match = 1,
+  //    one-hop = <=decay), so the graph itself ranks the set — optical is only ever a tie-breaker.
+  for (const r of mem.recallScored(query, 3)) {
+    const node = mem.node(r.id);
+    if (node) byId.set(r.id, { id: r.id, text: node.payload, score: Number(r.score.toFixed(4)) });
   }
 
   // 2) fallback vector recall — ONLY when the graph found nothing, and only above a high floor.
@@ -89,15 +91,21 @@ function recallLocal(query: string, k = 5, opts: RecallOpts = {}): { id: string;
     const qVec = projectText(query, n);
     const cands = hits.map((h) => projectText(h.text, n));
     const order = opticalRecall(qVec, cands, mask); // indices into hits, DESC by optical correlation
-    // stable merge: keep primary-score sort, but within equal primary scores, prefer optical order.
+    // Optical is a TERTIARY signal: it may only re-order hits that share the SAME primary score.
+    // To do that safely we capture the stable original index BEFORE sorting (the old code used
+    // hits.indexOf(a) inside the comparator, which reads the live, already-reshuffling array and
+    // can mis-order equal-score hits). Map: originalIndex -> optical rank.
     const opticalRank = new Map<number, number>();
     order.forEach((idx, rank) => opticalRank.set(idx, rank));
-    hits.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score; // graph/vector dominates
-      const ra = opticalRank.get(hits.indexOf(a)) ?? 0;
-      const rb = opticalRank.get(hits.indexOf(b)) ?? 0;
-      return ra - rb; // equal primary → optical correlation wins
+    const withOrig = hits.map((h, orig) => ({ h, orig }));
+    withOrig.sort((a, b) => {
+      if (b.h.score !== a.h.score) return b.h.score - a.h.score; // primary (graph/vector) dominates
+      const ra = opticalRank.get(a.orig) ?? Number.MAX_SAFE_INTEGER;
+      const rb = opticalRank.get(b.orig) ?? Number.MAX_SAFE_INTEGER;
+      return ra - rb; // equal primary → optical correlation wins (only within the band)
     });
+    hits.length = 0;
+    for (const { h } of withOrig) hits.push(h);
   }
 
   return hits.sort((a, b) => b.score - a.score);

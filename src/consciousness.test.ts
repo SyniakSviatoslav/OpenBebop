@@ -86,6 +86,40 @@ test('RED: tampering a recorded self-evolution digest breaks the audit (falsifia
   void digestToHex;
 });
 
+// ── KERNEL IS THE AUTHORITATIVE ADMISSION GATE (red-team F1 fix) ──
+
+test('GREEN: when the kernel admits a self-evolution command, the state advances and a JOURNAL envelope is emitted', async () => {
+  const { applyCommandChecked, genesis, defaultChecker } = await import('./kernel.ts');
+  const before = genesis();
+  const cmd = {
+    actor: { kind: 'system' as const, id: 'bebop-consciousness' },
+    action: 'PUBLISH' as const,
+    payload: JSON.stringify({ concept: 'audit-gate-green', payload: 'p' }),
+    nonce: 'gate-green',
+  };
+  const res = applyCommandChecked(cmd, before, defaultChecker, true);
+  assert.equal(res.quarantined, false);
+  assert.ok(res.state.published.size > before.published.size, 'admitted → published set advanced');
+  assert.ok(res.envelopes.some((e) => e.event.type === 'JOURNAL'), 'a JOURNAL envelope is appended');
+});
+
+test('RED: when the kernel quarantines a self-evolution command, the state is NOT mutated (fail-closed admission)', async () => {
+  const { applyCommandChecked, genesis } = await import('./kernel.ts');
+  const rejecting: import('./kernel.ts').Checker = () => ({ ok: false, reason: 'admission denied by gate' });
+  const before = genesis();
+  const cmd = {
+    actor: { kind: 'system' as const, id: 'bebop-consciousness' },
+    action: 'PUBLISH' as const,
+    payload: JSON.stringify({ concept: 'audit-gate-red', payload: 'p' }),
+    nonce: 'gate-red',
+  };
+  const res = applyCommandChecked(cmd, before, rejecting, true);
+  assert.equal(res.quarantined, true, 'kernel must quarantine');
+  assert.equal(res.state.ingested.size, before.ingested.size, 'quarantined → state unchanged');
+  assert.ok(res.envelopes.some((e) => e.event.type === 'DENIED'), 'a DENIED envelope is emitted');
+  // selfEvolve must abort on this (it checks res.quarantined) — exercised end-to-end below.
+});
+
 // ── SESSION-AS-NODE (brain-in-brain) ──
 
 test('GREEN: recordSession records THIS session as a living-memory node with a child memory', () => {

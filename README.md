@@ -90,7 +90,7 @@ universal gate — they extend it, never fork it. Every wiring is RED+GREEN test
 
 | Layer | What it adds | Status |
 |---|---|---|
-| **zkVM `decide()` journal** | Every admitted command gets a tamper-evident digest over `(state, commandHash, seq)`. On by default at the kernel gate. Replay-verifiable; tampering any entry fails the chain. | LIVE (native TS port; RISC Zero STARK *receipt* gated behind `cfg.zkReceipt` when the prover is available) |
+| **zkVM `decide()` journal** | Every admitted command gets a tamper-evident digest over `(state, commandHash, seq)`. On by default at the kernel gate. Replay-verifiable. **Scope:** detects *accidental* bit-flips of stored digests (tamper-*detection*); the digest is keyless recomputation, so it is forgeable by anyone who controls the stored state — not a cryptographic signature/MAC (see CHANGELOG 0.3.0 F5). | LIVE (native TS port; RISC Zero STARK *receipt* gated behind `cfg.zkReceipt` when the prover is available) |
 | **TigerBeetle money boundary** | Structural conservation law (`amount>0`, `debit≠credit`, idempotent) composed into the kernel gate via `applyCommandChecked(.., money=true)`. | LIVE (engaged when `money` flag set) |
 | **Active Inference advisor** | FEP policy selector (`adviseLoop`) over `{stuck, progressing, done}` belief, behind `cfg.activeInference`. Advisory; the guard still decides admission. | LIVE (loop.ts) |
 | **Optical field recall** | SVETlANNa/Meep optical primitive re-ranks `recall` candidates by field correlation, behind `opts.opticalRecall`. Advisory only — graph score dominates. | LIVE (knowledge.ts) |
@@ -104,7 +104,7 @@ command and exposes `verifySelfEvolution()` — the agent can prove its own evol
 ## Verification
 
 ```
-npm test            # 303 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
+npm test            # 305 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
 cargo test -p bebop-core   # 7 Rust kernel tests
 npm run typecheck   # 0 errors
 ```

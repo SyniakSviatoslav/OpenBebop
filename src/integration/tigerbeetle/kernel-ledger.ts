@@ -42,10 +42,20 @@ export function moneyTransferChecker(): Checker {
     }
     if (motion.amount !== undefined || motion.debit !== undefined) {
       // It claims to be a money motion → enforce the structural law.
-      const amt = BigInt(motion.amount as string);
+      // Parse defensively: malformed numeric fields are a QUARANTINE, not an uncaught throw
+      // (a throw would fail-open the whole command stream — a red-team DoS/robustness finding).
+      let amt: bigint, debit: bigint, credit: bigint;
+      try {
+        if (typeof motion.amount !== 'string' || typeof motion.debit !== 'string' || typeof motion.credit !== 'string') {
+          return { ok: false, reason: 'money motion: debit/credit/amount must be string-encoded bigints' };
+        }
+        amt = BigInt(motion.amount);
+        debit = BigInt(motion.debit);
+        credit = BigInt(motion.credit);
+      } catch {
+        return { ok: false, reason: 'money motion: malformed bigint in debit/credit/amount' };
+      }
       if (amt <= 0n) return { ok: false, reason: 'money motion: amount must be > 0' };
-      const debit = BigInt(motion.debit as string);
-      const credit = BigInt(motion.credit as string);
       if (debit === credit) {
         return { ok: false, reason: 'money motion: debit == credit (no-op illegal)' };
       }

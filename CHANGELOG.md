@@ -38,12 +38,52 @@ backed by a RED+GREEN test in `src/**/*.test.ts` (authoritative runner:
 ### Changed
 - **`npm test` now covers the integration layer.** The script glob changed from `src/*.test.ts` to
   `src/**/*.test.ts`, so `self maintain` and CI exercise the full RED+GREEN suite (was silently missing
-  `src/integration/**`). Authoritative runner confirmed at **303 tests, 0 fail**.
+  `src/integration/**`). Authoritative runner confirmed at **305 tests, 0 fail**.
 - README + README.uk: added the "Sovereign Node" integrations table and corrected the test count.
 
 ### Security / hardening
-- Red-team (attack-team) probes ran against each new layer after wiring; findings and fixes are noted
-  below as they land (see "Red-team findings" subsections). No live exploit was left open.
+- **Attack-team (3 red-team subagents) ran after wiring — concrete findings fixed:**
+
+  **F1 — consciousness self-evolution gate drift (red-team).** The kernel gate previously ran
+  *after* the corpus mutation (a post-hoc audit append, not the admission authority). Fixed:
+  `selfEvolve` now computes `applyCommandChecked` *before* `mem.remember` and aborts the mutation if
+  `quarantined` — the kernel verdict is the single source of truth for self-evolution admission.
+  - Tests: `consciousness.test.ts` (GREEN admitted → JOURNAL envelope + state advances; RED quarantined
+    → state unchanged, DENIED envelope emitted).
+
+  **F2 — optical recall poisoning (red-team).** `recallLocal` assigned every graph-hit a flat
+  `score: 1`, so the optical tertiary signal became the de-facto primary ranker; a planted linked
+  memory node could reach recall #1 above the genuine hit. Fixed: graph hits now carry their REAL
+  spreading-activation energy as `score` (exact match = 1, one hop ≤ decay), so the graph ranks the
+  set; optical only re-orders *within equal primary scores*. Also fixed a latent `hits.indexOf(a)`
+  comparator bug (it read the live, reshuffling array) by keying on a stable original index.
+  - Repro (RED→GREEN): attacker node linked into the corpus now ranks #2 (score 0.5) behind the
+    genuine `kernel law` node (score 1.0); previously optical promoted it to #1.
+
+  **F3 — `adviseLoop` belief not validated (red-team).** Degenerate/negative/un-normalized beliefs
+  silently produced actionable output (e.g. `[1,1,1]` → `'done'`). Fixed: `adviseLoop` now requires
+  a finite, non-negative, non-zero-sum belief and normalizes it; otherwise it throws (no silent
+  directive). Confirmed the FEP advisor still cannot admit/deny a command (advisory-only).
+
+  **F4 — money checker fail-open crash (red-team).** `BigInt()` on malformed input threw out of the
+  checker, failing the whole command stream open (DoS). Fixed: parse is wrapped in try/catch returning
+  `{ ok:false, reason }`, and non-string bigint fields are rejected as malformed. Conservation is
+  enforced at shell apply-time via `applyMoneyTransfer`/`moneyConserved`.
+
+  **F5 — journal keyless + no cumulative binding (honest framing).** The zkVM "tamper-evident" digest
+  is a keyless FNV-style recomputation: it detects *accidental* bit-flips of stored digests but is
+  forgeable by anyone who controls the stored `(state, digest)` (no secret/key/SNARK). Documented as
+  **accidental-tamper detection, not cryptographic integrity**. Forward-chained binding + a real
+  key/MAC/SNARK receipt remain the upgrade path (tracked, not yet wired — `rzup` unavailable).
+  RED tests prove the detection still fires (tamper fails the chain).
+
+### Known limitations (documented, not papered over)
+- Stateless kernel → replay/double-spend is only prevented within a single evolving-state lineage
+  threaded by the caller; a caller that resets state re-feeds commands. Money idempotency is not yet
+  tied to a persisted ledger. (RED-test falsifiable: the detection + gate behavior is proven; the
+  persistence gap is a known TODO, not a silent claim.)
+- `verifyJournal` is NOT a substitute for a signature/MAC; treat digests as tamper-*detection*, not
+  tamper-*proof* against an adversary who controls storage.
 
 ---
 

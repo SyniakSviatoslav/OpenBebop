@@ -113,22 +113,30 @@ export async function selfEvolve(idea: string): Promise<{ accepted: boolean; id?
   if (res.risky) {
     return { accepted: false, reason: 'resonance pre-check FAILED: mutation would make self-evolution under-damped (ζ<0.707) — quarantined before apply' };
   }
-  const id = mem.remember(concept, payload, [mem.nearest('copilot default', 1)[0]?.id ?? '']);
-  livingMemory().remember(`reflection:${Date.now()}`, `evolved: ${idea}`, [id]);
-  // record this self-evolution as a tamper-evident kernel command (zkVM journal, default on)
+  // KERNEL ADMISSION (authoritative gate, per red-team finding): the corpus mutation below is
+  // committed ONLY if the kernel admits this self-evolution command. This makes applyCommandChecked
+  // the single source of truth for self-evolution — previously the mutation happened first and the
+  // kernel was only a post-hoc audit append (drift). The copilot + resonance checks above are a
+  // cheap domain pre-filter; the kernel verdict is what actually authorizes the write.
   const cmd: Command = {
     actor: { kind: 'system', id: 'bebop-consciousness' },
     action: 'PUBLISH',
-    payload: JSON.stringify({ concept, id }),
-    nonce: `ev-${commandHash({ concept, id } as unknown as Command)}`,
+    payload: JSON.stringify({ concept, payload }),
+    nonce: `ev-${commandHash({ concept, payload } as unknown as Command)}`,
   };
   const journalRes = applyCommandChecked(cmd, evolutionState.current, defaultChecker, true);
+  if (journalRes.quarantined) {
+    return { accepted: false, reason: 'quarantined by kernel gate (fail-closed admission)' };
+  }
+  // Kernel admitted → persist to living memory (mutation authorized by the gate).
+  const id = mem.remember(concept, payload, [mem.nearest('copilot default', 1)[0]?.id ?? '']);
+  livingMemory().remember(`reflection:${Date.now()}`, `evolved: ${idea}`, [id]);
   evolutionState.current = journalRes.state;
   const je = journalRes.envelopes.find((e) => e.event.type === 'JOURNAL');
   if (je && je.event.type === 'JOURNAL') {
     evolutionChain.push({ seq: je.seq, cause: je.cause, digest: je.event.digest, command: cmd });
   }
-  return { accepted: true, id, reason: 'approved by checker gate + resonance pre-check, persisted to living memory + kernel journal' };
+  return { accepted: true, id, reason: 'admitted by kernel gate + resonance pre-check, persisted to living memory + kernel journal' };
 }
 
 /**
