@@ -1,0 +1,56 @@
+name: Wiki Sync
+
+# Syncs the in-repo human-authored wiki (docs/wiki/) to the GitHub Wiki tab.
+# Runs on the GITHUB_TOKEN (job has contents: write) — NO PAT needed.
+#
+# IMPORTANT: GitHub does NOT provision the *.wiki.git backend until the FIRST
+# wiki page is created via the web UI (Settings → Wiki → "Create the first page").
+# Until then, the "Clone wiki" step fails with "Repository not found" — that is a
+# platform constraint, not a permissions gap. After page 1 exists (one manual click,
+# or a repo secret WIKI_PAT with `repo` scope), every later push keeps the tab in sync.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/wiki/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          path: main
+
+      - name: Clone wiki (provisions once page 1 exists)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          WIKI_URL="https://github.com/${{ github.repository }}.wiki.git"
+          if git clone "$WIKI_URL" wiki 2>/dev/null; then
+            echo "wiki cloned"
+          else
+            echo "::error::Wiki backend not provisioned yet. Create the first wiki page in Settings → Wiki (or set WIKI_PAT secret), then re-run."
+            exit 1
+          fi
+
+      - name: Sync docs/wiki/ into the wiki repo
+        run: |
+          cd wiki
+          # Copy all in-repo wiki markdown + the explainer SVG; never delete the
+          # web-UI-created Home if it differs from our Home (keep repo Home as source of truth).
+          cp -r ../main/docs/wiki/. .
+          git add -A
+          if git diff --cached --quiet; then
+            echo "wiki already in sync — nothing to push"
+          else
+            git commit -m "docs(wiki): sync from docs/wiki @ ${{ github.sha }}"
+            git push
+            echo "wiki pushed"
+          fi

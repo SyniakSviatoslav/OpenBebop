@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm install --omit=optional
+      - run: npm install
       - name: Guard-OS self-certification
         run: npm run boot
       - name: Typecheck
