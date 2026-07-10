@@ -59,6 +59,11 @@ pub fn tools() -> Vec<McpTool> {
             input_schema: r#"{"type":"object","properties":{}}"#,
         },
         McpTool {
+            name: "field",
+            description: "Unified-field telemetry map (L3): J_z stress per node, MHD reconnect, SEAL tolerance loop.",
+            input_schema: r#"{"type":"object","properties":{}}"#,
+        },
+        McpTool {
             name: "boundary",
             description: "zkVM deterministic state-transition seal (commit/verify).",
             input_schema: r#"{"type":"object","properties":{"prev":{"type":"string"},"input":{"type":"string"},"meta":{"type":"string"}}}"#,

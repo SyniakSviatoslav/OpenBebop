@@ -7,10 +7,5 @@ description = "Deterministic graph-PDE field core (Rust->WASM). Chebyshev spectr
 [lib]
 crate-type = ["cdylib", "rlib"]   # cdylib -> bebop_core.wasm; rlib -> linkable by the native CLI
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-
 # NOTE: intentionally NO dependencies. The crate is pure `core`/`alloc` so it builds offline
 # (sovereign-core constraint: air-gapped, no network at build). ABI is raw C-ABI over linear memory.

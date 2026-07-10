@@ -25,6 +25,24 @@ pub struct Receipt {
     pub next: Vec<u8>,
     pub meta: Vec<u8>,
     pub seal: String, // = H(prev || input || next || meta)
+    /// Structured proof slot. In the honest prototype this carries a
+    /// deterministic mock receipt (a STARK-shaped journal string) so the
+    /// verify seam is exercised end-to-end without the risc0 prover. A real
+    /// deployment swaps `verify()` to check an actual STARK proof bytes here.
+    pub proof: Proof,
+}
+
+/// The proof payload. `Mock` is the in-repo falsifiable stand-in; `Stark`
+/// is the shape a real RISC Zero receipt would take (opaque bytes, checked
+/// by an injected verifier — never fabricated in this crate).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Proof {
+    /// Deterministic mock: the sealed journal string (same material as `seal`,
+    /// so verify can recompute it and confirm the boundary is self-consistent).
+    Mock(String),
+    /// Real STARK receipt bytes. Verification is delegated to a caller-supplied
+    /// closure (the prover/verifier lives outside the deterministic core).
+    Stark(Vec<u8>),
 }
 
 fn seal(prev: &[u8], input: &[u8], next: &[u8], meta: &[u8]) -> String {
@@ -38,27 +56,56 @@ fn seal(prev: &[u8], input: &[u8], next: &[u8], meta: &[u8]) -> String {
 }
 
 /// Apply a pure transition `f` at the boundary, returning the next state and a
-/// receipt that commits to (prev, input, next, meta).
+/// receipt that commits to (prev, input, next, meta). The receipt also carries a
+/// deterministic mock proof so the verify seam is exercisable without risc0.
 pub fn cross<F>(prev: &[u8], input: &[u8], meta: &[u8], f: F) -> (State, Receipt)
 where
     F: Fn(&[u8], &[u8]) -> State,
 {
     let next = f(prev, input);
     let seal = seal(prev, input, &next, meta);
+    let proof = Proof::Mock(seal.clone());
     let r = Receipt {
         prev: prev.to_vec(),
         input: input.to_vec(),
         next: next.clone(),
         meta: meta.to_vec(),
-        seal,
+        seal: seal.clone(),
+        proof,
     };
     (next, r)
 }
 
 /// Verify a receipt: recompute the seal and check it binds prev/input/next/meta.
 /// Returns false if any field was tampered (RED case).
+///
+/// For `Proof::Mock` the embedded journal is re-derived and must match `seal`
+/// (the deterministic in-core check). For `Proof::Stark` the caller MUST supply
+/// a verifier closure — without it the boundary fails closed (returns false),
+/// never claiming a proof we cannot produce.
 pub fn verify(r: &Receipt) -> bool {
-    seal(&r.prev, &r.input, &r.next, &r.meta) == r.seal
+    verify_with(r, None)
+}
+
+/// Verify with an optional STARK verifier. Honest seam: if the proof is `Stark`
+/// and no verifier is provided, this returns false (fail-closed); we never
+/// fabricate a successful verification. The verifier is HRTB-bound so any
+/// `&Receipt` lifetime is accepted.
+pub fn verify_with(
+    r: &Receipt,
+    stark_verify: Option<&dyn for<'a> Fn(&'a Receipt) -> bool>,
+) -> bool {
+    let recomputed = seal(&r.prev, &r.input, &r.next, &r.meta);
+    if recomputed != r.seal {
+        return false; // tampered core fields
+    }
+    match &r.proof {
+        Proof::Mock(journal) => journal == &recomputed, // self-consistent mock
+        Proof::Stark(_) => match stark_verify {
+            Some(v) => v(r),
+            None => false, // fail closed: cannot verify a real proof we don't have
+        },
+    }
 }
 
 /// Convenience: verify AND bind a specific expected `next` (caller knows the
@@ -88,6 +135,8 @@ mod tests {
             verify_expect(&r, b"ledger-v1+100"),
             "expected next mismatch"
         );
+        // the mock proof is self-consistent
+        assert!(matches!(r.proof, Proof::Mock(_)));
     }
 
     #[test]
@@ -115,5 +164,30 @@ mod tests {
         let (_, r1) = cross(b"x", b"y", b"m", append);
         let (_, r2) = cross(b"x", b"y", b"m", append);
         assert_eq!(r1.seal, r2.seal);
+    }
+
+    #[test]
+    fn stark_proof_fails_closed_without_verifier() {
+        // RED (honest seam): a real STARK proof cannot be "verified" by the
+        // in-core hash check — without an injected verifier we fail closed.
+        let (_next, mut r) = cross(b"ledger-v1", b"+100", b"credit", append);
+        r.proof = Proof::Stark(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        fn always(_: &Receipt) -> bool {
+            true
+        }
+        fn never(_: &Receipt) -> bool {
+            false
+        }
+        assert!(
+            !verify(&r),
+            "stark proof verified without a verifier — false green!"
+        );
+        // but with a correct verifier it can pass
+        assert!(
+            verify_with(&r, Some(&always)),
+            "verifier rejected valid stark"
+        );
+        // and a lying verifier is the caller's responsibility, not ours to fake
+        assert!(!verify_with(&r, Some(&never)), "false verifier accepted");
     }
 }

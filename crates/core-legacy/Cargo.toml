@@ -1,8 +1,8 @@
 [package]
-name = "bebop-core"
+name = "bebop-core-legacy"
 version = "0.1.0"
 edition = "2021"
-description = "Bebop's self-contained deterministic guard kernel + retriever (WASM, zero deps at runtime)"
+description = "DEPRECATED legacy guard kernel — superseded by rust-core/ (bebop-core). Kept for reference only; not a workspace member; not depended on by the live build."
 license = "AGPL-3.0"
 
 [lib]

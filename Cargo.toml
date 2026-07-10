@@ -1,0 +1,27 @@
+# Root workspace for bebop (native Rust/WASM core).
+#
+# The live build is two crates:
+#   - rust-core/   -> `bebop-core`   : the deterministic graph-PDE + VSA field core (WASM, dep-free).
+#                                    bebop depends on it via [dependencies.bebop-core] -> ../../rust-core.
+#   - crates/bebop/ -> `bebop`       : the host agent (TUI + MCP + vault + governor + field engines).
+#
+# `crates/core-legacy/` (renamed from crates/core on 2026-07-10) is the OLD ts-era guard kernel.
+# It is DEPRECATED and deliberately NOT a workspace member: the live kernel is rust-core, and the
+# legacy crate's package name collided with `bebop-core`. Keeping it out of the workspace lets
+# `cargo test --workspace` stay green and honest.
+[workspace]
+resolver = "2"
+members = [
+    "rust-core",
+    "crates/bebop",
+]
+exclude = [
+    "crates/core-legacy",
+]
+
+# Hoisted from per-crate manifests so Cargo doesn't warn "profiles for the non root package
+# will be ignored". rust-core used opt-level=3/lto; bebop used opt-level=3/lto/codegen-units=1.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -426,6 +426,45 @@ pub fn run() {
             );
             println!("    verified = {ok}");
         }
+        "field" => {
+            // Unified-field telemetry map (L3): run the 3-level stress benchmark
+            // on a demo operational graph and print the observable field surface.
+            use crate::reconnect::{reconnect, Graph};
+            use crate::sealfb::seal_tighten;
+            // demo graph: hub 0 overloaded, neighbors calm.
+            let edges = [(0usize, 1), (0, 2), (0, 3), (1, 2)];
+            let load = [1.0f64, 0.1, 0.1, 0.1];
+            let gr = Graph {
+                n: 4,
+                edges: &edges,
+                load: &load,
+            };
+            println!("  ⚛ unified field — telemetry map (L3)");
+            println!("    J_z (current density / stress) per node:");
+            for i in 0..gr.n {
+                let bar = "#".repeat((gr.jz(i) * 10.0) as usize);
+                println!("      node {i}: {:>5.2} {}", gr.jz(i), bar);
+            }
+            let before = gr.max_jz();
+            let (ne, hot) = reconnect(&gr, 1.0);
+            let ng = Graph {
+                n: 4,
+                edges: &ne,
+                load: &load,
+            };
+            println!(
+                "    reconnect: hub {hot:?} shed J_z {before:.2} → {:.2}",
+                ng.max_jz()
+            );
+            // SEAL closed loop: accrued energy (∝ J_z) tightens tolerance.
+            let energy = [before, 0.1, 0.1, 0.1];
+            let tol = seal_tighten(&energy, 0.10, 2.0);
+            println!(
+                "    SEAL loop: hot-node tolerance tightened base 0.10 → {:.3}",
+                tol[0]
+            );
+            println!("    field stable: graceful degradation = topology change, not collapse.");
+        }
         other => {
             eprintln!("  unknown command: {other}  (try `bebop help`)");
             std::process::exit(2);
@@ -463,7 +502,7 @@ fn print_help() {
     println!("  init [--looks RRGGBB --narration X --home URL --force] | preview [--transition] | boot | outfit | status");
     println!("  node [--pass X --path Y] | recall <q>  (alias: research <q>) | radio [<n>|onair|stop] | help");
     println!("  dispatch \"<task>\" [--n N] | route <task> | map | diagrams");
-    println!("  scan \"<text>\" (T3MP3ST redteam) | plan (PDDL logicalCot) | audit (hash-chained log) | boundary <prev> <input> [<meta>] (zkVM-sealed transition)");
+    println!("  scan \\\"<text>\\\" (T3MP3ST redteam) | plan (PDDL logicalCot) | audit (hash-chained log) | boundary <prev> <input> [<meta>] (zkVM-sealed transition) | field (unified-field telemetry map)");
     println!("  mission [--title T] | mcp   (the sign-off — dock + cigar; also fires at loop end)");
     println!("  (interactive TUI with the sun-warm launch: run `bebop` in a TTY)");
     println!("  {}", OUTFIT.home);

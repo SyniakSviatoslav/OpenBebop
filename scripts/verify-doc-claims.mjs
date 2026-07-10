@@ -84,14 +84,15 @@ function check(name, ok, detail = '') {
 // --- F. Test-count honesty: README + AGENTS counts must match `cargo test` (all crates) ---
 let pass = 0, failc = 0;
 try {
-  for (const manifest of [path.join(ROOT, 'crates/bebop/Cargo.toml'), path.join(ROOT, 'rust-core/Cargo.toml')]) {
-    const out = execFileSync('cargo', ['test', '--quiet', '--lib', '--manifest-path', manifest], { encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
-    for (const line of out.split('\n')) {
-      const m = line.match(/test result: ok\.\s*(\d+) passed/);
-      if (m) pass += Number(m[1]);
-      const f = line.match(/test result: FAILED\.\s*(\d+) failed/);
-      if (f) failc += Number(f[1]);
-    }
+  // Enumerate EVERY workspace lib target so the count stays honest as crates are added/removed.
+  // `--workspace --lib` runs all member lib unittests; dead/legacy crates are excluded from the
+  // workspace (see root Cargo.toml `exclude`) and are deliberately NOT counted.
+  const out = execFileSync('cargo', ['test', '--quiet', '--lib', '--workspace'], { encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
+  for (const line of out.split('\n')) {
+    const m = line.match(/test result: ok\.\s*(\d+) passed/);
+    if (m) pass += Number(m[1]);
+    const f = line.match(/test result: FAILED\.\s*(\d+) failed/);
+    if (f) failc += Number(f[1]);
   }
 } catch (e) {
   const out = String(e.stdout ?? e.stderr ?? '');
