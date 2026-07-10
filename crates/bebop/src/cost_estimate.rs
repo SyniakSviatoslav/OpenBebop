@@ -24,10 +24,11 @@
 
 use crate::field_physics::adjacency;
 use crate::wavefield::{ConnEdge, Node2D};
+use serde::{Deserialize, Serialize};
 
 /// Per-edge economic cost components. The "wave speed" F_uv = 1 / W_uv is derived
 /// from these: high latency/cost/risk ⇒ slow wave ⇒ expensive edge (avoided by A*).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct EdgeCost {
     /// Transit latency in seconds (or any monotonic time unit).
     pub latency: f64,

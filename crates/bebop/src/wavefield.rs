@@ -30,9 +30,10 @@
 use crate::coherence;
 use crate::field_physics;
 use crate::geometry_field::Platonic;
+use serde::{Deserialize, Serialize};
 
 /// A node in the geometric connection graph: a memory / file / entity.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Node2D {
     pub id: String,
     /// Geometry: position in 2-D space. Distances between nodes drive coupling.
@@ -45,7 +46,7 @@ pub struct Node2D {
 
 /// The kind of connection between two nodes — the NATURE of the link, not just
 /// its existence. Your idea: connections carry semantics (action/method/relation).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LinkKind {
     Action,   // an operation that mutates / transitions
     Method,   // a callable / function reference
@@ -68,7 +69,7 @@ impl LinkKind {
 }
 
 /// A weighted, kind-tagged edge in the connection graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnEdge {
     pub from: usize,
     pub to: usize,
