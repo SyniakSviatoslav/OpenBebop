@@ -41,14 +41,15 @@ pub mod redteam; // T3MP3ST deterministic red-team prompt scanner
 pub mod registry; // content-addressed module registry (deterministic)
 pub mod research_patterns; // reverse-engineered patterns (research pass 2026-07-10)
 pub mod router; // the token/model router (cheapest adequate)
+pub mod sandbox; // cloud sandbox: isolated command exec, network-off fail-closed
 pub mod sealfb; // SEAL closed-loop: field energy → self-tightened tolerance
 pub mod stabilizer; // inherent Lyapunov stability: V̇≤0 monitor, saturation, potential well, ground state
 pub mod stress; // 3-level stress benchmark (injection / double-bind / telemetry)
 pub mod svc; // space-vector control smoothing (αβ trajectory, damping)
 pub mod tui; // the ratatui TUI: red-spaceship launch + interactive frame
 pub mod vault;
-pub mod wiring;
+pub mod wiring; // 3-layer runtime: field sim ↔ L5 stabilizer ↔ living memory ↔ project gating
 pub mod zenoh; // deterministic mesh transport (local broker; Portkey-swappable)
-pub mod zkvm; // deterministic verifiable state-transition boundary (commit/verify) // 3-layer runtime: field sim ↔ L5 stabilizer ↔ living memory ↔ project gating
+pub mod zkvm; // deterministic verifiable state-transition boundary (commit/verify)
 
 pub use outfit::{Narration, Outfit, Palette, OUTFIT};
