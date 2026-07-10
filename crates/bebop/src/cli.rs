@@ -163,29 +163,8 @@ pub fn run() {
                 }
             }
         }
-        "recall" => {
-            // Query the living-knowledge retriever (§0·GP) against a seeded store.
-            let o = crate::customize::Profile::load().resolve_outfit();
-            crate::tui::render_loader_animation(
-                crate::tui::AgentState::Recalling,
-                9,
-                "recall",
-                "sweeping living knowledge",
-                &o,
-            );
-            let q = rest.join(" ");
-            let mm = seed_memory();
-            let r = recall(&mm, &q, 3);
-            if r.hits.is_empty() {
-                println!("  §0·GP recall — query: {q}");
-                println!("  (retriever wired in core::knowledge; {})", r.note);
-            } else {
-                println!("  §0·GP recall — query: {q}");
-                for h in &r.hits {
-                    println!("  • [{}] {} — {}", h.id, h.concept, h.text);
-                }
-            }
-        }
+        "recall" => run_recall(rest),
+        "research" => run_recall(rest),
         "outfit" => {
             // Print the luminous cosmo-noir identity contract (the "make it yours" source).
             println!("{}", OUTFIT.banner());
@@ -351,10 +330,35 @@ pub fn run() {
     }
 }
 
+/// Recall / research: query the living-knowledge retriever (§0·GP) against a
+/// seeded store. `research` is an alias of `recall` — VSA similarity over the
+/// seeded memory IS the research/retrieval surface; no separate engine, no stub.
+fn run_recall(rest: &[String]) {
+    let o = crate::customize::Profile::load().resolve_outfit();
+    crate::tui::render_loader_animation(
+        crate::tui::AgentState::Recalling,
+        9,
+        "recall",
+        "sweeping living knowledge",
+        &o,
+    );
+    let q = rest.join(" ");
+    let mm = seed_memory();
+    let r = recall(&mm, &q, 3);
+    println!("  §0·GP recall — query: {q}");
+    if r.hits.is_empty() {
+        println!("  (retriever wired in core::knowledge; {})", r.note);
+    } else {
+        for h in &r.hits {
+            println!("  • [{}] {} — {}", h.id, h.concept, h.text);
+        }
+    }
+}
+
 fn print_help() {
     println!("{}", OUTFIT.banner());
-    println!("  init [--looks RRGGBB --narration X --home URL --force] | boot | outfit | status");
-    println!("  node [--pass X --path Y] | recall <q> | radio [<n>|onair|stop] | help");
+    println!("  init [--looks RRGGBB --narration X --home URL --force] | preview [--transition] | boot | outfit | status");
+    println!("  node [--pass X --path Y] | recall <q>  (alias: research <q>) | radio [<n>|onair|stop] | help");
     println!("  dispatch \"<task>\" [--n N] | route <task> | map | diagrams");
     println!("  mission [--title T] | mcp   (the sign-off — dock + cigar; also fires at loop end)");
     println!("  (interactive TUI with the sun-warm launch: run `bebop` in a TTY)");

@@ -737,7 +737,7 @@ fn draw_panel_knowledge(f: &mut TuiFrame, area: Rect, o: &Outfit, tele: Color, b
         ListItem::new(Line::from(vec![
             Span::styled("  vault    ", Style::default().fg(tele)),
             Span::styled(
-                "XChaCha20-Poly1305 · scrypt · ed25519",
+                "XChaCha20-Poly1305 · argon2id · ML-KEM-768 ⊕ X25519 · ML-DSA-65 ⊕ Ed25519",
                 Style::default().fg(bone),
             ),
         ])),

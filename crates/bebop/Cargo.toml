@@ -24,14 +24,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 thiserror = "1"
-# crypto (vault): AEAD + KDF, pure-Rust, audited (RUSTCRYPTO)
-chacha20poly1305 = "0.10"
-scrypt = "0.11"
-hkdf = "0.12"
+# crypto (vault): hybrid post-quantum (FIPS 203/204) + classical fallback,
+# memory-hard KDF, pure-Rust audited (RUSTCRYPTO).
+chacha20poly1305 = "0.11"   # AEAD (confidentiality — still fine post-quantum)
+argon2 = "0.5"            # memory-hard KDF (replaces scrypt), argon2id
+ml-kem = { version = "0.3", features = ["getrandom"] }   # FIPS 203 (ML-KEM / Kyber successor) — PQ KEM
+ml-dsa = { version = "0.1", features = ["getrandom"] }   # FIPS 204 (ML-DSA / Dilithium successor) — PQ signatures
+x25519-dalek = { version = "3", features = ["static_secrets", "getrandom"] }   # classical DH fallback (hybrid w/ ML-KEM)
+ed25519-dalek = "3"      # classical sig fallback (hybrid w/ ML-DSA)
+getrandom = "0.3"           # OsRng-backed byte fill for keygen (rand_core 0.10 — matches PQ crates)
+signature = "3"             # SignatureEncoding trait for PQ sig (de)serialization
+zeroize = "1"              # zeroize secret key material on drop
 sha2 = "0.10"
 hex = "0.4"
-ed25519-dalek = "2"  # PQ-era self-certifying node identity (signing/verifying keys)
-rand = { version = "0.8", features = ["getrandom"] }  # OsRng for one-time keygen only
 
 [dependencies.bebop-core]
 path = "../../rust-core"

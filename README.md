@@ -16,11 +16,11 @@ What makes it **not just another wrapper** (verified, not claimed):
 
 - **Bebop core** — a Rust/WASM guard OS (`bebop_core.wasm`) that *denies* auth/money/secrets/migrations
   unless a human approves. `bebop boot` proves the gates go RED. Math, not vibes.
-- **Node identity** — every node gets a self-certifying identity and an encrypted-at-rest vault
-  (XChaCha20 + scrypt, deterministic key derivation from a passphrase; wrong-pass is proven to fail
-  in `vault.rs`). No central server, ever. `bebop node` prints it.
-  _Note: the post-quantum (ML-KEM/ML-DSA) identity from the research layer is **not yet** in the
-  native core — tracked as a gap to close; the vault is symmetric-only today._
+- **Node identity** — every node gets a **hybrid post-quantum** self-certifying identity and an
+  encrypted-at-rest vault: **ML-KEM-768 ⊕ X25519** KEM, **ML-DSA-65 ⊕ Ed25519** signature,
+  **Argon2id** KDF, **XChaCha20-Poly1305** AEAD (`src/vault.rs`, pure Rust). The classical half
+  keeps the node safe even if a PQ primitive regresses; a wrong passphrase / tampered blob /
+  tampered id all fail closed. No central server, ever. `bebop node` prints it.
 - **Living memory** — a bundled VSA hypervector + graph store with forgetting and a persisted
   snapshot. `bebop recall "kernel law"` returns real payloads. (The richer §0·GP retriever lives in
   the dowiz monorepo and is an optional add-on — `recall` says so honestly.)
@@ -125,7 +125,7 @@ command and exposes `verifySelfEvolution()` — the agent can prove its own evol
 ## Verification
 
 ```bash
-cargo test           # 79 Rust tests (63 bebop + 16 rust-core), RED+GREEN, 0 fail
+cargo test           # 81 Rust tests (65 bebop + 16 rust-core), RED+GREEN, 0 fail
 cargo check          # 0 errors (typecheck)
 node scripts/verify-doc-claims.mjs        # doc-claim falsifiability gate
 node scripts/guardrail-falsifiable-proof.mjs   # every #[test] must be falsifiable

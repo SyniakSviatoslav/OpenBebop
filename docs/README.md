@@ -19,7 +19,7 @@ governor. This wiki explains each subsystem in detail so you can fork, extend, a
 - [Deterministic kernel & content-addressed log](./features/kernel.md) — decide/fold/replay + the Checker gate + hash-chained store.
 - [Telemetry governor](./features/governor.md) — PID + ICIR + resonance; autonomy as a control loop.
 - [Living memory (VSA)](./features/memory.md) — Vector Symbolic Architecture: insert, forget, recall.
-- [Post-quantum identity & vault](./features/identity.md) — ML-KEM + Ed25519, self-certifying, encrypted at rest.
+- [Post-quantum identity & vault](./features/identity.md) — hybrid ML-KEM-768 ⊕ X25519 + ML-DSA-65 ⊕ Ed25519, self-certifying, encrypted at rest.
 - [No-central-server mesh](./features/mesh.md) — content-addressed, verified pieces; swap-not-rewrite.
 - [Freestyle bebop soul](./features/consciousness.md) — self-maintenance, self-evolution, session-as-node.
 

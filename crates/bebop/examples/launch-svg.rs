@@ -44,8 +44,8 @@ fn main() {
         void
     );
     println!(
-        "<text x=\"4\" y=\"16\" fill=\"#{:06X}\" font-family=\"monospace\" font-size=\"12\">Bebop v{} — sun-warm ship launch (deterministic, ship #E8A544 on void #12100E)</text>",
-        ship, OUTFIT.version
+        "<text x=\"4\" y=\"16\" fill=\"#{:06X}\" font-family=\"monospace\" font-size=\"12\">Bebop v{} — sun-warm ship launch (deterministic, ship #{:06X} on void #{:06X})</text>",
+        ship, OUTFIT.version, ship, void
     );
 
     for (i, f) in show.iter().enumerate() {
