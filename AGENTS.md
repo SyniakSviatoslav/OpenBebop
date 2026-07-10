@@ -10,6 +10,40 @@ Hermes, Codex, OpenCode, Aider, or Bebop itself) working in this repo.
 - **Red lines** (per-change human gate, never auto-touch without confirmation): auth, money,
   RLS/migrations, secrets, bulk edits.
 
+## Universal rule — First Principles Thinking (reason from physics + math, not from convention)
+- **Definition**: before adopting any architecture, library, or abstraction, derive it from
+  first principles — the irreducible physical/mathematical constraints it must satisfy — and
+  reject anything that cannot be traced back to one. "Everyone does it this way" is not a
+  derivation. Prefer the smallest construct that satisfies the constraints over the familiar one.
+- **Where it adds EV**: prevents cargo-cult architecture (e.g. pulling a 200-dep framework to do
+  what a 40-line deterministic function + a craft already does). Forces every module to justify
+  its existence at the constraint level, which is exactly where the AGC engineers operated: 2K RAM
+  and radiation tolerance left no room for convention.
+- **Where it does NOT add EV**: re-deriving settled physics from scratch to avoid a well-known
+  formula (use the proven result; derive only when the proven result does not fit the constraint).
+- **Coupling to this repo**: rust-core is the first-principles layer — graph-PDE spectral kernel,
+  VSA, vector algebra, all `#[no_mangle] extern "C"`, compiled to wasm with an EMPTY import section
+  (core-RE-loop proves it imports no clock/RNG/socket). Any new primitive must earn its place the
+  same way: a deterministic, dependency-free function over a verified state, no runtime RNG/Date.
+
+## Universal rule — Physicality as Truth (the hardware floor is the oracle)
+- **Definition**: physical constraints (energy, mass, radiation, clock, memory, band) are the
+  ground-truth oracle. A design is "correct" only relative to the physical envelope it must survive
+  in. When a doc/claim/number conflicts with a measurable physical fact, the physical fact wins and
+  the claim is corrected (never hand-waved). Numbers about real systems MUST be verified against
+  primary sources (datasheet / NASA NTRS / archival spec), not repeated from secondary summaries.
+- **Where it adds EV**: stops "infinite-resource" thinking. The AGC ran at 2.048 MHz quartz, 2K core
+  RAM, 36K core-rope ROM, under a radiation + weight + power envelope — and landed. Contrast: modern
+  stacks burn 1000× the silicon to do less, because they ignore the envelope. Bebop's kernel inherits
+  the envelope discipline: no RNG/clock/network in rust-core (determinism IS the safety model, same as
+  core-rope memory being unrewritable = un-corruptible in flight).
+- **Where it does NOT add EV**: invoking "Apollo did it lean" as a morale tale without changing the
+  code. Physicality as Truth is a verification standard, not a vibe — it must surface as a check
+  (e.g. core-RE-loop's empty-import check is the machine-code-level physicality gate: no imports ⇒ no
+  reachable clock/RNG/socket).
+- **Cross-link**: Physicality as Truth is the empirical half of Verified-by-Math. VbM asks "can it go
+  RED?"; Physicality asks "does it survive the envelope?". Both are falsifiable; both ship a gate.
+
 ## Universal rule — symmetrical loops (cycle consistency) wherever they add EV
 - **Definition**: a symmetrical loop = an invertible `Decompose → Reconstruct` pair over a
   state snapshot `X`, asserting `Reconstruct(Decompose(X)) ≈ X` (i.e. `F(G(X)) == X`). The

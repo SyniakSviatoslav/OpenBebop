@@ -25,6 +25,26 @@ code as enforceable structure (pre-commit gates prove it):
    auto-touched. Enforced by `guard.ts checkRedLine` + `loop.ts` GUARD GATE (`guard_gate`+, runs BEFORE
    any read/write/dispatch, for every backend equally).
 
+4. **First Principles Thinking** — derive every architecture/library/abstraction from the irreducible
+   physical/mathematical constraints it must satisfy; reject what cannot be traced to one. "Everyone
+   does it" is not a derivation. Code twin: `rust-core` is the first-principles layer — graph-PDE
+   spectral kernel, VSA, vector algebra, all `#[no_mangle] extern "C"`, compiled to wasm with an EMPTY
+   import section (core-RE-loop proves no clock/RNG/socket reachable). Any new primitive must earn its
+   place the same way.
+
+5. **Physicality as Truth** — physical constraints (energy, mass, radiation, clock, memory, band) are
+   the ground-truth oracle; a physical fact overrides any doc/claim/number. Real-system numbers MUST be
+   verified against primary sources (datasheet / NASA NTRS / archival spec), not repeated from secondary
+   summaries. Code twin: core-RE-loop's empty-import check is the machine-code-level physicality gate
+   (no imports ⇒ no reachable clock/RNG/socket) — the envelope discipline AGC achieved via unrewritable
+   core-rope memory. Physicality is the empirical half of VbM: VbM asks "can it go RED?"; Physicality
+   asks "does it survive the envelope?".
+
+> Cross-pattern 0a (extended): the rulebook replicates itself into code. Constant Doubt → guardrail
+> scripts; VbM → falsifiable-proof gate; red lines → `guard.ts`; First Principles → `rust-core`
+> (dependency-free, no-std determinism); Physicality → core-RE-loop empty-import check. Each meta-rule
+> has a *machine twin*; a principle without one is prose, not an operating rule.
+
 > Cross-pattern 0a: **The rulebook is not prose, it is executable.** Constant Doubt spawned the two
 > guardrail scripts; VbM spawned the falsifiable-proof gate; red lines spawned `guard.ts`. Each meta-rule
 > has a *code twin* in the repo. That is the deepest pattern: **principle → enforced-by-machine**, never
