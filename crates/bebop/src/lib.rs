@@ -31,6 +31,7 @@ pub mod outfit;
 pub mod pddl; // deterministic STRIPS-style planner + chain-of-thought trace
 pub mod portkey; // deterministic local transport / gateway abstraction (pub-sub bus)
 pub mod radio; // the ship's lounge — free-to-listen Lofi/Jazz streams
+pub mod recall_graph; // SPIKE (eval-gated): codebase-memory-mcp graph-first retrieval
 pub mod reconnect; // MHD "magnetic reconnection": topology change to shed overload energy
 pub mod redteam; // T3MP3ST deterministic red-team prompt scanner
 pub mod registry; // content-addressed module registry (deterministic)

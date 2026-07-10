@@ -235,6 +235,156 @@ pub fn golden_branch_depth(leaves: u64) -> u32 {
     d as u32
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// REVERSE-ENGINEERED PATTERNS (research pass 2026-07-10)
+// Composio / ACP / agency-agents / jakeefr-prism / ProsusAI-prism / codebase-memory-mcp.
+// None of these external tools are integrated (sovereign-core red line: offline,
+// deterministic, 0 deps). Their *patterns* are re-implemented here, natively,
+// falsifiably. See docs/design/research-12tool-ev-2026-07-10.md §2.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// PATTERN 1 — Composio "toolkit" + ACP "self-describing manifest": every
+/// action declares its effect surface AND its forbidden zone. The core gates an
+/// action through FIELD GEOMETRY (the same wall as `potential_with_wall`), not
+/// an external filter the agent can reason around.
+///
+/// `ActionContract` is the minimal ACP-style manifest: a name, a proposed
+/// effect vector, and a mandatory `forbidden` zone. `permit_action` returns
+/// `None` (refused — task fails rather than violates) when the effect lands in
+/// the wall. This is "capability-based discovery + hard constraint" baked in.
+pub struct ActionContract {
+    pub name: &'static str,
+    /// Effect vector the action would push the field toward (one dim per param).
+    pub effect: Vec<f64>,
+    /// Forbidden zone center (must match `effect` length when active).
+    pub forbidden_center: f64,
+    pub forbidden_radius: f64,
+    pub forbidden_height: f64,
+}
+
+/// Returns the saturated effect iff it clears the forbidden zone; `None` otherwise.
+/// GREEN: a safe action is applied (bounded). RED (falsifiable): drop the
+/// forbidden zone and the same action is accepted — the constraint is load-bearing.
+pub fn permit_action(
+    c: &ActionContract,
+    baseline: &[f64],
+    k: &[f64],
+    limit: f64,
+) -> Option<Vec<f64>> {
+    let forbidden = c.forbidden_height > 0.0 && c.forbidden_radius > 0.0;
+    for &e in &c.effect {
+        if forbidden {
+            let d = (e - c.forbidden_center).abs();
+            if d < c.forbidden_radius {
+                // inside the wall → V would spike → core refuses the WHOLE action.
+                return None;
+            }
+        }
+    }
+    // outside: apply each dim through the tanh saturating wall.
+    let applied: Vec<f64> = c.effect.iter().map(|&e| saturate(e, limit)).collect();
+    // sanity: baseline/k length must align (no silent shape mismatch)
+    if !baseline.is_empty() && applied.len() != baseline.len() {
+        return None;
+    }
+    let _ = k;
+    Some(applied)
+}
+
+/// PATTERN 2 — agency-agents "runbooks.json": a declarative roster where every
+/// agent is referenced by a verified slug. Their CI guard FAILS the build if any
+/// slug doesn't resolve. `resolve_runbook` does the same thing deterministically:
+/// given a roster (slug→present?) and a runbook (list of required slugs), it
+/// returns the FIRST dangling slug — `None` means the roster is sound. This is
+/// the "machine-readable manifest, fail loudly on drift" pattern.
+pub fn resolve_runbook(
+    roster: &std::collections::HashSet<&str>,
+    runbook: &[&str],
+) -> Option<String> {
+    for &slug in runbook {
+        if !roster.contains(slug) {
+            return Some(slug.to_string()); // dangling ref → fail the deploy loudly
+        }
+    }
+    None
+}
+
+/// PATTERN 3 — jakeefr/prism "attention-curve scorer": critical CLAUDE.md
+/// rules buried in the MIDDLE 55% of a file fall into the LLM attention
+/// dead-zone. `context_pack` packs invariants to the ATTENDED positions —
+/// index 0 and the last — so the deterministic core's directives survive. Returns
+/// a packed list of length `cap` with the most-critical items forced to the
+/// head and tail. GREEN: cap items survive; RED: a `cap` of 0 returns empty
+/// (no silent padding), and an over-long input is truncated, never panics.
+pub fn context_pack(critical: &[&str], cap: usize) -> Vec<String> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::with_capacity(cap);
+    // head: first critical item (attended position 0)
+    if let Some(first) = critical.first() {
+        out.push((*first).to_string());
+    }
+    // body: the rest (bounded to leave room for the tail)
+    let tail_room = if critical.len() > 1 { 1 } else { 0 };
+    let body_cap = cap.saturating_sub(out.len() + tail_room);
+    for item in critical.iter().skip(1).take(body_cap) {
+        out.push((*item).to_string());
+    }
+    // tail: last critical item (attended last position)
+    if critical.len() > 1 {
+        if out.len() < cap {
+            out.push((*critical.last().unwrap()).to_string());
+        } else {
+            out[cap - 1] = (*critical.last().unwrap()).to_string();
+        }
+    }
+    out
+}
+
+/// PATTERN 4 — ProsusAI/prism "validated patterns as reusable skills" +
+/// codebase-memory-mcp "memorize to avoid re-reading". `pattern_cache` is a
+/// content-addressed solution cache keyed by FIELD SHAPE (the well baseline+k),
+/// so identical problems return the memoized solution without recompute. Matches
+/// the Fibonacci memoization motif already in `fibonacci`. Pure, deterministic.
+pub struct PatternCache {
+    store: std::collections::HashMap<String, f64>,
+}
+
+impl PatternCache {
+    pub fn new() -> Self {
+        PatternCache {
+            store: std::collections::HashMap::new(),
+        }
+    }
+    /// Content key: shape of (baseline, k) → canonical string. Two fields with
+    /// the same shape hash identically → cache hit. (RED: different shapes →
+    /// different keys → no cross-contamination.)
+    fn key_of(baseline: &[f64], k: &[f64]) -> String {
+        let b: Vec<String> = baseline.iter().map(|x| format!("{x:.4}")).collect();
+        let kk: Vec<String> = k.iter().map(|x| format!("{x:.4}")).collect();
+        format!("{}|{}", b.join(","), kk.join(","))
+    }
+    /// Fetch a memoized solution; `solve` is called only on a miss.
+    pub fn solve_or_memo<F: FnOnce() -> f64>(
+        &mut self,
+        baseline: &[f64],
+        k: &[f64],
+        solve: F,
+    ) -> f64 {
+        let key = Self::key_of(baseline, k);
+        if let Some(&v) = self.store.get(&key) {
+            return v; // memoized
+        }
+        let v = solve();
+        self.store.insert(key, v);
+        v
+    }
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -367,6 +367,114 @@ pub fn crawl_frontier(seed: &[String], max: usize) -> Vec<String> {
     out
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MAX-EV INTEGRATIONS (spike-confirmed) — DeepEval + Storm patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// PATTERN: DeepEval / Deepeval — deterministic RAG-answer faithfulness &
+/// context-precision/recall WITHOUT embeddings. We use lexical overlap
+/// (jaccard over bag-of-words + token-inclusion) as a proxy metric that needs
+/// no model and is fully falsifiable. Returns 0..1 for each metric.
+///
+/// - faithfulness = fraction of ANSWER tokens that are supported by CONTEXT
+///   (every answer sentence must trace to a context sentence).
+/// - context_precision = fraction of retrieved CONTEXT tokens present in GOLD.
+/// - context_recall = fraction of GOLD tokens present in retrieved CONTEXT.
+pub fn eval_rag(answer: &str, context: &str, gold: &str) -> RagMetrics {
+    let ans = tokenize(answer);
+    let ctx = tokenize(context);
+    let gld = tokenize(gold);
+
+    // faithfulness: each answer token must appear in context
+    let faith = if ans.is_empty() {
+        1.0
+    } else {
+        let supported = ans.iter().filter(|t| ctx.contains(t)).count();
+        supported as f64 / ans.len() as f64
+    };
+    // context_precision: retrieved ctx tokens that are in gold
+    let prec = if ctx.is_empty() {
+        1.0
+    } else {
+        let rel = ctx.iter().filter(|t| gld.contains(t)).count();
+        rel as f64 / ctx.len() as f64
+    };
+    // context_recall: gold tokens covered by retrieved ctx
+    let rec = if gld.is_empty() {
+        1.0
+    } else {
+        let covered = gld.iter().filter(|t| ctx.contains(t)).count();
+        covered as f64 / gld.len() as f64
+    };
+    RagMetrics {
+        faithfulness: faith,
+        context_precision: prec,
+        context_recall: rec,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct RagMetrics {
+    pub faithfulness: f64,
+    pub context_precision: f64,
+    pub context_recall: f64,
+}
+
+fn tokenize(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3)
+        .map(|w| w.to_string())
+        .collect()
+}
+
+/// PATTERN: Storm (Synthesis of Topic Outlines through Retrieval and
+/// Multi-perspective question-asking) — deterministic analog. Given a topic and
+/// a set of PERSPECTIVES, generate one pointed question per perspective, then
+/// synthesize a structured outline (sections keyed by perspective). No LLM: the
+/// questions are templated and the outline is the perspective set folded into a
+/// skeleton. GREEN: N perspectives → N questions + N sections. RED: empty
+/// perspectives → empty outline (no hallucinated sections).
+pub fn storm_outline(topic: &str, perspectives: &[&str]) -> StormOutline {
+    let questions: Vec<String> = perspectives
+        .iter()
+        .map(|p| format!("From the {p} perspective, what is the key open question about {topic}?"))
+        .collect();
+    let sections: Vec<Section> = perspectives
+        .iter()
+        .map(|p| Section {
+            heading: format!("{p}: {topic}"),
+            bullets: vec![format!(
+                "Open question: {}",
+                questions[sections_len(perspectives, p)]
+            )],
+        })
+        .collect();
+    StormOutline {
+        topic: topic.to_string(),
+        questions,
+        sections,
+    }
+}
+
+// helper: index-of perspective in the slice (deterministic, no position tracking)
+fn sections_len(perspectives: &[&str], p: &str) -> usize {
+    perspectives.iter().position(|x| *x == p).unwrap_or(0)
+}
+
+#[derive(Debug, PartialEq)]
+pub struct StormOutline {
+    pub topic: String,
+    pub questions: Vec<String>,
+    pub sections: Vec<Section>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Section {
+    pub heading: String,
+    pub bullets: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,5 +620,40 @@ mod tests {
             v = (v << 8) | oct.parse::<u32>().unwrap();
         }
         v
+    }
+
+    #[test]
+    fn eval_rag_faithful_and_red() {
+        // GREEN: answer fully supported by context → faithfulness 1.0
+        let m = eval_rag(
+            "the auth module uses oauth tokens",
+            "the auth module uses oauth tokens for access",
+            "auth uses oauth",
+        );
+        assert_eq!(m.faithfulness, 1.0);
+        // RED: answer contains a token absent from context → faithfulness < 1
+        let bad = eval_rag(
+            "the server logs the admin password",
+            "the server logs the session token",
+            "server logs the admin secret",
+        );
+        assert!(
+            bad.faithfulness < 1.0,
+            "hallucinated token must lower faithfulness"
+        );
+        // context_recall: gold token missing from context → < 1
+        assert!(bad.context_recall < 1.0);
+    }
+
+    #[test]
+    fn storm_outline_multi_perspective() {
+        // GREEN: N perspectives → N questions + N sections
+        let o = storm_outline("cache", &["security", "performance", "cost"]);
+        assert_eq!(o.questions.len(), 3);
+        assert_eq!(o.sections.len(), 3);
+        assert!(o.questions[0].contains("security"));
+        // RED: empty perspectives → empty outline (no invented sections)
+        let empty = storm_outline("x", &[]);
+        assert!(empty.questions.is_empty() && empty.sections.is_empty());
     }
 }
