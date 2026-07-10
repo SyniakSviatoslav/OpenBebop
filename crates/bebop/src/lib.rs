@@ -10,6 +10,7 @@
 //! in any path that affects output. The launch animation uses a const-seeded LCG.
 
 pub mod active_inference; // deterministic FEP policy advisor (pymdp-grounded)
+pub mod agentic_git; // GCC pattern: content-addressed agent action-history (COMMIT/CONTEXT/LOG/MERGE)
 pub mod audit; // tamper-evident hash-chained audit log (deterministic)
 pub mod cli; // the `bebop <cmd>` dispatcher (also the TUI entry)
 pub mod coherence; // wave interference (|ψ₁±ψ₂|²) over the field kernel
