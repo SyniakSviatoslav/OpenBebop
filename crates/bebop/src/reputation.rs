@@ -46,6 +46,20 @@ impl ReputationLedger {
         r.suspensions += 1;
     }
 
+    /// Precedence / recency decay (arXiv 2104.03902 §4.2 "The Autodidactic
+    /// Universe"): old deliveries fade so the trust score tracks RECENT
+    /// behaviour, not lifetime totals. Multiplies each delivery count by
+    /// `alpha` ∈ [0,1]; `alpha = 1` is a no-op. SUSPENSIONS are STICKY — they do
+    /// not decay (a consensus suspension is a permanent safety mark, not a
+    /// fading statistic). Deterministic, RNG-free.
+    pub fn decay(&mut self, alpha: f64) {
+        assert!((0.0..=1.0).contains(&alpha), "alpha must be in [0,1]");
+        for r in self.records.values_mut() {
+            r.deliveries = (r.deliveries as f64 * alpha).round() as u64;
+            // suspensions intentionally NOT decayed
+        }
+    }
+
     /// Trust score in [0,1]: deliveries/(deliveries+suspensions) softened, with a
     /// floor of 0 once suspended. Unknown node (no record) = neutral 0.5 (the
     /// "prove yourself" baseline — not trusted, not distrusted). Each verified
@@ -117,5 +131,25 @@ mod tests {
             l.risk_premium("c1").is_infinite(),
             "suspended ⇒ unreachable"
         );
+    }
+
+    #[test]
+    fn precedence_decay_tracks_recent_not_lifetime() {
+        // GREEN: alpha<1 fades old deliveries ⇒ score drops toward neutral.
+        // RED+GREEN: a suspension does NOT decay away (sticky safety mark).
+        let mut l = ReputationLedger::new();
+        for _ in 0..10 {
+            l.record_delivery("c1");
+        }
+        let high = l.score("c1");
+        l.decay(0.5); // half the deliveries fade
+        let faded = l.score("c1");
+        assert!(faded < high, "decay lowers recent trust");
+        // suspension survives decay:
+        let mut s = ReputationLedger::new();
+        s.record_delivery("c2");
+        s.record_suspension("c2");
+        s.decay(0.5);
+        assert_eq!(s.score("c2"), 0.0, "suspension never decays");
     }
 }

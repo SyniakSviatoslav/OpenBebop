@@ -49,11 +49,43 @@ vault id (a hash of their public key) — verifiers prove authorship without
 learning a name. This is the trustless anchor for the physical handoff (the
 weakest link from the centralization map): settlement can require a valid POD.
 
-> Research note: the external `codex.churchofmalware.org` resource was not
-> retrievable in-session (network-off / sandbox). The integrated scheme uses the
-> SAME primitives the source describes (SSH/Ed-style key signature + SHA512
-> content hash + pseudonymous distribution) on bebop's already-audited hybrid
-> signature stack. Adapt before any production claim.
+> Research note: the external resources WERE retrieved (live fetch, no network
+> failure) by the deep-research subagent — `codex.churchofmalware.org` was
+> reachable. The Princess Pi scheme (authored as `PrincessPi/Encrypt-Share-
+> Attribution`): fresh `ssh-ed25519` key per round; attribution tag =
+> `SHA512(passphrase ‖ inner.7z)`; inner archive signed with the SSH private key;
+> SHA512 file checksums + optional AES-CBC-256 outer. Two proofs: signature
+> (key possession = authorship) and passphrase reveal (attribute without key).
+> Full spec + citations + gotchas: `/root/dowiz/docs/design/integration-
+> research-report.md`. The integrated `pod` scheme maps this directly onto
+> bebop's ALREADY-AUDITED hybrid signature stack (ML-DSA-65 ⊕ Ed25519 + SHA512
+> via `vault.rs`) rather than raw `ssh-ed25519` — see "Key-format note" below.
+> An earlier draft of this doc erroneously said the source was unreachable;
+> that was wrong and is retracted.
+
+### Key-format note (deliberate deviation)
+
+Princess Pi uses raw `ssh-ed25519` (OpenSSH format). bebop deliberately uses its
+ALREADY-AUDITED `vault.rs` hybrid signature (ML-DSA-65 ⊕ Ed25519) instead:
+- a single courier id is a self-certifying hash of their public key (the same
+  pseudonymous property), so no extra per-round key ceremony is needed;
+- the hybrid sig survives a post-quantum break (Ed25519 alone does not);
+- `SHA512(claim)` is identical to the Princess Pi content-hash step — the
+  attribution primitive is preserved, only the key format is upgraded.
+Cross-node verifiers MUST pin one format; bebop pins `vault` (not OpenSSH). This
+is the discussion point flagged in the research report (SSH-format ≠ raw).
+
+### Self-taught L5: precedence decay (borrowed from arXiv 2104.03902 §4.2)
+
+The research synthesis named three mechanisms worth borrowing from "The
+Autodidactic Universe" (variety maximization, RG coarse-graining, precedence).
+`reputation::decay(alpha)` implements the **precedence** one: trust tracks
+RECENT deliveries, not lifetime totals — old deliveries fade by `alpha ∈ [0,1]`
+each epoch, so a courier who went cold loses trust weight. Suspensions are
+STICKY and do NOT decay (a consensus safety mark is permanent). This makes the
+trust ledger self-correcting from live flow with no external oracle — the
+"self-taught" property the audit asked for, kept bounded by the existing guards
+so it cannot spiral into routing chaos (the report's RED flag).
 
 ## Section 3 — Mathematical & Signal Apparatus (Core Engine)
 
