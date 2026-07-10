@@ -14,8 +14,8 @@
 //! recolors the ship + status live (resolved via `customize::Profile::load`).
 
 use crate::customize::Profile;
-use crate::launch::{render_launch, render_launch_accent, Frame};
-use crate::outfit::{Outfit, OUTFIT};
+use crate::launch::{render_launch_accent, Frame};
+use crate::outfit::Outfit;
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -61,13 +61,13 @@ fn blend(fg: u32, bg: u32, a: f64) -> u32 {
 /// so `boot`/`init`/`node`/`recall` each read as a different ship motion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentState {
-    Idle,     // docked — static ship on the void
-    Booting,  // ship rises with a luminous halo (boot)
-    Initing,  // ship repaints itself (init --looks)
-    Node,     // ship raises concentric shields (node)
-    Recalling,// ship sweeps a scan beam (recall)
-    Thinking, // ship orbits while the model answers (waiting for output)
-    Radio,    // ship broadcasts — on air (lofi/jazz lounge)
+    Idle,      // docked — static ship on the void
+    Booting,   // ship rises with a luminous halo (boot)
+    Initing,   // ship repaints itself (init --looks)
+    Node,      // ship raises concentric shields (node)
+    Recalling, // ship sweeps a scan beam (recall)
+    Thinking,  // ship orbits while the model answers (waiting for output)
+    Radio,     // ship broadcasts — on air (lofi/jazz lounge)
 }
 
 impl AgentState {
@@ -136,8 +136,14 @@ impl Telemetry {
             twin: None,
         };
         // seed the working feed so the panel is never empty on first paint
-        t.log(AgentState::Booting, "helm online — ship docked, awaiting orders");
-        t.log(AgentState::Thinking, "field arbiter armed: physics can veto the planner");
+        t.log(
+            AgentState::Booting,
+            "helm online — ship docked, awaiting orders",
+        );
+        t.log(
+            AgentState::Thinking,
+            "field arbiter armed: physics can veto the planner",
+        );
         t
     }
     /// Append to the OpenCode-like working feed (keeps the last 8 lines).
@@ -220,10 +226,7 @@ impl Telemetry {
             None => vec!["no twin docked".into()],
             Some(t) => {
                 let mut d = Vec::new();
-                d.push(format!(
-                    "tok  self {} · twin {}",
-                    self.tokens, t.tokens
-                ));
+                d.push(format!("tok  self {} · twin {}", self.tokens, t.tokens));
                 d.push(format!(
                     "ctx  self {}% · twin {}%",
                     self.context_pct, t.context_pct
@@ -275,7 +278,13 @@ fn draw_loader(state: AgentState, frame: u64, o: &Outfit) -> Vec<Line<'static>> 
     let void = c(p.void);
     let mut lines: Vec<Line<'static>> = Vec::new();
     // a 9-wide, 5-tall mini stage
-    let stage: [&str; 5] = ["         ", "         ", "         ", "         ", "         "];
+    let stage: [&str; 5] = [
+        "         ",
+        "         ",
+        "         ",
+        "         ",
+        "         ",
+    ];
     let mut grid = stage;
     match state {
         AgentState::Idle => {
@@ -286,7 +295,11 @@ fn draw_loader(state: AgentState, frame: u64, o: &Outfit) -> Vec<Line<'static>> 
             let rise = (frame / 4) % 5;
             let row = 4usize.saturating_sub(rise as usize);
             grid[row] = "   ◈▶◈   ";
-            let halo = if frame % 2 == 0 { " ✧     ✧ " } else { "  ✧   ✧  " };
+            let halo = if frame % 2 == 0 {
+                " ✧     ✧ "
+            } else {
+                "  ✧   ✧  "
+            };
             grid[if row == 0 { 1 } else { row - 1 }] = halo;
         }
         AgentState::Initing => {
@@ -297,9 +310,17 @@ fn draw_loader(state: AgentState, frame: u64, o: &Outfit) -> Vec<Line<'static>> 
         AgentState::Node => {
             // concentric shields expand/contract
             let r = (frame / 3) % 3;
-            grid[1] = match r { 0 => " (     ) ", 1 => "  (   )  ", _ => "   ( )   " };
+            grid[1] = match r {
+                0 => " (     ) ",
+                1 => "  (   )  ",
+                _ => "   ( )   ",
+            };
             grid[2] = "   ◈▶◈   ";
-            grid[3] = match r { 0 => " (     ) ", 1 => "  (   )  ", _ => "   ( )   " };
+            grid[3] = match r {
+                0 => " (     ) ",
+                1 => "  (   )  ",
+                _ => "   ( )   ",
+            };
         }
         AgentState::Recalling => {
             // scan beam sweeps left↔right
@@ -315,8 +336,16 @@ fn draw_loader(state: AgentState, frame: u64, o: &Outfit) -> Vec<Line<'static>> 
         AgentState::Thinking => {
             // ship orbits the cursor
             let orb = (frame / 2) % 8;
-            let pos = [" ◈      ", "  ◈     ", "   ◈    ", "    ◈   ",
-                       "     ◈  ", "      ◈ ", "       ◈", "      ◈ "][orb as usize];
+            let pos = [
+                " ◈      ",
+                "  ◈     ",
+                "   ◈    ",
+                "    ◈   ",
+                "     ◈  ",
+                "      ◈ ",
+                "       ◈",
+                "      ◈ ",
+            ][orb as usize];
             grid[2] = pos;
             grid[3] = "  ·waiting· ";
         }
@@ -339,7 +368,11 @@ fn draw_loader(state: AgentState, frame: u64, o: &Outfit) -> Vec<Line<'static>> 
             Style::default().fg(ship)
         } else {
             // loader glows: alternate ship/glow for a luminous pulse
-            if frame % 2 == 0 { Style::default().fg(glow) } else { Style::default().fg(ship) }
+            if frame % 2 == 0 {
+                Style::default().fg(glow)
+            } else {
+                Style::default().fg(ship)
+            }
         };
         lines.push(Line::from(Span::styled(*g, style)).style(Style::default().bg(void)));
     }
@@ -483,7 +516,7 @@ fn draw_panel_helm(
     tele: Color,
     bone: Color,
     alert: Color,
-    void: Color,
+    _void: Color,
 ) {
     let cols =
         Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
@@ -630,46 +663,6 @@ fn draw_panel_helm(
     }
 }
 
-fn draw_launch_in(f: &mut TuiFrame, area: Rect, frame: &Frame, o: &Outfit) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" ◈ ship ")
-        .border_style(Style::default().fg(c(o.palette.ship)));
-    let inner = block.inner(area);
-    let w = frame.w.min(inner.width as usize);
-    let h = frame.h.min(inner.height as usize);
-    let off_x = ((inner.width as usize).saturating_sub(w)) / 2;
-    let off_y = ((inner.height as usize).saturating_sub(h)) / 2;
-    let mut lines: Vec<Line> = Vec::with_capacity(h);
-    for y in 0..h {
-        let mut spans: Vec<Span> = Vec::with_capacity(w);
-        for x in 0..w {
-            let rgba = frame.cells[y * frame.w + x];
-            if (rgba & 0xFFFFFF) == (o.palette.void & 0xFFFFFF) {
-                spans.push(Span::styled(" ", Style::default().bg(c(o.palette.void))));
-            } else {
-                let ch = if (rgba & 0xFFFFFF) == (o.palette.ship & 0xFFFFFF) {
-                    "█"
-                } else {
-                    "░"
-                };
-                spans.push(Span::styled(ch, Style::default().fg(cell_color(rgba))));
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-    f.render_widget(block, area);
-    f.render_widget(
-        Paragraph::new(lines),
-        Rect {
-            x: inner.x + off_x as u16,
-            y: inner.y + off_y as u16,
-            width: w as u16,
-            height: h as u16,
-        },
-    );
-}
-
 fn draw_panel_dispatch(
     f: &mut TuiFrame,
     area: Rect,
@@ -784,7 +777,7 @@ fn draw_panel_outfit(
     tele: Color,
     bone: Color,
     alert: Color,
-    void: Color,
+    _void: Color,
 ) {
     let p = o.palette;
     f.render_widget(
@@ -860,7 +853,11 @@ pub fn render_launch_tween(
     base.into_iter()
         .enumerate()
         .map(|(i, mut fr)| {
-            let t = if steps == 0 { 1.0 } else { i as f64 / steps as f64 };
+            let t = if steps == 0 {
+                1.0
+            } else {
+                i as f64 / steps as f64
+            };
             // blend(to, from, t): t=0 → from (start hull), t=1 → to (end hull).
             let ship = blend(to, from, t);
             for idx in 0..fr.cells.len() {
@@ -881,7 +878,13 @@ pub fn render_launch_tween(
 /// own `AgentState` so the ship *moves differently* per command — boot rises,
 /// init repaints, node shields, recall scans, recall/thinking orbit. Deterministic
 /// (frame counter, no RNG/Date), so the same command always paints the same way.
-pub fn render_loader_animation(state: AgentState, frames: usize, label: &str, note: &str, o: &Outfit) {
+pub fn render_loader_animation(
+    state: AgentState,
+    frames: usize,
+    label: &str,
+    note: &str,
+    o: &Outfit,
+) {
     let line = "─".repeat(48);
     println!("\x1b[38;5;180m{}\x1b[0m", line);
     println!(
@@ -909,8 +912,6 @@ pub fn render_loader_animation(state: AgentState, frames: usize, label: &str, no
 fn line_to_string(l: &Line) -> String {
     l.spans.iter().map(|s| s.content.as_ref()).collect()
 }
-
-
 
 pub fn run_tui() -> std::io::Result<()> {
     let o = Profile::load().resolve_outfit();
@@ -1065,7 +1066,7 @@ pub fn debug_helm_text(w: u16, h: u16, tab: usize, o: &Outfit) -> String {
     let mut out = String::new();
     for y in 0..h {
         for x in 0..w {
-            let s = buf.get(x, y).symbol();
+            let s = buf[(x, y)].symbol();
             out.push_str(if s.trim().is_empty() { " " } else { s });
         }
         out.push('\n');
@@ -1076,6 +1077,8 @@ pub fn debug_helm_text(w: u16, h: u16, tab: usize, o: &Outfit) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::launch::render_launch;
+    use crate::outfit::OUTFIT;
     use ratatui::backend::TestBackend;
 
     #[test]
@@ -1187,7 +1190,6 @@ mod tests {
         assert!(still_red > 0, "same in/out tween must keep the hull red");
     }
 
-
     #[test]
     fn loader_is_distinct_per_command_state() {
         // RED+GREEN: each command state must produce its OWN ship motion.
@@ -1203,7 +1205,6 @@ mod tests {
         let idle_s: Vec<String> = idle.iter().map(|l| line_to_string(l)).collect();
         assert_ne!(idle_s, a_s, "idle must differ from node loader");
     }
-
 
     #[test]
     fn karaoke_reveals_feed_progressively() {
@@ -1262,9 +1263,11 @@ mod tests {
         term.draw(|f| draw_helm(f, &tel, 0, &OUTFIT)).unwrap();
         let buf = term.backend().buffer().clone();
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(text.contains("twin"), "helm must show twin block after fork");
+        assert!(
+            text.contains("twin"),
+            "helm must show twin block after fork"
+        );
     }
-
 
     #[test]
     fn telemetry_is_deterministic() {
