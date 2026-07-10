@@ -1,0 +1,17 @@
+[package]
+name = "bebop2-core"
+version = "0.1.0"
+edition = "2021"
+description = "From-scratch zero-dep post-quantum core for bebop2. Pure core+alloc, empty-import wasm. No vendors."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# INTENTIONALLY NO DEPENDENCIES. core+alloc only. Builds offline (air-gapped).
+# Every primitive must compile to wasm with an EMPTY import section.
+
+[dependencies]
+# none.
+
+[dev-dependencies]
+# none — KAT vectors are committed in core/kat/ and read by #[test].

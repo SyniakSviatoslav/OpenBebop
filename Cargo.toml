@@ -3,7 +3,7 @@
 # The live build is two crates:
 #   - rust-core/   -> `bebop-core`   : the deterministic graph-PDE + VSA field core (WASM, dep-free).
 #                                    bebop depends on it via [dependencies.bebop-core] -> ../../rust-core.
-#   - crates/bebop/ -> `bebop`       : the host agent (TUI + MCP + vault + governor + field engines).
+#   - crates/bebop/-> `bebop`       : the host agent (TUI + MCP + vault + governor + field engines).
 #
 # `crates/core-legacy/` (renamed from crates/core on 2026-07-10) is the OLD ts-era guard kernel.
 # It is DEPRECATED and deliberately NOT a workspace member: the live kernel is rust-core, and the
@@ -14,6 +14,7 @@ resolver = "2"
 members = [
     "rust-core",
     "crates/bebop",
+    "bebop2/core",
 ]
 exclude = [
     "crates/core-legacy",
