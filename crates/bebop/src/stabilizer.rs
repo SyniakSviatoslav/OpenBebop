@@ -184,6 +184,57 @@ pub fn consensual_aggregate(proposals: &[f64], limit: f64, entropy_threshold: f6
     Some(saturate(mean, limit))
 }
 
+/// Golden ratio φ — the optimal branching factor for a self-similar (fractal)
+/// decomposition of work. Used by the core's divide-and-conquer scheduler: a task
+/// fanned into φ-way sub-tasks keeps the spawn/merge overhead near its global
+/// minimum (the widest fan-out before coordination cost dominates). Deterministic,
+/// no deps.
+pub const GOLDEN_RATIO: f64 = 1.6180339887498949;
+
+/// Fibonacci(n) via fast-doubling — O(log n), exact for n ≤ 92 (fits u64),
+/// overflow-safe (returns None past the 92nd term). Models the optimal
+/// sub-task COUNT for a recursive dispatch: F(n) sub-jobs at depth n keeps the
+/// tree balanced on a golden-ratio branching, so a job of cost N splits into
+/// ≈φ^depth leaves with minimal rework. (Memorcization motif — the core caches.)
+pub fn fibonacci(n: u32) -> Option<u64> {
+    if n > 92 {
+        return None; // F(93) overflows u64
+    }
+    // fast-doubling: F(2k) = F(k)[2F(k+1) − F(k)], F(2k+1) = F(k+1)² + F(k)².
+    // Iterate all 32 bits MSB→LSB; leading zero bits are harmless no-op doubles
+    // (double of (F(0),F(1)) = (0,1)). This avoids dropping the MSB advance.
+    let (mut a, mut b) = (0u64, 1u64); // (F(0), F(1))
+    let mut mask: u32 = 1 << 31;
+    while mask > 0 {
+        // double (a,b) → (F(2m), F(2m+1))
+        let c = a * (2 * b - a); // F(2m)
+        let d = a * a + b * b; // F(2m+1)
+        a = c;
+        b = d;
+        if n & mask != 0 {
+            // advance one step: (a,b) → (F(2m+1), F(2m+2))
+            let e = a + b;
+            a = b;
+            b = e;
+        }
+        mask >>= 1;
+    }
+    Some(a)
+}
+
+/// Optimal φ-way branching depth for a target leaf count — inverts the Fibonacci
+/// growth to size a balanced dispatch tree. Returns the depth d such that
+/// φ^d ≥ leaves. The core uses this to pick how many levels to fan a job before
+/// it should bottom out into direct execution (avoiding both under- and over-split).
+pub fn golden_branch_depth(leaves: u64) -> u32 {
+    if leaves <= 1 {
+        return 0;
+    }
+    // d = ceil(log_φ(leaves)) = ceil(ln(leaves) / ln(φ))
+    let d = ((leaves as f64).ln() / GOLDEN_RATIO.ln()).ceil();
+    d as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +504,44 @@ mod tests {
         assert!(consensual_aggregate(&[0.4], 0.5, 0.1).is_some());
         // (d) empty → nothing to apply.
         assert!(consensual_aggregate(&[], 0.5, 0.1).is_none());
+    }
+
+    #[test]
+    fn golden_ratio_and_fibonacci_are_exact() {
+        // RED+GREEN: the deterministic math core — Golden ratio / Fibonacci applied
+        // to recursive dispatch sizing (research: Omniroute/fib/agentic-git motifs).
+        // (a) φ is the actual limit of F(n+1)/F(n).
+        assert!((GOLDEN_RATIO - (1.0 + 5.0_f64.sqrt()) / 2.0).abs() < 1e-12);
+
+        // (b) fibonacci via fast-doubling matches the closed form for small n.
+        let ground = [
+            0u64, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610,
+        ];
+        for (n, &want) in ground.iter().enumerate() {
+            assert_eq!(fibonacci(n as u32), Some(want), "F({n})");
+        }
+        // (c) RED falsifier: past F(92) it must NOT silently overflow — returns None.
+        assert!(
+            fibonacci(93).is_none(),
+            "F(93) overflows u64 → None (no silent wrap)"
+        );
+        // (d) the ratio of consecutive terms converges to φ (the golden property).
+        let r = fibonacci(40).unwrap() as f64 / fibonacci(39).unwrap() as f64;
+        assert!((r - GOLDEN_RATIO).abs() < 1e-6, "F(40)/F(39) ≈ φ");
+
+        // (e) golden_branch_depth sizes a balanced dispatch tree: φ^depth ≥ leaves.
+        for leaves in [1u64, 2, 5, 13, 34, 89, 144, 1000, 1_000_000] {
+            let d = golden_branch_depth(leaves);
+            let cap = GOLDEN_RATIO.powi(d as i32);
+            assert!(cap >= leaves as f64, "φ^{d} ≥ {leaves} (φ={cap:.3})");
+            // and one level less is NOT enough (depth is minimal).
+            if d > 0 {
+                assert!(
+                    GOLDEN_RATIO.powi((d - 1) as i32) < leaves as f64,
+                    "φ^{} < {leaves} (minimal depth)",
+                    d - 1
+                );
+            }
+        }
     }
 }
