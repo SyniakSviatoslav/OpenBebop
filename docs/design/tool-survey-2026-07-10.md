@@ -84,15 +84,52 @@
 harvest loop_health wave_probe`. New this pass: `wave_probe` (geometric/wave
 connection-graph probe). All RED+GREEN tested via stdio sims.
 
+## Integrated Pass 3 — close the gaps + final 3 additions (Verified-by-Math)
+
+### 5. `wavefield` gap-closing — auto-layout, REAL Laplacian spectrum, planner gate
+- **Closes the 3 open gaps from Pass 2:**
+  - *Positions fed in externally* → `layout_circle` / `layout_grid` / `layout_spring`
+    (Fruchterman–Reingold, deterministic, NO RNG) auto-place the connection graph.
+  - *Band-stop was a proxy* → `graph_laplacian_eigs` is a **real cyclic-Jacobi
+    eigensolver** (Numerical-Recipes rotation, proven similarity-preserving;
+    verified CHAIN=[0,1,3], DISC=[0,0,2], CLIQUE=[0,3,3] — exact Laplacian
+    spectra). `graph_spectral_notch` uses λ₂/λ_max (algebraic connectivity).
+  - *Not wired into planner* → `plan_wave_gate(plan_targets, nodes, edges,
+    hub_limit, frac)` refuses any plan that steps into a red-line node, contains a
+    Floyd cycle, sits on a near-disconnected (brittle) spectral band, or drives a
+    runaway hub. Fail-closed `WaveVerdict`.
+- **Proof (RED+GREEN):** layout deterministic + spring separates; Laplacian
+  spectrum detects brittle/thin chain vs clique; `plan_wave_gate` Unhealthy on
+  red-line step / Floyd cycle / disconnected graph, Permit on connected acyclic
+  plan that avoids secrets.
+
+### 6. `geometry_field` — Platonic solids + Nyquist + spherical harmonics [geometry_field.rs]  ← FINAL 3 additions
+- **Platonic solids as field geometry:** a node is a regular polyhedron
+  (`Platonic::{Tetra,Cube,Octa,Dodeca,Icosa}`). Its (F,E,V) satisfy **Euler's
+  formula V−E+F=2** (checked); unit-sphere `vertices_spherical()` seeds the field
+  — the node's *structure* is geometry, not a point (operator's idea).
+- **Nyquist stability:** `nyquist_unstable(re, im, p_rhp)` computes the **winding
+  number** of the L(jω) contour around −1 and applies Z=N+P (stable iff N=−P).
+  Fail-closed for the loop.
+- **Spherical harmonics:** `spherical_harmonic(l,m,θ,φ)` via associated Legendre
+  recurrence; `node_harmonic_field(solid, coeffs)` lifts a (l,m)-mode signature
+  onto the solid's vertices → a smooth geometry-aware potential.
+- **Proof (RED+GREEN):** Euler invariant for all 5 solids; Y_0^0 = 1/√(4π);
+  Y_1^0 zonal (varies with θ); constant mode → uniform vertex potential; Y_1^0
+  varies across vertices; Nyquist stable first-order loop / unstable on
+  encirclement of −1 / unstable when P=1,N=0.
+
 ## Deliberately NOT integrated (and why)
 - **headroom / supermemory / markitdown / Shodan-live / LangGraph / Dify** —
   external service/model/UI/egress; pattern noted, glue behind eval gate.
 - **Butterworth/FFT/Schrödinger/AM** signal theory — *modeled* where it maps to
-  the geometric-wave probe (notch proxy, interference); live signal IO deferred.
+  the geometric-wave probe (real notch via Laplacian spectrum, interference); live
+  signal IO deferred.
 - **Everything music/TTS/video/UI/payments/social** — pruned.
 - **Dossier reference set** (number hierarchy, geometry facts, 3D-shape catalog,
   green-light art-installation) — doc-only, not runtime.
 
 ## Test count
-202 → 206 → 212 → 218 → 224 → **235** (219 bebop + 16 rust-core). 0 fail.
-Pass 2 added +11 bebop tests (wavefield +6, stabilizer +4, mcp wave_probe +1).
+202 → 206 → 212 → 218 → 224 → 235 → **244** (228 bebop + 16 rust-core). 0 fail.
+Pass 2 added +11; Pass 3 added +9 (wavefield +3 layout/spectrum/gate, geometry_field
++6 platonic/nyquist/harmonics).

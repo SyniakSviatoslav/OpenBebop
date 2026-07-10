@@ -21,6 +21,7 @@ pub mod doc_claims;
 pub mod enrich; // dossier-derived: trace replay, Pareto, opt-algos, SEAL analog, design-thinking
 pub mod execution; // prompt-cache ledger, model cascade, batch splitter (verified-speed primitives)
 pub mod field; // re-exports the rust-core field contract (native target)
+pub mod geometry_field; // geometric + wave sim of the connection graph (geometry, waves, cycles, divergence)
 pub mod governor;
 pub mod knowledge;
 pub mod launch;
@@ -48,7 +49,7 @@ pub mod stress; // 3-level stress benchmark (injection / double-bind / telemetry
 pub mod svc; // space-vector control smoothing (αβ trajectory, damping)
 pub mod tui; // the ratatui TUI: red-spaceship launch + interactive frame
 pub mod vault;
-pub mod wavefield; // geometric + wave sim of the connection graph (geometry, waves, cycles, divergence)
+pub mod wavefield;
 pub mod wiring; // 3-layer runtime: field sim ↔ L5 stabilizer ↔ living memory ↔ project gating
 pub mod zenoh; // deterministic mesh transport (local broker; Portkey-swappable)
 pub mod zkvm; // deterministic verifiable state-transition boundary (commit/verify)

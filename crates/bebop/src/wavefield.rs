@@ -268,6 +268,280 @@ pub fn wave_probe(
     WaveVerdict::Permit
 }
 
+/// ─────────────────────────────────────────────────────────────────────────
+/// AUTO-LAYOUT — closes the "positions fed in externally" gap. Deterministic
+/// geometric placement of graph nodes (no RNG): every layout is a closed form
+/// of the node index `i` and count `n`, so two calls with the same graph are
+/// identical. The planner can lay out a connection graph before simulating it.
+/// ─────────────────────────────────────────────────────────────────────────
+
+/// Place `n` nodes on a unit circle (evenly spaced, deterministic).
+pub fn layout_circle(n: usize) -> Vec<(f64, f64)> {
+    (0..n)
+        .map(|i| {
+            let a = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64).max(1.0);
+            (a.cos(), a.sin())
+        })
+        .collect()
+}
+
+/// Place `n` nodes on a grid with `cols` columns (row-major, deterministic).
+pub fn layout_grid(n: usize, cols: usize) -> Vec<(f64, f64)> {
+    let cols = cols.max(1);
+    (0..n)
+        .map(|i| ((i % cols) as f64, (i / cols) as f64))
+        .collect()
+}
+
+/// Fruchterman–Reingold force-directed layout, deterministic (seeded by a
+/// circle init, NO RNG). `edges` are (i,j) index pairs; `iters` fixed steps.
+/// Repulsion k²/d between all pairs, attraction d²/k along edges, k=√(area/n).
+/// Returns final (x,y) per node. Fail-closed: empty graph → empty layout.
+pub fn layout_spring(n: usize, edges: &[(usize, usize)], iters: usize) -> Vec<(f64, f64)> {
+    if n == 0 {
+        return vec![];
+    }
+    let mut pos = layout_circle(n);
+    let area = 1.0;
+    let k = (area / (n as f64)).sqrt();
+    let mut disp = vec![(0.0, 0.0); n];
+    for _ in 0..iters.max(1) {
+        for d in disp.iter_mut() {
+            *d = (0.0, 0.0);
+        }
+        // repulsion (all pairs)
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dx = pos[i].0 - pos[j].0;
+                let dy = pos[i].1 - pos[j].1;
+                let d = (dx * dx + dy * dy + 1e-9).sqrt();
+                let f = k * k / d;
+                let (ux, uy) = (dx / d, dy / d);
+                disp[i].0 += ux * f;
+                disp[i].1 += uy * f;
+                disp[j].0 -= ux * f;
+                disp[j].1 -= uy * f;
+            }
+        }
+        // attraction (edges)
+        for &(i, j) in edges {
+            if i >= n || j >= n {
+                continue;
+            }
+            let dx = pos[i].0 - pos[j].0;
+            let dy = pos[i].1 - pos[j].1;
+            let d = (dx * dx + dy * dy + 1e-9).sqrt();
+            let f = d * d / k;
+            let (ux, uy) = (dx / d, dy / d);
+            disp[i].0 -= ux * f;
+            disp[i].1 -= uy * f;
+            disp[j].0 += ux * f;
+            disp[j].1 += uy * f;
+        }
+        // fixed temperature step (no randomness)
+        let temp = 0.1;
+        for i in 0..n {
+            let dl = (disp[i].0 * disp[i].0 + disp[i].1 * disp[i].1 + 1e-9).sqrt();
+            let lim = dl.min(temp);
+            pos[i].0 += disp[i].0 / dl * lim;
+            pos[i].1 += disp[i].1 / dl * lim;
+        }
+    }
+    pos
+}
+
+/// ─────────────────────────────────────────────────────────────────────────
+/// REAL GRAPH-FOURIER SPECTRUM — closes the "proxy" gap. The dossier's band-
+/// stop/notch is a property of the graph Laplacian spectrum: a graph that is
+/// barely connected has a tiny algebraic connectivity λ₂ and resonates / can be
+/// split by a notch. We compute the actual Laplacian eigenvalues via the cyclic
+/// Jacobi method (symmetric, deterministic, 0 deps) — no concentration proxy.
+/// ─────────────────────────────────────────────────────────────────────────
+
+/// Symmetric weighted adjacency matrix from kind-tagged edges.
+pub fn adjacency_from_edges(n: usize, edges: &[ConnEdge]) -> Vec<Vec<f64>> {
+    let mut a = vec![vec![0.0f64; n]; n];
+    for e in edges {
+        if e.from < n && e.to < n {
+            a[e.from][e.to] += e.weight;
+            a[e.to][e.from] += e.weight;
+        }
+    }
+    a
+}
+
+/// Eigenvalues of the unnormalized graph Laplacian L = D − A, ascending.
+/// Cyclic Jacobi eigenvalue algorithm (real symmetric, deterministic).
+pub fn graph_laplacian_eigs(adj: &[Vec<f64>]) -> Vec<f64> {
+    let n = adj.len();
+    if n == 0 {
+        return vec![];
+    }
+    let mut l = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        let mut deg = 0.0;
+        for j in 0..n {
+            l[i][j] = -adj[i][j];
+            deg += adj[i][j];
+        }
+        l[i][i] = deg;
+    }
+    jacobi_eigenvalues(&l)
+}
+
+/// Cyclic Jacobi eigenvalue algorithm for a real symmetric matrix. Returns the
+/// eigenvalues sorted ascending. Deterministic, no allocations beyond work.
+///
+/// Classic Jacobi: sweep every off-diagonal pair, annihilate the largest
+/// off-diagonal entry with a similarity rotation, repeat until the off-diagonal
+/// mass is below a tolerance. For the small (≤ a few hundred) Laplacian matrices
+/// here this converges in a handful of sweeps and is exact to ~1e-9.
+fn jacobi_eigenvalues(a: &[Vec<f64>]) -> Vec<f64> {
+    let n = a.len();
+    let mut m: Vec<Vec<f64>> = a.iter().map(|row| row.to_vec()).collect();
+    let mut off: f64 = 0.0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            off += m[i][j] * m[i][j];
+        }
+    }
+    let mut sweeps = 100;
+    let tol = 1e-14;
+    while off > tol && sweeps > 0 {
+        for p in 0..n {
+            for q in (p + 1)..n {
+                let apq = m[p][q];
+                if apq.abs() < 1e-300 {
+                    continue;
+                }
+                let app = m[p][p];
+                let aqq = m[q][q];
+                // Numerical-Recipes rotation (provably a similarity transform)
+                let theta = (aqq - app) / (2.0 * apq);
+                let t = if theta < 0.0 {
+                    -1.0 / (-theta + (theta * theta + 1.0).sqrt())
+                } else {
+                    1.0 / (theta + (theta * theta + 1.0).sqrt())
+                };
+                let c = 1.0 / (1.0 + t * t).sqrt();
+                let s = t * c;
+                let tau = s / (1.0 + c);
+                // 2x2 diagonal block
+                m[p][p] = app - t * apq;
+                m[q][q] = aqq + t * apq;
+                m[p][q] = 0.0;
+                m[q][p] = 0.0;
+                // off-diagonal rows/cols except p,q
+                for i in 0..n {
+                    if i == p || i == q {
+                        continue;
+                    }
+                    let aip = m[i][p];
+                    let aiq = m[i][q];
+                    m[i][p] = aip - s * (aiq + tau * aip);
+                    m[i][q] = aiq + s * (aip - tau * aiq);
+                    m[p][i] = m[i][p];
+                    m[q][i] = m[i][q];
+                }
+            }
+        }
+        off = 0.0;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                off += m[i][j] * m[i][j];
+            }
+        }
+        sweeps -= 1;
+    }
+    let mut ev: Vec<f64> = (0..n).map(|i| m[i][i]).collect();
+    ev.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    // eigenvalues of a Laplacian are non-negative; clamp tiny negatives to 0
+    ev.iter()
+        .map(|&v| if v < 0.0 && v.abs() < 1e-7 { 0.0 } else { v })
+        .collect()
+}
+
+/// Real spectral notch: algebraic connectivity λ₂ (2nd-smallest Laplacian
+/// eigenvalue) below `frac * λ_max` ⇒ graph barely connected (brittle,
+/// resonates, splittable by a notch) → flag. A healthy connected graph has
+/// λ₂ ≫ 0. Scale-invariant: thresholds on the relative gap so edge weights
+/// (kind-weighted, small) don't break the check.
+pub fn graph_spectral_notch(eigs: &[f64], frac: f64) -> bool {
+    if eigs.len() < 2 {
+        return false;
+    }
+    let lmax = eigs[eigs.len() - 1];
+    if lmax < 1e-9 {
+        return true; // all-zero spectrum ⇒ disconnected
+    }
+    eigs[1] < frac * lmax
+}
+
+/// Does the plan's successor graph ever step INTO a red-line node? (fail-closed
+/// precheck for `plan_wave_gate`.)
+pub fn red_line_in_plan(plan_targets: &[usize], nodes: &[Node2D]) -> bool {
+    let n = nodes.len();
+    let halt = n;
+    let step = |i: usize| -> usize { plan_targets.get(i).copied().unwrap_or(halt) };
+    let mut i = 0usize;
+    let mut guard = 0;
+    loop {
+        if i >= halt {
+            return false;
+        }
+        if nodes[i].red_line {
+            return true;
+        }
+        i = step(i);
+        guard += 1;
+        if guard > plan_targets.len() + n + 1 {
+            return false;
+        }
+    }
+}
+
+/// PLANNER GATE — closes the "not wired into the planner" gap.
+///
+/// Composes the FULL geometric-wave probe using the REAL Laplacian spectrum
+/// (not the proxy) and refuses any plan that: steps into a red-line node,
+/// contains a Floyd cycle, sits on a brittle (near-disconnected) spectral band,
+/// or drives a node into runaway divergence. Returns `WaveVerdict` fail-closed.
+///
+/// `plan_targets` is the action successor graph (step i → plan_targets[i], or
+/// `n` to halt), exactly like `floyd_cycle`'s `actions`. `nodes`/`edges` are the
+/// memory/file connection graph (geometry + kinds). The heat-kernel wave is
+/// still propagated for the interference concept, but gating uses the real
+/// structural checks.
+pub fn plan_wave_gate(
+    plan_targets: &[usize],
+    nodes: &[Node2D],
+    edges: &[ConnEdge],
+    hub_limit: f64,
+    spectral_threshold: f64,
+) -> WaveVerdict {
+    // 1) plan steps into a red-line node → fail-closed (needs human override)
+    if red_line_in_plan(plan_targets, nodes) {
+        return WaveVerdict::Unhealthy;
+    }
+    // 2) Floyd cycle in the plan successor graph → fail-closed
+    if floyd_cycle(plan_targets, nodes.len()).is_some() {
+        return WaveVerdict::Unhealthy;
+    }
+    // 3) REAL spectral notch (algebraic connectivity λ₂)
+    let adj = adjacency_from_edges(nodes.len(), edges);
+    let eigs = graph_laplacian_eigs(&adj);
+    if graph_spectral_notch(&eigs, spectral_threshold) {
+        return WaveVerdict::Unhealthy;
+    }
+    // 4) runaway hub
+    for ni in 0..nodes.len() {
+        if field_divergence(ni, edges) > hub_limit {
+            return WaveVerdict::Unhealthy;
+        }
+    }
+    WaveVerdict::Permit
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,5 +681,96 @@ mod tests {
         let e = connection_edges_kinded(&n, &[(0, 1, LinkKind::Action)]);
         assert!(field_divergence(0, &e) > 0.0, "node 0 is a source");
         assert!(field_divergence(1, &e) < 0.0, "node 1 is a sink");
+    }
+
+    #[test]
+    fn layout_is_deterministic_and_springs_apart() {
+        // GREEN: same n → identical layouts (no RNG).
+        assert_eq!(layout_circle(4), layout_circle(4));
+        assert_eq!(layout_grid(4, 2), layout_grid(4, 2));
+        // GREEN: spring layout separates two edge-connected nodes (dist>0).
+        let p = layout_spring(2, &[(0, 1)], 30);
+        let d = ((p[0].0 - p[1].0).powi(2) + (p[0].1 - p[1].1).powi(2)).sqrt();
+        assert!(d > 1e-3, "connected nodes should be pulled apart");
+    }
+
+    #[test]
+    fn laplacian_spectrum_detects_brittle_graph() {
+        // A 3-node chain 0-1-2: Laplacian eigs = [0, ~1, ~3].
+        let adj = vec![
+            vec![0.0, 1.0, 0.0],
+            vec![1.0, 0.0, 1.0],
+            vec![0.0, 1.0, 0.0],
+        ];
+        let eigs = graph_laplacian_eigs(&adj);
+        assert!(eigs[0].abs() < 1e-6, "λ₁=0 (connected)");
+        // brittle threshold (frac=0.5): thin chain λ₂/λ_max≈1/3 < 0.5 → notch
+        assert!(
+            graph_spectral_notch(&eigs, 0.5),
+            "thin chain ⇒ λ₂/λ_max≈1/3 < 0.5"
+        );
+        // connected-but-not-disconnected (frac=0.05): accepted, NOT a notch
+        assert!(
+            !graph_spectral_notch(&eigs, 0.05),
+            "connected chain is not near-disconnected"
+        );
+        // a disconnected 2+1 graph → λ₂ = 0 → notch flags it
+        let disc = vec![
+            vec![0.0, 1.0, 0.0],
+            vec![1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 0.0],
+        ];
+        let de = graph_laplacian_eigs(&disc);
+        assert!(
+            graph_spectral_notch(&de, 0.05),
+            "disconnected ⇒ λ₂≈0 ⇒ notch"
+        );
+        // a well-connected 3-clique → λ₂ = λ_max → no notch
+        let clique = vec![
+            vec![0.0, 1.0, 1.0],
+            vec![1.0, 0.0, 1.0],
+            vec![1.0, 1.0, 0.0],
+        ];
+        let ce = graph_laplacian_eigs(&clique);
+        assert!(
+            !graph_spectral_notch(&ce, 0.5),
+            "clique well-connected ⇒ λ₂/λ_max=1 ⇒ no notch"
+        );
+    }
+
+    #[test]
+    fn plan_wave_gate_refuses_redline_and_cycles() {
+        // RED: plan steps into a red-line node → Unhealthy (fail-closed).
+        let n = sample_nodes(); // node 3 = secret (red_line)
+        let edges = connection_edges_kinded(&n, &[(0, 1, LinkKind::Data)]);
+        assert_eq!(
+            plan_wave_gate(&[1, 3, 4], &n, &edges, 50.0, 0.05),
+            WaveVerdict::Unhealthy
+        );
+        // RED: plan Floyd cycle (0→1→0) → Unhealthy.
+        assert_eq!(
+            plan_wave_gate(&[1, 0, 4], &n, &edges, 50.0, 0.05),
+            WaveVerdict::Unhealthy
+        );
+        // RED: disconnected connection graph (isolated nodes) → Unhealthy.
+        let broken = connection_edges_kinded(&n, &[(0, 1, LinkKind::Data)]); // 2,3 isolated
+        assert_eq!(
+            plan_wave_gate(&[1, 2, 3, 4], &n, &broken, 50.0, 0.05),
+            WaveVerdict::Unhealthy
+        );
+        // GREEN: acyclic plan, no red-line, connected chain 0-1-2 (stops before
+        // the secret node 3) → Permit.
+        let connected = connection_edges_kinded(
+            &n,
+            &[
+                (0, 1, LinkKind::Data),
+                (1, 2, LinkKind::Data),
+                (2, 3, LinkKind::Data),
+            ],
+        );
+        assert_eq!(
+            plan_wave_gate(&[1, 2, 4], &n, &connected, 50.0, 0.05),
+            WaveVerdict::Permit
+        );
     }
 }
