@@ -385,6 +385,75 @@ impl PatternCache {
     }
 }
 
+/// ─────────────────────────────────────────────────────────────────────────
+/// §1 SLIDING MODE CONTROL (SMC) — robust nonlinear control, reverse-engineered
+/// from the dossier. A "sliding surface" s(x)=0; the control law u = u_eq + u_sw
+/// drives the error onto the surface (reaching condition s·ṡ < 0) and holds it.
+/// We model the SURFACE + REACHING condition as a falsifiable gate: if s·ṡ ≥ 0
+/// the system is NOT reaching the surface → unstable (fail-closed: refuse the
+/// adaptive move). Deterministic, no RNG.
+/// ─────────────────────────────────────────────────────────────────────────
+
+/// Sliding surface value s(x) = c·(x − x_ref) for scalar error (c>0 gain).
+pub fn sliding_surface(x: f64, x_ref: f64, c: f64) -> f64 {
+    c * (x - x_ref)
+}
+
+/// SMC reaching condition: returns true iff s·ṡ < 0 (the error is being driven
+/// ONTO the surface — stable sliding). False ⇒ not reaching ⇒ refuse the move.
+pub fn smc_reaching(s: f64, s_dot: f64) -> bool {
+    s * s_dot < 0.0
+}
+
+/// SMC control law u = u_eq + u_sw, with discontinuous switching u_sw = −K·sgn(s)
+/// and a boundary-layer smoothing `phi` (chattering mitigation from the dossier:
+/// inside |s|<phi use a linear ramp instead of sgn, else sign). Deterministic.
+pub fn smc_control(s: f64, u_eq: f64, k: f64, phi: f64) -> f64 {
+    let sw = if phi > 0.0 && s.abs() < phi {
+        // boundary layer: continuous ramp (−K·s/phi) to kill chattering
+        -k * (s / phi)
+    } else {
+        -k * s.signum()
+    };
+    u_eq + sw
+}
+
+/// ─────────────────────────────────────────────────────────────────────────
+/// §1 ROOT LOCUS + LEAD-LAG — closed-loop pole movement as gain K varies.
+/// Reverse-engineered from the dossier. We compute the closed-loop pole of a
+/// 1st/2nd-order plant 1+K·G(s)=0 at gain K and report its stability:
+/// a pole in the right-half plane (Re>0) ⇒ UNSTABLE. Deterministic.
+/// ─────────────────────────────────────────────────────────────────────────
+
+/// Closed-loop pole(s) of a standard 2nd-order plant G(s)=ωn²/(s²+2ζωn·s) under
+/// gain K: solve s² + 2ζωn·s + K·ωn² = 0. Returns the two poles (complex allowed).
+/// Stability: unstable if either pole has Re > 0.
+pub fn root_locus_poles(k: f64, zeta: f64, wn: f64) -> (f64, f64, bool) {
+    // s² + (2ζωn) s + K ωn² = 0  →  a=1, b=2ζωn, c=Kωn²
+    let b = 2.0 * zeta * wn;
+    let c = k * wn * wn;
+    let disc = b * b - 4.0 * c;
+    let real = -b / 2.0; // real part of both poles (axis of symmetry)
+    let stable = real < 0.0;
+    if disc >= 0.0 {
+        // real poles
+        ((-b + disc.sqrt()) / 2.0, (-b - disc.sqrt()) / 2.0, stable)
+    } else {
+        // complex conjugate poles; Re = -b/2 for both
+        (real, real, stable)
+    }
+}
+
+/// Lead compensator phase lead (radians): a lead network adds phase in a band,
+/// improving transient response. φ_max = asin((α−1)/(α+1)) at ω = ωn/√α.
+/// Returns the max phase lead given α>1. Deterministic.
+pub fn lead_phase_max(alpha: f64) -> f64 {
+    if alpha <= 1.0 {
+        return 0.0;
+    }
+    ((alpha - 1.0) / (alpha + 1.0)).asin()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,5 +762,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn smc_reaching_gate_refuses_unstable() {
+        // RED: error moving AWAY from surface (s·ṡ > 0) → not reaching → refuse.
+        assert!(!smc_reaching(1.0, 1.0), "positive product ⇒ not reaching");
+        // GREEN: error being driven onto surface (s·ṡ < 0) → reaching → ok.
+        assert!(smc_reaching(1.0, -1.0), "opposite signs ⇒ reaching");
+        // surface value is proportional to error
+        assert!((sliding_surface(2.0, 1.0, 2.0) - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn smc_control_chattering_boundary() {
+        // GREEN: inside boundary layer, switching is a continuous ramp (no sign flip),
+        // so the control stays closer to u_eq (gentler) than the discontinuous outer case.
+        let inner = smc_control(0.01, 0.5, 2.0, 0.1);
+        let outer = smc_control(0.5, 0.5, 2.0, 0.1);
+        assert!(
+            (0.5 - inner).abs() < (0.5 - outer).abs(),
+            "boundary-layer control should deviate less from equilibrium"
+        );
+        assert!(inner < 0.5 && outer < 0.5, "both pull toward equilibrium");
+    }
+
+    #[test]
+    fn root_locus_stability_tracks_gain() {
+        // GREEN: well-damped plant (ζ=0.7) stays stable for any K>0 (Re<0).
+        let (_p1, _p2, stable) = root_locus_poles(5.0, 0.7, 1.0);
+        assert!(stable, "damped 2nd-order must be stable");
+        // RED: negative damping (ζ<0) → pole in RHP → unstable.
+        let (_p1, _p2, unstable) = root_locus_poles(5.0, -0.3, 1.0);
+        assert!(!unstable, "negative damping ⇒ unstable (RHP pole)");
+    }
+
+    #[test]
+    fn lead_compensator_phase_positive() {
+        // GREEN: α>1 yields a positive phase lead; α≤1 yields none.
+        let phi = lead_phase_max(4.0);
+        assert!(
+            phi > 0.0 && phi < std::f64::consts::FRAC_PI_2,
+            "phase lead in (0,π/2)"
+        );
+        assert_eq!(lead_phase_max(1.0), 0.0);
+        assert_eq!(lead_phase_max(0.5), 0.0);
     }
 }

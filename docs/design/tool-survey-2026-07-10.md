@@ -1,74 +1,98 @@
 # Tool Survey & Integration — 2026-07-10
 
 > Reverse-engineered from a 150+ item operator dump (offsec recon, agent
-> orchestration, eval/guardrails, math/control theory, plus a large tail of
-> noise). Policy: **research → reverse-engineer → apply the CORE PATTERN
-> natively (std-only, deterministic, falsifiable) → prune what's not needed.**
-> Live external glue (APIs, model weights, binaries) stays OUTSIDE the
-> deterministic core behind an eval gate — sovereign-core stays offline.
+> orchestration, eval/guardrails, math/control theory + a geometry/waves
+> dossier, plus a large tail of noise). Policy: **research → reverse-engineer →
+> apply the CORE PATTERN natively (std-only, deterministic, falsifiable) → prune
+> what's not needed.** Live external glue (APIs, model weights, binaries) stays
+> OUTSIDE the deterministic core behind an eval gate — sovereign-core stays
+> offline.
 
 ## Verdict buckets
 
-- **INTEGRATE (done this pass):** OSINT naming enumeration (theHarvester/maigret/
-  spiderfoot → `naming_osint`), field/L5 control-loop health (Kalman +
-  limit-cycle → `field_kalman`/`limit_cycle_unstable`/`loop_health`).
+- **INTEGRATE (done, 2 passes):**
+  - Pass 1: OSINT naming enumeration (`naming_osint`), control-loop health
+    (Kalman + limit-cycle → `loop_health`).
+  - Pass 2 (this update): the math/geometry/waves dossier → `wavefield` (geometry
+    + connection-graph waves + Floyd cycle + divergence + band-stop) and
+    `stabilizer` SMC/root-locus/lead-lag control laws.
 - **DEFER (needs external service/model/UI, documented not blind-integrated):**
-  headroom (token-compression proxy), supermemory (vector memory layer),
-  markitdown (doc→md), webhackersweapons (tool index), DeepEval/garak (eval/red-
-  team), LangGraph/Langflow (orchestration), Dify/n8n (agent UI), Crawl4ai/
-  markitdown (ingestion), Shodan/Maltego/Spiderfoot *live* (need API keys),
-  RAG/self-RAG, Temporal (durable exec), OpenCanary (decoy host), Pi-hole,
-  HelixDB (graph DB — needs ground-truth eval before adoption).
-- **NOISE / NOT NEEDED (pruned):** Nvidia/SkillSpector, Ideogram, music/TTS
-  (Coqui/Artlist/VibeVoice/LuxTTS/KittenTTS), video (Remotion/ComfyUI/
-  videouse), UI kits (shadcn/cult-ui/referor), payments (Priceghost/stripe),
-  social/SEO/translation, crypto/NFT, generic "awesome lists", agent-chat
-  front-ends.
+  headroom, supermemory, markitdown, webhackersweapons, DeepEval/garak,
+  LangGraph/Langflow, Dify/n8n, Crawl4ai, Shodan/Maltego/Spiderfoot *live*,
+  RAG/self-RAG, Temporal, OpenCanary, Pi-hole, HelixDB (eval gate).
+  - New from batch-2 dossier that is *modeled natively, live glue deferred*:
+    Butterworth band-stop / notch (graph-Fourier proxy in `wavefield`), complex
+    Fourier series, Schrödinger continuity, divergence theorem, AM/oversampling
+    (signal theory) — these inform the wave math; real signal IO deferred.
+- **NOISE / NOT NEEDED (pruned):** Nvidia/SkillSpector, Ideogram, music/TTS,
+  video, UI kits, payments, social/SEO/translation, crypto/NFT, awesome-lists,
+  agent-chat front-ends, and the dossier's pure reference set (numbers/geometry
+  facts, 3D-shape catalog, immersive-light-installation art) — useful as docs,
+  not as runtime code.
 
-## Integrated this pass (Verified-by-Math)
+## Integrated Pass 1 (Verified-by-Math)
 
 ### 1. `naming_osint` — OSINT naming enumeration [research_patterns.rs]
-- **Reverse-engineered from:** theHarvester, maigret, spiderfoot. Core pattern =
-  enumerate a handle across N sources and *correlate* hits into one identity.
-- **Native impl:** `naming_osint(handles, sources) -> HashMap<handle, Vec<source>>`.
-  Deterministic, network-OFF. Fail-closed: empty input → empty map (never
-  invents an identity).
-- **Proof:** `mcp_harvest_correlates_handles` RED+GREEN (correlates 2 handles
-  across 3 sources; empty → REFUSED). Live MCP sim: `HARVEST: 2 handles
-  correlated: neo → github,gitlab`.
+- **From:** theHarvester / maigret / spiderfoot. Pattern = enumerate a handle
+  across N sources and correlate hits into one identity.
+- **Impl:** `naming_osint(handles, sources) -> HashMap<handle, Vec<source>>`.
+  Deterministic, network-OFF. Fail-closed: empty input → empty map.
+- **Proof:** `mcp_harvest_correlates_handles` RED+GREEN. Live: `HARVEST: 2
+  handles correlated`.
 
 ### 2. `field_kalman` + `limit_cycle_unstable` + `loop_health` — control-loop health [field.rs]
-- **Reverse-engineered from:** the control-theory dossier (Kalman filter,
-  limit cycles, Lyapunov/adaptive control). A control loop that orbits instead
-  of settling is a *limit cycle*; a drifting estimate needs a *Kalman* filter.
-- **Native impl:**
-  - `field_kalman(z, q, r)` — scalar KF, gain `k = p/(p+r)`, deterministic.
-  - `limit_cycle_unstable(s, min_flips, amp_band)` — bounded sign-flip detector.
-  - `loop_health(s, q, r, drift, min_flips, amp_band) -> FieldVerdict` — fail-
-    closed `Unhealthy` on oscillation OR drift; `Permit` only when stable+in-band.
-- **Proof:** `loop_health_fails_closed_on_oscillation_and_drift` RED+GREEN
-  (oscillation + drift → Unhealthy; stable → Permit; empty → Unhealthy). Live
-  MCP sim: `LOOP_HEALTH: UNHEALTHY` on `[1,-1,1,-1,1,-1]`.
+- **From:** control-theory dossier (Kalman, limit cycles, Lyapunov/adaptive).
+- **Impl:** scalar KF (`field_kalman`), bounded sign-flip (`limit_cycle_unstable`),
+  `loop_health(...) -> FieldVerdict` fail-closed on oscillation OR drift.
+- **Proof:** `loop_health_fails_closed_on_oscillation_and_drift` RED+GREEN. Live:
+  `LOOP_HEALTH: UNHEALTHY` on `[1,-1,1,-1,...]`.
 
-### MCP surface (now 12 tools)
+## Integrated Pass 2 — math / geometry / waves dossier (Verified-by-Math)
+
+### 3. `wavefield` — geometry + wave sim of the CONNECTION GRAPH [wavefield.rs]  ← the operator's new idea, realized
+- **Idea (corrected/enriched):** represent NOT just memory/files but their
+  *connections* — actions, methods, relations — as a weighted geometric graph in
+  2-D, then simulate WAVES over it and read off structure (cycles, runaway hubs,
+  resonances). Corrected to: (a) distances drive coupling `w = kind/d`; (b) edge
+  *kind* (Action/Method/Relation/Data) scales danger so an action loop dominates a
+  data loop; (c) waves reuse the existing coherence heat-kernel (no new wave
+  engine); (d) three independent fail-closed gates.
+- **Impl:**
+  - `Node2D{id,x,y,red_line}` — geometry position + red-line tag.
+  - `LinkKind` (Action/Method/Relation/Data) with `weight()` semantics.
+  - `connection_edges_kinded` — `w = kind.weight() / dist`.
+  - `propagate_wave` — reuse `coherence::propagate` heat-kernel over the graph.
+  - `graph_fourier_notch` — spectral-concentration (Butterworth/notch) proxy.
+  - `floyd_cycle(actions,n)` — successor-pointer Floyd (dossier) → plan loop.
+  - `field_divergence` — net outward flux per node (divergence theorem proxy).
+  - `wave_probe(...) -> WaveVerdict` — composes all gates, fail-closed.
+- **Proof (RED+GREEN):** closer-couples-stronger, action>data, Floyd detects
+  loop / acyclic None, `wave_probe` Unhealthy on red-line cycle + on runaway hub,
+  Permit on safe graph, deterministic field, divergence source/sink. Live MCP:
+  `WAVE_PROBE: OK` (safe) and `WAVE_PROBE: UNHEALTHY` (red-line action cycle).
+
+### 4. `stabilizer` SMC + root-locus + lead-lag [stabilizer.rs]
+- **From:** dossier §1 (Sliding Mode Control, Root Locus, Lead-Lag).
+- **Impl:** `sliding_surface`, `smc_reaching` (s·ṡ<0 gate), `smc_control`
+  (boundary-layer chatter mitigation), `root_locus_poles(k,ζ,ωn)` (RHP ⇒
+  unstable), `lead_phase_max(α)`.
+- **Proof:** `smc_reaching_gate_refuses_unstable`, `smc_control_chattering_boundary`,
+  `root_locus_stability_tracks_gain`, `lead_compensator_phase_positive`.
+
+### MCP surface (now 14 tools)
 `dispatch recall outfit scan plan audit field boundary wire sandbox recon
-harvest loop_health`. New: `harvest` (OSINT naming), `loop_health` (control-loop
-health). Both RED+GREEN tested via stdio sims.
+harvest loop_health wave_probe`. New this pass: `wave_probe` (geometric/wave
+connection-graph probe). All RED+GREEN tested via stdio sims.
 
 ## Deliberately NOT integrated (and why)
-
-- **headroom / supermemory / markitdown** — valuable but need an external
-  service/model or a network boundary that contradicts sovereign-core offline
-  doctrine. Their *pattern* (token compression, durable memory, doc→md) is noted;
-  glue lives behind an eval gate, not in the deterministic core.
-- **Shodan/Maltego/Spiderfoot *live* recon** — require API keys + egress. The
-  deterministic core models the *correlation logic* (`naming_osint`, `recon`);
-  live source glue must be gated by `TargetScope` + eval before use.
-- **LangGraph/Langflow/Dify/n8n** — orchestration/UIs; bebop already has a
-  native `wire` 3-layer runtime (field ↔ living memory ↔ project). Re-importing
-  a framework would bloat, not help.
-- **Everything music/TTS/video/UI/payments/social** — orthogonal to bebop's
-  deterministic security-agent mission; pruned.
+- **headroom / supermemory / markitdown / Shodan-live / LangGraph / Dify** —
+  external service/model/UI/egress; pattern noted, glue behind eval gate.
+- **Butterworth/FFT/Schrödinger/AM** signal theory — *modeled* where it maps to
+  the geometric-wave probe (notch proxy, interference); live signal IO deferred.
+- **Everything music/TTS/video/UI/payments/social** — pruned.
+- **Dossier reference set** (number hierarchy, geometry facts, 3D-shape catalog,
+  green-light art-installation) — doc-only, not runtime.
 
 ## Test count
-202 → 206 → 212 → 218 → **224** (208 bebop + 16 rust-core). 0 fail.
+202 → 206 → 212 → 218 → 224 → **235** (219 bebop + 16 rust-core). 0 fail.
+Pass 2 added +11 bebop tests (wavefield +6, stabilizer +4, mcp wave_probe +1).

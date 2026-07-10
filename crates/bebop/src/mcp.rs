@@ -110,6 +110,12 @@ pub fn tools() -> Vec<McpTool> {
                 "Field/L5 control-loop health (Kalman + limit-cycle). Smooths a noisy field series, detects bounded oscillation (limit cycle) and drift. Unhealthy → fail-closed (drop to ground state). No RNG.",
             input_schema: r#"{"type":"object","properties":{"series":{"type":"array","items":{"type":"number"}},"q":{"type":"number"},"r":{"type":"number"},"drift":{"type":"number"},"min_flips":{"type":"integer"},"amp_band":{"type":"number"}},"required":["series"]}"#,
         },
+        McpTool {
+            name: "wave_probe",
+            description:
+                "Geometric + wave probe of the connection graph (memory/files/actions/relations). Positions nodes in 2-D, weights edges by distance × link-kind, propagates a heat-kernel wave, detects action cycles (Floyd) + runaway hubs (divergence) + resonant notch. Unhealthy → fail-closed.",
+            input_schema: r#"{"type":"object","properties":{"nodes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"red_line":{"type":"boolean"}}}},"edges":{"type":"array","items":{"type":"object","properties":{"from":{"type":"integer"},"to":{"type":"integer"},"kind":{"type":"string"},"weight":{"type":"number"}}}},"actions":{"type":"array","items":{"type":"integer"}},"red_line_cycle":{"type":"boolean"}},"required":["nodes","edges","actions"]}"#,
+        },
     ]
 }
 
@@ -711,6 +717,84 @@ pub fn call_tool(
                 verdict, smoothed
             ))
         }
+        "wave_probe" => {
+            // Geometric + wave probe of the connection graph. Fail-closed: the
+            // verdict maps Unhealthy→refused. Nodes/edges are parsed from JSON.
+            let nodes: Vec<crate::wavefield::Node2D> = args
+                .get("nodes")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|o| {
+                            let id = o.get("id")?.as_str()?.to_string();
+                            let x = o.get("x")?.as_f64()?;
+                            let y = o.get("y")?.as_f64()?;
+                            let red = o.get("red_line").and_then(|v| v.as_bool()).unwrap_or(false);
+                            Some(crate::wavefield::Node2D {
+                                id,
+                                x,
+                                y,
+                                red_line: red,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let edges: Vec<crate::wavefield::ConnEdge> = args
+                .get("edges")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|o| {
+                            let from = o.get("from")?.as_u64()? as usize;
+                            let to = o.get("to")?.as_u64()? as usize;
+                            let kind = match o.get("kind")?.as_str()? {
+                                "Action" => crate::wavefield::LinkKind::Action,
+                                "Method" => crate::wavefield::LinkKind::Method,
+                                "Relation" => crate::wavefield::LinkKind::Relation,
+                                _ => crate::wavefield::LinkKind::Data,
+                            };
+                            let weight = o.get("weight").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                            Some(crate::wavefield::ConnEdge {
+                                from,
+                                to,
+                                kind,
+                                weight,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let actions: Vec<usize> = args
+                .get("actions")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_u64().map(|u| u as usize))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let red_cycle = args
+                .get("red_line_cycle")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if nodes.is_empty() {
+                return Ok("WAVE_PROBE: REFUSED — empty graph (fail-closed)".to_string());
+            }
+            let verdict = crate::wavefield::wave_probe(
+                &nodes, &edges, &actions, red_cycle, 10.0, 0.9, 0, 1.0, 0.5, 1e-3,
+            );
+            let status = if verdict == crate::wavefield::WaveVerdict::Unhealthy {
+                "UNHEALTHY"
+            } else {
+                "OK"
+            };
+            Ok(format!(
+                "WAVE_PROBE: {status} (nodes={}, edges={})",
+                nodes.len(),
+                edges.len()
+            ))
+        }
         _ => Err(format!("unknown tool: {name}")),
     }
 }
@@ -803,6 +887,7 @@ mod tests {
             "recon",
             "harvest",
             "loop_health",
+            "wave_probe",
         ] {
             assert!(names.contains(&n), "tool not advertised: {n}");
         }
@@ -1029,6 +1114,28 @@ mod tests {
         assert!(
             txt.contains("LOOP_HEALTH: OK"),
             "stable signal must be OK: {txt}"
+        );
+    }
+
+    #[test]
+    fn mcp_wave_probe_fails_closed_on_redline_cycle() {
+        // RED: a red-line action cycle → UNHEALTHY (fail-closed).
+        let bad = r#"{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"wave_probe","arguments":{"nodes":[{"id":"mem","x":0.0,"y":0.0,"red_line":false},{"id":"secret","x":0.0,"y":3.0,"red_line":true}],"edges":[{"from":0,"to":1,"kind":"Action","weight":1.0}],"actions":[0,1,0],"red_line_cycle":true}}}"#;
+        let r = h(bad);
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let txt = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            txt.contains("WAVE_PROBE: UNHEALTHY"),
+            "red-line cycle must be UNHEALTHY: {txt}"
+        );
+        // GREEN: a small safe graph → OK. n=2, actions [1,2]: step0→1, step1→halt(2).
+        let ok = r#"{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"wave_probe","arguments":{"nodes":[{"id":"mem","x":0.0,"y":0.0},{"id":"file","x":1.0,"y":0.0}],"edges":[{"from":0,"to":1,"kind":"Data","weight":0.3}],"actions":[1,2]}}}"#;
+        let r = h(ok);
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let txt = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            txt.contains("WAVE_PROBE: OK"),
+            "safe graph must be OK: {txt}"
         );
     }
 }
