@@ -98,6 +98,18 @@ pub fn tools() -> Vec<McpTool> {
                 "Authorized-offensive recon — gated by TargetScope (own-project-only). Runs recon primitives (wordlist/redirect/dedup) against an in-scope target; refuses out-of-scope targets (fail-closed).",
             input_schema: r#"{"type":"object","properties":{"target_ip":{"type":"integer"},"target_host":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}}},"required":["target_host","scope"]}"#,
         },
+        McpTool {
+            name: "harvest",
+            description:
+                "OSINT naming enumeration (theHarvester/maigret/spiderfoot pattern) — deterministic, network-OFF. Correlates candidate handles across sources (github/gitlab/twitter/…) into handle→[evidence]. Never touches the network; refuses empty input (fail-closed).",
+            input_schema: r#"{"type":"object","properties":{"handles":{"type":"array","items":{"type":"string"}},"sources":{"type":"array","items":{"type":"string"}}},"required":["handles","sources"]}"#,
+        },
+        McpTool {
+            name: "loop_health",
+            description:
+                "Field/L5 control-loop health (Kalman + limit-cycle). Smooths a noisy field series, detects bounded oscillation (limit cycle) and drift. Unhealthy → fail-closed (drop to ground state). No RNG.",
+            input_schema: r#"{"type":"object","properties":{"series":{"type":"array","items":{"type":"number"}},"q":{"type":"number"},"r":{"type":"number"},"drift":{"type":"number"},"min_flips":{"type":"integer"},"amp_band":{"type":"number"}},"required":["series"]}"#,
+        },
     ]
 }
 
@@ -637,6 +649,68 @@ pub fn call_tool(
                 lines.join("\n")
             ))
         }
+        "harvest" => {
+            // OSINT naming enumeration (theHarvester/maigret/spiderfoot pattern).
+            // Deterministic + network-OFF. Fail-closed: empty handles/sources → refuse.
+            let handles: Vec<String> = args
+                .get("handles")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let sources: Vec<String> = args
+                .get("sources")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if handles.is_empty() || sources.is_empty() {
+                return Ok("HARVEST: REFUSED — empty handles or sources (fail-closed)".to_string());
+            }
+            let h_refs: Vec<&str> = handles.iter().map(|s| s.as_str()).collect();
+            let s_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
+            let map = crate::research_patterns::naming_osint(&h_refs, &s_refs);
+            if map.is_empty() {
+                return Ok("HARVEST: no handles found across sources (all filtered)".to_string());
+            }
+            let lines: Vec<String> = map
+                .iter()
+                .map(|(h, srcs)| format!("  • {h}: {}", srcs.join(", ")))
+                .collect();
+            Ok(format!(
+                "HARVEST: {} handles correlated:\n{}",
+                map.len(),
+                lines.join("\n")
+            ))
+        }
+        "loop_health" => {
+            // Field/L5 control-loop health (Kalman + limit-cycle). Fail-closed: the
+            // verdict maps Unhealthy→refused, Permit→ok (same contract as field gate).
+            let series: Vec<f64> = args
+                .get("series")
+                .and_then(|a| a.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_f64()).collect())
+                .unwrap_or_default();
+            let q = args.get("q").and_then(|v| v.as_f64()).unwrap_or(0.01);
+            let r = args.get("r").and_then(|v| v.as_f64()).unwrap_or(0.1);
+            let drift = args.get("drift").and_then(|v| v.as_f64()).unwrap_or(0.5);
+            let min_flips = args.get("min_flips").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+            let amp_band = args.get("amp_band").and_then(|v| v.as_f64()).unwrap_or(3.0);
+            let verdict = crate::field::loop_health(&series, q, r, drift, min_flips, amp_band);
+            let (est, _g, _i) = crate::field::field_kalman(&series, q, r);
+            let smoothed = est.last().cloned().unwrap_or(0.0);
+            let status = if verdict.refused() { "UNHEALTHY" } else { "OK" };
+            Ok(format!(
+                "LOOP_HEALTH: {status} (verdict={:?}, smoothed={:.4})",
+                verdict, smoothed
+            ))
+        }
         _ => Err(format!("unknown tool: {name}")),
     }
 }
@@ -727,6 +801,8 @@ mod tests {
             "wire",
             "sandbox",
             "recon",
+            "harvest",
+            "loop_health",
         ] {
             assert!(names.contains(&n), "tool not advertised: {n}");
         }
@@ -909,6 +985,50 @@ mod tests {
         assert!(
             txt.contains("in-scope") && txt.contains("findings="),
             "in-scope recon must run: {txt}"
+        );
+    }
+
+    #[test]
+    fn mcp_harvest_correlates_handles() {
+        // GREEN: handles correlate across sources into handle→[evidence].
+        let ok = r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"harvest","arguments":{"handles":["neo","trinity"],"sources":["github","gitlab","twitter"]}}}"#;
+        let r = h(ok);
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let txt = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            txt.contains("HARVEST:") && txt.contains("neo:") && txt.contains("github"),
+            "harvest must correlate handles: {txt}"
+        );
+        // RED: empty handles → refused (fail-closed, no invented identities).
+        let empty = r#"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"harvest","arguments":{"handles":[],"sources":["github"]}}}"#;
+        let r = h(empty);
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let txt = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            txt.contains("REFUSED"),
+            "empty harvest must be refused: {txt}"
+        );
+    }
+
+    #[test]
+    fn mcp_loop_health_detects_unhealthy() {
+        // RED: a limit-cycle oscillation → UNHEALTHY (fail-closed).
+        let osc = r#"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"loop_health","arguments":{"series":[1.0,-1.0,1.0,-1.0,1.0,-1.0]}}}"#;
+        let r = h(osc);
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let txt = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            txt.contains("LOOP_HEALTH: UNHEALTHY"),
+            "oscillation must be UNHEALTHY: {txt}"
+        );
+        // GREEN: stable in-band signal → OK.
+        let stable = r#"{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"loop_health","arguments":{"series":[0.1,0.12,0.09,0.11]}}}"#;
+        let r = h(stable);
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let txt = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            txt.contains("LOOP_HEALTH: OK"),
+            "stable signal must be OK: {txt}"
         );
     }
 }

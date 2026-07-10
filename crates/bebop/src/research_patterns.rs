@@ -367,6 +367,43 @@ pub fn crawl_frontier(seed: &[String], max: usize) -> Vec<String> {
     out
 }
 
+/// PATTERN: theHarvester / maigret / spiderfoot — OSINT *naming* enumeration.
+///
+/// Reverse-engineered core: given a set of candidate handles/usernames and a set
+/// of sources (github, gitlab, twitter, …), produce a content-addressed map of
+/// `handle → [source evidence]`. This is the deterministic, network-OFF model of
+/// what those tools DO: enumerate a name across sources and *correlate* hits. The
+/// real tools perform the live lookups; bebop models the *correlation logic* (the
+/// part that matters for agent reasoning) and refuses to touch the network.
+///
+/// Fail-closed: empty handles or empty sources → empty map (never invents an
+/// identity). Findings are deduped by handle (one entry per name, all sources it
+/// was "seen" on). This is the safe, offline analog — wire the live source glue
+/// behind `TargetScope` + an eval gate if real OSINT is needed.
+pub fn naming_osint(handles: &[&str], sources: &[&str]) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    if handles.is_empty() || sources.is_empty() {
+        return out; // fail-closed: no invented identities
+    }
+    for &h in handles {
+        let mut found = Vec::new();
+        for &s in sources {
+            // Deterministic "seen" model: a handle is recorded as found on a
+            // source iff it is non-trivial (len ≤ 32, alphanumeric/underscore).
+            // Real correlation would call the source; here we model the RESULT
+            // shape so downstream logic (merge/score) is exercisable + falsifiable.
+            if !h.is_empty() && h.len() <= 32 && h.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                found.push(s.to_string());
+            }
+        }
+        if !found.is_empty() {
+            out.insert(h.to_string(), found);
+        }
+    }
+    out
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MAX-EV INTEGRATIONS (spike-confirmed) — DeepEval + Storm patterns
 // ─────────────────────────────────────────────────────────────────────────────
@@ -655,5 +692,20 @@ mod tests {
         // RED: empty perspectives → empty outline (no invented sections)
         let empty = storm_outline("x", &[]);
         assert!(empty.questions.is_empty() && empty.sections.is_empty());
+    }
+
+    #[test]
+    fn naming_osint_dedups_and_flags_known_handle() {
+        // GREEN: distinct handles across sources collapse to one finding per handle
+        // (deduped by handle), but each carries evidence from all 3 sources.
+        let f = naming_osint(&["neo", "trinity"], &["github", "gitlab", "twitter"]);
+        let cnt: usize = f.values().map(|v| v.len()).sum();
+        // 2 handles × 3 sources = 6 evidence rows, deduped into 2 handle keys.
+        assert_eq!(f.len(), 2, "map keyed by handle → 2 entries");
+        assert_eq!(cnt, 6, "each handle carries 3 source-evidence rows");
+        // RED: a known handle is flagged as found (evidence non-empty).
+        assert!(f.get("neo").unwrap().iter().any(|s| s == "github"));
+        // GREEN: empty input → empty map (no invented entities).
+        assert!(naming_osint(&[], &["github"]).is_empty());
     }
 }
