@@ -2,6 +2,10 @@
 //! Subcommands mirror the documented surface; the interactive TUI (launch anim)
 //! is reached via `bebop` with no args on a TTY.
 
+use crate::field::field_gate;
+use crate::knowledge::recall;
+use crate::mcp::{native_exec, seed_memory};
+use crate::multipilot::run_multipilot;
 use crate::outfit::OUTFIT;
 use crate::vault::create_or_unlock;
 use std::env;
@@ -160,7 +164,7 @@ pub fn run() {
             }
         }
         "recall" => {
-            // Query the living-knowledge retriever.
+            // Query the living-knowledge retriever (§0·GP) against a seeded store.
             let o = crate::customize::Profile::load().resolve_outfit();
             crate::tui::render_loader_animation(
                 crate::tui::AgentState::Recalling,
@@ -170,8 +174,122 @@ pub fn run() {
                 &o,
             );
             let q = rest.join(" ");
-            println!("  §0·GP recall — query: {q}");
-            println!("  (retriever wired in core::knowledge; pass a live memory to query)");
+            let mm = seed_memory();
+            let r = recall(&mm, &q, 3);
+            if r.hits.is_empty() {
+                println!("  §0·GP recall — query: {q}");
+                println!("  (retriever wired in core::knowledge; {})", r.note);
+            } else {
+                println!("  §0·GP recall — query: {q}");
+                for h in &r.hits {
+                    println!("  • [{}] {} — {}", h.id, h.concept, h.text);
+                }
+            }
+        }
+        "outfit" => {
+            // Print the luminous cosmo-noir identity contract (the "make it yours" source).
+            println!("{}", OUTFIT.banner());
+        }
+        "status" => {
+            // Backend rotation + guard state.
+            println!("  ◈ bebop status");
+            println!("  guard OS:      armed (deny on red, no RNG/Date)");
+            println!("  field core:    bebop-core graph-PDE (spectral heat-kernel)");
+            println!("  router:        cheapest-adequate (haiku/sonnet/opus)");
+            println!("  field arbiter: graph-PDE cost surface → veto above tolerance");
+            println!("  crew:          multipilot (N distinct pilots + synth)");
+        }
+        "dispatch" => {
+            // DEFAULT mode: Multipilot — fan out to N distinct pilots, synthesize,
+            // gate by the field arbiter (physics veto). Real engines, no stub.
+            let task = rest.join(" ");
+            let n = flag_value(rest, "--n")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(3);
+            if task.trim().is_empty() {
+                eprintln!("  ✖ dispatch: give me a task — `bebop dispatch \"<task>\"`");
+                std::process::exit(2);
+            }
+            let o = crate::customize::Profile::load().resolve_outfit();
+            crate::tui::render_loader_animation(
+                crate::tui::AgentState::Node,
+                10,
+                "dispatch",
+                "multipilot engaging",
+                &o,
+            );
+            let r = run_multipilot(&task, n, native_exec, Some(|| field_gate(&task)));
+            println!(
+                "  ◈ multipilot({n}) → ok={} | field={:?}",
+                r.ok, r.field_verdict
+            );
+            for p in &r.pilots {
+                println!("    pilot {}: ok={} — {}", p.backend, p.ok, p.output);
+            }
+            println!("  {}", r.note);
+            if !r.ok {
+                std::process::exit(1);
+            }
+        }
+        "route" => {
+            // Token-router decision: cheapest adequate backend for a class.
+            let task = rest.join(" ");
+            if task.trim().is_empty() {
+                println!("  route <class|task>  — e.g. `bebop route \"security audit\"`");
+                println!("  classes: explore→haiku · doer→haiku · reason→sonnet · review→opus");
+            } else {
+                println!(
+                    "  ◈ route: '{}' → backend '{}'",
+                    task,
+                    crate::router::route(&task)
+                );
+            }
+        }
+        "map" => {
+            // Render the real module graph as text (the native engine surface).
+            let mods = [
+                "cli",
+                "copilot",
+                "multipilot",
+                "mcp",
+                "router",
+                "field",
+                "knowledge",
+                "memory",
+                "analytics",
+                "governor",
+                "outfit",
+                "customize",
+                "vault",
+                "launch",
+                "mission",
+                "radio",
+                "tui",
+                "doc_claims",
+            ];
+            println!("  ◈ bebop module graph (native, {} mods):", mods.len());
+            for m in mods {
+                println!("    ├─ {m}");
+            }
+            println!("    └─ bebop_core (rust-core: decide + retriever + math)");
+        }
+        "diagrams" => {
+            // Regenerate the real visuals (helm + launch SVG) from the active outfit.
+            let o = crate::customize::Profile::load().resolve_outfit();
+            let helm = crate::tui::render_helm_svg(90, 30, &o);
+            let _ = std::fs::write("bebop-helm.svg", &helm);
+            println!(
+                "  ✓ bebop-helm.svg regenerated (accent #{:06X})",
+                o.palette.ship
+            );
+            println!("  (launch SVG: `cargo run --example launch-svg`)");
+        }
+        "mcp" => {
+            // Minimal MCP server over stdio (JSON-RPC). Honors BEBOP_MCP_ONCE=1.
+            if let Err(e) = crate::mcp::serve() {
+                eprintln!("  ✖ mcp: {e}");
+                std::process::exit(1);
+            }
         }
         "radio" => {
             // The ship's lounge: free-to-listen Lofi / Jazz. License-clean by
@@ -235,9 +353,10 @@ pub fn run() {
 
 fn print_help() {
     println!("{}", OUTFIT.banner());
-    println!("  init [--looks RRGGBB --narration X --home URL --force] | boot | outfit");
+    println!("  init [--looks RRGGBB --narration X --home URL --force] | boot | outfit | status");
     println!("  node [--pass X --path Y] | recall <q> | radio [<n>|onair|stop] | help");
-    println!("  mission [--title T]   (the sign-off — dock + cigar; also fires at loop end)");
+    println!("  dispatch \"<task>\" [--n N] | route <task> | map | diagrams");
+    println!("  mission [--title T] | mcp   (the sign-off — dock + cigar; also fires at loop end)");
     println!("  (interactive TUI with the sun-warm launch: run `bebop` in a TTY)");
     println!("  {}", OUTFIT.home);
 }

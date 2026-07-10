@@ -1,22 +1,17 @@
 {
   "name": "bebop-agent",
-  "version": "0.4.0",
-  "description": "Bebop — your own coding agent. Warm cosmo-noir, a deterministic guard OS, living memory, post-quantum node identity, and a math-proven telemetry governor. AGPL-3.0.",
+  "version": "0.5.0",
+  "description": "Bebop — your own coding agent. Warm cosmo-noir, a deterministic guard OS, living memory, and a math-proven telemetry governor. Native Rust/WASM core (no TypeScript at runtime). AGPL-3.0.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "keywords": [
     "ai-agent",
     "coding-agent",
     "agent-framework",
-    "ai",
-    "llm",
-    "typescript",
+    "rust",
+    "wasm",
     "autonomous-agent",
     "guard-os",
-    "post-quantum",
-    "ml-kem",
-    "kyber",
-    "ed25519",
     "vector-symbolic-architecture",
     "vsa",
     "associative-memory",
@@ -47,38 +42,27 @@
     "url": "https://github.com/SyniakSviatoslav/bebop/issues"
   },
   "bin": {
-    "bebop": "bebop.ts"
+    "bebop": "bin/bebop"
   },
   "files": [
-    "bebop.ts",
-    "src"
+    "bin",
+    "crates",
+    "rust-core",
+    "docs",
+    "scripts",
+    "README.md",
+    "AGENTS.md"
   ],
   "scripts": {
-    "boot": "tsx bebop.ts boot",
-    "start": "tsx bebop.ts",
-    "build": "cd crates/core && bash build.sh",
-    "test": "node --test --import tsx $(find src -name '*.test.ts')",
-    "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm test && node scripts/verify-doc-claims.mjs && node scripts/guardrail-falsifiable-proof.mjs",
-    "recall": "tsx bebop.ts recall"
+    "build": "cargo build --release -p bebop",
+    "start": "cargo run -q -p bebop --",
+    "boot": "cargo run -q -p bebop -- boot",
+    "recall": "cargo run -q -p bebop -- recall",
+    "test": "cargo test --workspace",
+    "typecheck": "cargo check --workspace",
+    "verify": "cargo test --workspace && node scripts/verify-doc-claims.mjs && node scripts/guardrail-falsifiable-proof.mjs"
   },
   "engines": {
     "node": ">=20.19.0"
-  },
-  "dependencies": {
-    "@noble/ciphers": "^2.2.0",
-    "@noble/curves": "^2.2.0",
-    "@noble/hashes": "^2.2.0",
-    "@noble/post-quantum": "^0.6.1",
-    "@puppeteer/browsers": "^3.0.6",
-    "puppeteer-core": "^25.3.0"
-  },
-  "optionalDependencies": {
-    "better-auth": "^1.6.23"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
   }
 }

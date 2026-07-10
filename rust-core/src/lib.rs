@@ -846,9 +846,16 @@ mod tests {
             unsafe {
                 field_reset();
             }
+            // RED+GREEN: after the free/rebuild cycle the propagated field must be
+            // finite (no NaN/inf leak from the C side) — proves the cycle is leak-free
+            // at the value level, not merely "didn't panic".
+            for &v in &out {
+                assert!(
+                    v.is_finite(),
+                    "field output non-finite after free/rebuild cycle"
+                );
+            }
         }
-        // if we got here without OOM/panic, the free/rebuild cycle is leak-free on the Rust side.
-        assert!(true);
     }
 
     // ── PDDL ↔ FIELD BRIDGE tests (2026-07-09b): cost surface + rank grounding ──

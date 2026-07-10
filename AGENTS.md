@@ -103,12 +103,14 @@ Hermes, Codex, OpenCode, Aider, or Bebop itself) working in this repo.
   "tensor overlay" directive 2026-07-09).
 
 ## Repo layout
-- `bebop.ts` — CLI entry (subcommands: boot, run, agents, use, recall, route, map, diagrams,
-  **docs**, mcp, self, init, and the `/`-slash commands).
-- `src/` — guard OS (`guard.ts`), Rust/WASM kernel (`core-wasm.ts` + `crates/core`), living
-  memory, governor, routing, backends, MCP server, skills/hooks/subagents.
+- `bin/bebop` — native Rust CLI entry (shim → `cargo run -p bebop`). Subcommands: boot, run,
+  agents, use, recall, route, map, diagrams, **docs**, mcp, self, init, dispatch, outfit, status.
+- `crates/bebop/` — the agent: guard OS, Rust/WASM kernel bridge (`rust-core` + `crates/core`),
+  living memory, governor, routing, backends, MCP server, skills/hooks, launch animation.
+- `rust-core/` — dependency-free graph-PDE field core (spectral heat-kernel, f32 CSR, SIMD128, WASM).
+- `archive/` — the former TypeScript layer (recoverable; no longer built or executed).
 - `docs/` — the in-repo wiki (features, integrations, diagrams, footage, narration).
-- `scripts/` — diagram + footage + i18n generators.
+- `scripts/` — doc-claim + falsifiable-proof gates, diagram + footage generators.
 
 ## Documentation pipeline (`bebop docs`)
 The polished, repeatable doc-release flow. Run before any main release:
@@ -126,13 +128,11 @@ CI schedule (`openwiki-update.yml`) and is kept in sync with `git` diffs — tre
 documentation, not gospel; verify non-trivial claims against code.
 
 ## Verify before claiming done
-- `npm run verify` — one-shot full gate: typecheck + tests + doc-claim honesty + falsifiable-proof.
-- `npm run boot` — guard-OS self-certification (must go RED to be trusted).
-- `npm test` — 433 falsifiable tests.
-- `npm run typecheck` — clean.
-- After any doc change: `bebop docs check`.
-- `node scripts/verify-doc-claims.mjs` — doc claims must match live code (pre-commit + CI).
-- `node scripts/guardrail-falsifiable-proof.mjs` — every test must have a RED path (pre-commit + CI).
+- `cargo test` — 79 Rust tests (63 bebop + 16 rust-core), RED+GREEN, 0 fail.
+- `cargo run -p bebop -- boot` — guard-OS self-certification (must go RED to be trusted).
+- After any doc change: `node scripts/verify-doc-claims.mjs` — doc claims must match live Rust code (pre-commit + CI).
+- `node scripts/guardrail-falsifiable-proof.mjs` — every #[test] must have a RED path (pre-commit + CI).
+- `npm run verify` — one-shot full gate (maps to cargo test + both gates).
 
 ## Anti-hallucination discipline (agent + human)
 - **Re-read before acting on any summary.** A compaction summary, injected "prior context", or a

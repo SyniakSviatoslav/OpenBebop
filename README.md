@@ -1,7 +1,7 @@
 # ◈ Bebop
 
 > **Bebop is a local-first coding-agent CLI with its own deterministic Rust/WASM guard kernel, a
-> post-quantum node identity, and a living (VSA) memory — that drives any agent you already use
+> a living (VSA) memory — that drives any agent you already use.
 > (Claude Code, Codex, OpenCode, Aider, Goose) behind one auditable, free-by-default, offline
 > control plane, and self-evolves via a "freestyle bebop soul" loop.**
 
@@ -16,8 +16,11 @@ What makes it **not just another wrapper** (verified, not claimed):
 
 - **Bebop core** — a Rust/WASM guard OS (`bebop_core.wasm`) that *denies* auth/money/secrets/migrations
   unless a human approves. `bebop boot` proves the gates go RED. Math, not vibes.
-- **PSQ identity** — every node gets a post-quantum (ML-KEM + ML-DSA) self-certifying identity and an
-  encrypted-at-rest vault. No central server, ever. `bebop node` prints it.
+- **Node identity** — every node gets a self-certifying identity and an encrypted-at-rest vault
+  (XChaCha20 + scrypt, deterministic key derivation from a passphrase; wrong-pass is proven to fail
+  in `vault.rs`). No central server, ever. `bebop node` prints it.
+  _Note: the post-quantum (ML-KEM/ML-DSA) identity from the research layer is **not yet** in the
+  native core — tracked as a gap to close; the vault is symmetric-only today._
 - **Living memory** — a bundled VSA hypervector + graph store with forgetting and a persisted
   snapshot. `bebop recall "kernel law"` returns real payloads. (The richer §0·GP retriever lives in
   the dowiz monorepo and is an optional add-on — `recall` says so honestly.)
@@ -26,7 +29,7 @@ What makes it **not just another wrapper** (verified, not claimed):
 - **Narration + looks** — `bebop init` picks a voice (bebop / plain / sarcastic / corporate-killer)
   and a theme accent (bebop / claude / opencode / codex / custom). They actually change the CLI.
 - **New outfit (cosmo-noir)** — `bebop outfit` prints the ship's identity contract: Warm Cosmo-Noir
-  (Cowboy Bebop × cosmo-gothic × Ukrainian irony), signal teal `#46B0A4`, bone `#F2E9DB` on void
+  (Cowboy Bebop × cosmo-gothic × Ukrainian irony), signal tele `#F2933E`, ship `#F4C25A` on void
   `#12100E`. *One meaningful color per view.* `bebop init` changes the accent for real.
 - **Multipilot** — `bebop dispatch` now fans a task to N *specialist* pilots (distinct backends so no
   single failure mode dominates), a distinct synthesizer merges them, and the Rust field arbiter can
@@ -122,13 +125,15 @@ command and exposes `verifySelfEvolution()` — the agent can prove its own evol
 ## Verification
 
 ```bash
-npm test            # 433 TS tests (RED+GREEN), 0 fail  [authoritative: node --test --import tsx 'src/**/*.test.ts']
-cargo test -p bebop-core   # 16 Rust kernel tests (spectral + active-set + VSA + concurrency + memory + PDDL-field bridge + sensitivity bootstrap)
-npm run typecheck   # 0 errors
+cargo test           # 79 Rust tests (63 bebop + 16 rust-core), RED+GREEN, 0 fail
+cargo check          # 0 errors (typecheck)
+node scripts/verify-doc-claims.mjs        # doc-claim falsifiability gate
+node scripts/guardrail-falsifiable-proof.mjs   # every #[test] must be falsifiable
 ```
 
-> The authoritative runner is `node --test --import tsx 'src/**/*.test.ts'` — `npm test` now uses this
-> glob and covers the integration layer. (Older `pnpm run test` missed `src/integration/**`.)
+> The native runtime is **Rust/WASM** (no TypeScript in the live path). `cargo test` is the
+> authoritative runner. The legacy TypeScript layer was archived to `archive/` (recoverable) but is
+> no longer built or executed.
 
 Full proof table: [`docs/VERIFICATION-MATRIX.md`](docs/VERIFICATION-MATRIX.md).
 
