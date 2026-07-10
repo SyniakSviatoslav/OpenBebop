@@ -60,6 +60,64 @@ impl Platonic {
         }
     }
 
+    /// Number of vertices V of the solid. This is the solid's *geometric base
+    /// mass* in the field sim (a node's structure IS its mass before any
+    /// connections are added — see `field_physics`).
+    pub fn vertex_count(&self) -> usize {
+        self.fev().2
+    }
+
+    /// Vertex degree in the solid's edge graph (Tetra 3, Cube 3, Octa 4,
+    /// Dodeca 3, Icosa 5). Used to derive `vertex_edges` deterministically.
+    fn vertex_degree(&self) -> usize {
+        match self {
+            Platonic::Tetrahedron => 3,
+            Platonic::Cube => 3,
+            Platonic::Octahedron => 4,
+            Platonic::Dodecahedron => 3,
+            Platonic::Icosahedron => 5,
+        }
+    }
+
+    /// Intra-solid edge list (vertex-index pairs) — the polyhedron's skeleton.
+    /// Derived from the canonical spherical vertices by connecting each vertex
+    /// to its `vertex_degree` nearest neighbours on the unit sphere. For a
+    /// regular solid this recovers EXACTLY the true edge graph. The node's wave
+    /// is a V-dimensional tensor carried ON this skeleton — its dimension is the
+    /// solid's vertex count, and is never flattened by the field sim.
+    pub fn vertex_edges(&self) -> Vec<(usize, usize)> {
+        let verts = self.vertices_spherical();
+        let v = verts.len();
+        if v <= 1 {
+            return vec![];
+        }
+        let deg = self.vertex_degree();
+        let cart = |(th, ph): (f64, f64)| -> [f64; 3] {
+            [th.sin() * ph.cos(), th.sin() * ph.sin(), th.cos()]
+        };
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let ang = |a: [f64; 3], b: [f64; 3]| dot(a, b).clamp(-1.0, 1.0).acos();
+        let cv: Vec<[f64; 3]> = verts.iter().map(|&p| cart(p)).collect();
+        let mut seen = vec![vec![false; v]; v];
+        let mut edges = Vec::new();
+        for i in 0..v {
+            let mut order: Vec<(f64, usize)> = (0..v)
+                .filter(|&j| j != i)
+                .map(|j| (ang(cv[i], cv[j]), j))
+                .collect();
+            order.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            for k in 0..deg {
+                let j = order[k].1;
+                if !seen[i][j] {
+                    seen[i][j] = true;
+                    seen[j][i] = true;
+                    edges.push((i.min(j), i.max(j)));
+                }
+            }
+        }
+        edges
+    }
+
     /// Unit-sphere vertices of the solid (deterministic, canonical). Returns
     /// (θ, φ) pairs in spherical coords (colatitude θ∈[0,π], azimuth φ∈[0,2π)).
     /// These seed the field on the node's surface — the geometry-aware basis.
