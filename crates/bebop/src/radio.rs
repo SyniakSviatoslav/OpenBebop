@@ -25,16 +25,56 @@ pub struct Station {
 /// Curated, free-to-listen Lofi / Jazz deck. All listener-supported, no login.
 /// SomaFM's streams are free to listen and explicitly permit listening clients.
 pub const STATIONS: &[Station] = &[
-    Station { name: "Groove Salad",     kind: "lofi",  url: "https://ice1.somafm.com/groovesalad-128-mp3" },
-    Station { name: "Lush",             kind: "lofi",  url: "https://ice1.somafm.com/lush-128-mp3" },
-    Station { name: "Drone Zone",       kind: "space", url: "https://ice1.somafm.com/dronezone-128-mp3" },
-    Station { name: "Jazz Greetings",   kind: "jazz",  url: "https://ice1.somafm.com/jazzgreetings-128-mp3" },
-    Station { name: "Sonic Universe",   kind: "jazz",  url: "https://ice1.somafm.com/sonicuniverse-128-mp3" },
-    Station { name: "Boot Liquor",      kind: "jazz",  url: "https://ice1.somafm.com/bootliquor-128-mp3" },
-    Station { name: "Secret Agent",     kind: "jazz",  url: "https://ice1.somafm.com/secretagent-128-mp3" },
-    Station { name: "Seven Inch Soul",  kind: "jazz",  url: "https://ice1.somafm.com/seveninch-128-mp3" },
-    Station { name: "Illusion Flux",    kind: "lofi",  url: "https://ice1.somafm.com/illusionflux-128-mp3" },
-    Station { name: "Beat Blender",     kind: "lofi",  url: "https://ice1.somafm.com/beatblender-128-mp3" },
+    Station {
+        name: "Groove Salad",
+        kind: "lofi",
+        url: "https://ice1.somafm.com/groovesalad-128-mp3",
+    },
+    Station {
+        name: "Lush",
+        kind: "lofi",
+        url: "https://ice1.somafm.com/lush-128-mp3",
+    },
+    Station {
+        name: "Drone Zone",
+        kind: "space",
+        url: "https://ice1.somafm.com/dronezone-128-mp3",
+    },
+    Station {
+        name: "Jazz Greetings",
+        kind: "jazz",
+        url: "https://ice1.somafm.com/jazzgreetings-128-mp3",
+    },
+    Station {
+        name: "Sonic Universe",
+        kind: "jazz",
+        url: "https://ice1.somafm.com/sonicuniverse-128-mp3",
+    },
+    Station {
+        name: "Boot Liquor",
+        kind: "jazz",
+        url: "https://ice1.somafm.com/bootliquor-128-mp3",
+    },
+    Station {
+        name: "Secret Agent",
+        kind: "jazz",
+        url: "https://ice1.somafm.com/secretagent-128-mp3",
+    },
+    Station {
+        name: "Seven Inch Soul",
+        kind: "jazz",
+        url: "https://ice1.somafm.com/seveninch-128-mp3",
+    },
+    Station {
+        name: "Illusion Flux",
+        kind: "lofi",
+        url: "https://ice1.somafm.com/illusionflux-128-mp3",
+    },
+    Station {
+        name: "Beat Blender",
+        kind: "lofi",
+        url: "https://ice1.somafm.com/beatblender-128-mp3",
+    },
 ];
 
 /// Deterministic pick: station index from a seed (const LCG, no RNG/Date).
@@ -123,7 +163,7 @@ fn open_url(url: &str) -> std::io::Result<()> {
     let (prog, arg) = if cfg!(target_os = "macos") {
         ("open", url)
     } else if cfg!(target_os = "windows") {
-        ("cmd", "/C")  // we then add start "" url as separate args
+        ("cmd", "/C") // we then add start "" url as separate args
     } else {
         ("xdg-open", url)
     };

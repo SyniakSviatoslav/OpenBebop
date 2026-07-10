@@ -187,7 +187,9 @@ pub fn run() {
                 }
                 "onair" | "shuffle" => crate::radio::on_air(seed),
                 "stop" | "off" => {
-                    println!("  ◈ radio off — the lounge goes quiet. (close your player to stop audio.)");
+                    println!(
+                        "  ◈ radio off — the lounge goes quiet. (close your player to stop audio.)"
+                    );
                     Ok(())
                 }
                 s => match s.parse::<usize>() {

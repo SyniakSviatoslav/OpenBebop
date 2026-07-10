@@ -62,11 +62,11 @@ pub const OUTFIT: Outfit = Outfit {
     tagline: "your ship.",
     creed: "Hybrid is a feature, not a bug.",
     palette: Palette {
-        ship: 0xF4C25A, // luminous sun-gold
-        tele: 0xF2933E, // warm orange telemetry
-        glow: 0xFFD9A0, // luminous peach — loader halo / hints
-        bone: 0xFBF3E7, // warm ivory text
-        void: 0x12100E, // warm-noir ground
+        ship: 0xF4C25A,  // luminous sun-gold
+        tele: 0xF2933E,  // warm orange telemetry
+        glow: 0xFFD9A0,  // luminous peach — loader halo / hints
+        bone: 0xFBF3E7,  // warm ivory text
+        void: 0x12100E,  // warm-noir ground
         alert: 0xE0543E, // warm red, alerts/drift only
     },
     sigil: '◈', // ◈ — the ship's eye, sun-warm

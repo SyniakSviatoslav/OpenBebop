@@ -64,9 +64,7 @@ pub fn mission_summary(title: &str, lines: &[&str]) {
     for l in lines {
         println!("    · {}", l);
     }
-    println!(
-        "  ◈ signed — bebop. still flying. (cigar not shipped in the build)"
-    );
+    println!("  ◈ signed — bebop. still flying. (cigar not shipped in the build)");
     println!();
 }
 
