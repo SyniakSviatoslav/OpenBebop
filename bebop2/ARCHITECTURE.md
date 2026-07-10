@@ -97,3 +97,46 @@ TMR voting — and that's a *verifier* (3× compute, majority vote), not a proxy
 - Benchmark: in-tree `decide()` call latency vs old MCP-stdio round-trip must show the middleware
   was pure overhead (RED+GREEN: removing it speeds up, not breaks).
 
+## Latency / overhead → zero-accidental-cost (operator directive 2026-07-10)
+
+> "Everywhere, seek shortcuts for maximum latency reduction and any unnecessary overhead."
+
+AGC envelope taken to its end: not just delete accidental indirection, but delete ALL overhead
+that doesn't carry physics. The AGC ran ~40k instr/s on 2.048 MHz with NO allocator,
+NO OS scheduler (fixed-priority Executive loop, not a general kernel), NO dynamic dispatch.
+It hit its budget by *having nothing to cut*. bebop2 aims for the same.
+
+### Overhead audit → cut list
+| Source | Cut? | bebop2 move |
+|--------|-------|--------------|
+| `alloc` at hot path (Box/Vec/HashMap in `decide`/`fold`) | **CUT** | Pre-allocated fixed scratch / arena in `core`. Hot path = `no_std` + static buffers, zero `alloc`. |
+| serde reflection (derive, dyn dispatch) | **CUT** | Fixed-layout direct codec. No `derive`, no `Any`, no vtable. |
+| `f64` where `f32` suffices | **CUT where physics allows** | `field_*` already f32 CSR. Heat/diffusion f32; only crypto/high-precision keeps f64. Half RAM, half bus. |
+| dynamic dispatch (trait objects) | **CUT** | Monomorphize. `decide` = one concrete fn, not `Box<dyn Engine>`. |
+| MCP/JSON round-trip | **CUT from hot path** | Direct `decide()` call. |
+| wasm-bindgen shim | **CUT** | Raw C-ABI linear memory. |
+| unused generality (generic N-dim, configurable backends) | **CUT** | Bake the ONE physics. Like AGC: one hand-tuned routine, not a "configurable framework". |
+| `std::time`/logging in hot path | **CUT** | No timestamps at kernel. Logging is a leaf, off the path. |
+| HashMap for small fixed sets | **CUT → indexed** | CSR/graph arrays (already in `field_build`). Lookup = index, not hash. |
+| RNG in crypto keygen | **KEEP (unavoidable)** but QUARANTINED to `rng.rs` keygen only; kernel is provably RNG-free. |
+
+### The latency contract (enforced by reloop v2 + agent briefs)
+1. **Zero `alloc` on `decide`/`fold`/`replay` path** — fixed scratch, like core-rope.
+2. **Monomorphized, no vtable** — engine is one function, not a trait object.
+3. **f32 by default; f64 only where spectral math demands it** (crypto, range-reduction).
+4. **Indexed, not hashed** — CSR/graph arrays, not HashMaps.
+5. **No serialization on the path** — structs ARE their wire format (fixed layout).
+6. **RNG quarantined** to `rng.rs` keygen only; kernel provably RNG-free (empty-import gate).
+
+### HONEST boundary (physicality)
+Algorithmic work is NOT overhead. ML-KEM-768 inherently does NTT + ring-MatrixMul over
+Z_q; you cannot "shortcut" the math without breaking the algorithm. The shortcut rule applies
+to IMPLEMENTATION overhead (alloc, dispatch, serialization, hashing), NOT to algorithmic
+cost. Agents must NOT "optimize" PQ crypto into insecurity — the KAT gate forbids it.
+
+### Falsifiability
+- Benchmark: `decide()` wall-time per reference command with a HARD ceiling (wasm-instr budget).
+- RED+GREEN regression: a `#[cfg(test)]` runs the hot path under a no-alloc allocator and
+  PANICS on any `alloc::alloc` / vtable / HashMap call → proves the contract.
+- reloop v2 asserts: wasm imports NOTHING (no I/O latency) + bounded `.text` size (icache/decode proxy).
+
