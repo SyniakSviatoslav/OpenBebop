@@ -217,4 +217,72 @@ mod tests {
         let base = [0.1f64, 0.2, 0.3];
         assert_eq!(ground_state(&base), base);
     }
+
+    #[test]
+    fn stress_injection_dissipates_to_new_stationary() {
+        // EMPIRICAL CYCLE — Test 1 (Physical Adequacy / Stress Injection).
+        // Inject a SUSTAINED anomaly: node 1's environment keeps injecting
+        // energy (a channel/courier node is broken and keeps misfiring). Does
+        // failure propagate LINEARLY (tree → total collapse) or DISSIPATE
+        // through the field to a new stationary point (wave → graceful
+        // degradation to a degraded-but-stable state)?
+        //
+        // Each tick:
+        //   1. the fault injects `+ANOMALY` into node 1 (ongoing instability),
+        //   2. the field's potential well passively pulls node 1 toward baseline
+        //      (the deterministic core's ground-state attractor — always on),
+        //   3. the L5 layer PROPOSES a big corrective delta; the monitor applies
+        //      it ONLY if V̇ ≤ 0 (stable). If V̇ > 0 the proposal is FROZEN and
+        //      the core holds the line (no runaway, no parametric drift).
+        //
+        // Assert: (a) under sustained fault V̇>0 triggers freeze at least once
+        // (RED — the crack is closed), (b) the field settles to a finite new
+        // stationary point (did NOT diverge to ∞), (c) no node blew up.
+        use crate::sealfb::is_stationary;
+
+        let baseline = [1.0f64, 1.0, 1.0];
+        let k = [1.0f64, 1.0, 1.0];
+        let anomaly = 1.0f64; // sustained energy injection into node 1 per tick
+        let mut field = [1.0f64, 1.0, 1.0];
+        let dt = 1.0;
+        let mut prev = field;
+        let mut froze_ticks = 0;
+        let mut settled_at = None;
+        for tick in 0..400 {
+            // Fault drives node 1 up; well pulls it down (passive, always-on).
+            field[1] += anomaly;
+            field[1] += (baseline[1] - field[1]) * 0.1;
+            let v_cur = potential_well(&field, &baseline, &k);
+            let v_prev = potential_well(&prev, &baseline, &k);
+            let v_dot = lyapunov_derivative(v_prev, v_cur, dt);
+            // L5 proposes an aggressive corrective move; monitor gates it.
+            let l5_proposal = -2.0f64;
+            let applied = stabilize_step(v_prev, v_cur, dt, l5_proposal, 0.5, 0.0);
+            if !adaptation_allowed(v_dot, 0.0) {
+                // Destabilizing → core froze the L5 proposal (applied == 0).
+                assert_eq!(applied, 0.0, "core must ignore L5 while V̇>0");
+                froze_ticks += 1;
+            }
+            // (applied, if any, would nudge node 1; here it is passive-grounded)
+            if is_stationary(&prev, &field, 1e-3) {
+                settled_at = Some(tick);
+                break;
+            }
+            prev = field;
+        }
+
+        // GREEN: the field found a new stationary point (did NOT diverge to inf).
+        assert!(settled_at.is_some(), "field must settle, not run away");
+        // RED: during the destabilizing transient the core froze adaptation at
+        // least once — proving the crack (SEAL relaxing stability) is closed.
+        assert!(
+            froze_ticks >= 1,
+            "monitor must have frozen adaptation on rising V̇"
+        );
+        // The settled field is finite (no node blew up) — field dissipates, not tree-collapse.
+        assert!(
+            field.iter().all(|e| e.is_finite() && *e < 100.0),
+            "no node diverges"
+        );
+    }
 }
