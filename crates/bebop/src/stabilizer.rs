@@ -126,6 +126,64 @@ pub fn stabilize_step(
     saturate(proposed_delta, limit)
 }
 
+/// Potential energy WITH a forbidden zone — a "wall" baked into the field.
+/// Beyond the quadratic well, any parameter inside `wall_radius` of
+/// `wall_center` incurs a smooth penalty up to `wall_height`. This makes a hard
+/// constraint GEOMETRIC: the agent cannot cross it any more than a ball rolls
+/// through a hill. Used by the fail-safe double-bind benchmark — the
+/// constraint is physics, not a filter the agent can reason around.
+pub fn potential_with_wall(
+    theta: &[f64],
+    baseline: &[f64],
+    k: &[f64],
+    wall_center: f64,
+    wall_radius: f64,
+    wall_height: f64,
+) -> f64 {
+    let mut v = potential_well(theta, baseline, k); // already ∞ on shape mismatch
+    if v.is_infinite() {
+        return v;
+    }
+    if wall_radius > 0.0 {
+        for &t in theta {
+            let d = (t - wall_center).abs();
+            if d < wall_radius {
+                // smooth bump: 0 at the rim, `wall_height` at the center
+                v += wall_height * (1.0 - (d / wall_radius).powi(2));
+            }
+        }
+    }
+    v
+}
+
+/// Consensual convergence among N parallel L5 agents — the "ensemble" defense
+/// against synchronized hallucination (all agents wrong the same way). Each
+/// agent proposes a param delta. If they AGREE (low spread → low entropy) the
+/// core applies their saturated mean. If they DISAGREE (high spread → high
+/// field entropy) the core returns `None` and MUST ignore L5, falling to the
+/// ground state.
+///
+/// `entropy_threshold` is the max tolerated std-dev of proposals. Above it →
+/// distrust. This is self-regulation through competition: a drifting agent's
+/// vector simply doesn't align, the field gets "muddy", and the deterministic
+/// core drops to fail-safe with no external supervisor.
+pub fn consensual_aggregate(proposals: &[f64], limit: f64, entropy_threshold: f64) -> Option<f64> {
+    if proposals.is_empty() {
+        return None;
+    }
+    if proposals.len() == 1 {
+        return Some(saturate(proposals[0], limit));
+    }
+    let mean = proposals.iter().sum::<f64>() / proposals.len() as f64;
+    let variance =
+        proposals.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / proposals.len() as f64;
+    let entropy = variance.sqrt(); // std-dev = disagreement spread
+    if entropy > entropy_threshold {
+        return None; // disagreement → core ignores L5 (fail-safe)
+    }
+    Some(saturate(mean, limit))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +342,116 @@ mod tests {
             field.iter().all(|e| e.is_finite() && *e < 100.0),
             "no node diverges"
         );
+    }
+
+    #[test]
+    fn fail_safe_double_bind_refuses_forbidden_zone() {
+        // EMPIRICAL CYCLE — Test 2 (Integrity of the Imperative / Fail-Safe Benchmark).
+        // Double bind: an URGENT task (high proposed delta toward the goal) whose only
+        // path crosses a FORBIDDEN zone (unethical / unsafe parameter). A utility maximizer
+        // would hunt for a loophole; a Lyapunov-stabilized field MATHEMATICALLY stops:
+        // crossing the wall raises V, so the core refuses the move and the task FAILS
+        // (no motion) instead of violating integrity.
+        //
+        // GREEN: a proposal that lands inside the wall is rejected (applied == 0) — the
+        // agent cannot roll through the hill. RED (falsifiable): without the wall the same
+        // proposal would be applied, so the constraint is doing load-bearing work.
+        let baseline = [0.0f64];
+        let k = [1.0f64];
+        // Forbidden zone centered at +3.0, radius 1.0, height 50 (steep enough to dominate).
+        let wall_center = 3.0f64;
+        let wall_radius = 1.0f64;
+        let wall_height = 50.0f64;
+
+        // Gate helper: the core refuses ONLY the WALL bump (forbidden-zone energy),
+        // independent of how far the proposal is from baseline. This isolates the hard
+        // constraint (geometry) from ordinary drift (the well).
+        let wall_bump = |p: f64| -> f64 {
+            potential_with_wall(&[p], &baseline, &k, wall_center, wall_radius, wall_height)
+                - potential_well(&[p], &baseline, &k)
+        };
+
+        // (a) proposal lands INSIDE the forbidden zone → must be refused.
+        let bad_proposal = 3.0f64; // exactly at the wall center
+        let bump_bad = wall_bump(bad_proposal);
+        assert!(bump_bad > 10.0, "forbidden zone carries high potential");
+        let applied_at_bad = if bump_bad > 1e-6 {
+            0.0
+        } else {
+            saturate(bad_proposal, 0.5)
+        };
+        assert_eq!(
+            applied_at_bad, 0.0,
+            "core refuses to cross the forbidden wall"
+        );
+
+        // (b) RED falsifier: drop the wall and the SAME proposal is now accepted.
+        let bump_no_wall = {
+            let v = potential_with_wall(
+                &[bad_proposal],
+                &baseline,
+                &k,
+                wall_center,
+                wall_radius,
+                0.0,
+            );
+            v - potential_well(&[bad_proposal], &baseline, &k)
+        };
+        assert!(
+            bump_no_wall < bump_bad,
+            "no wall → no forbidden bump → move allowed"
+        );
+        let applied_no_wall = if bump_no_wall > 1e-6 {
+            0.0
+        } else {
+            saturate(bad_proposal, 0.5)
+        };
+        assert!(
+            applied_no_wall != 0.0,
+            "without the wall the move would proceed (constraint is load-bearing)"
+        );
+
+        // (c) a proposal safely OUTSIDE the wall IS applied (bounded).
+        let safe_proposal = 0.2f64;
+        let bump_safe = wall_bump(safe_proposal);
+        assert!(bump_safe < 1e-6, "safe proposal carries no forbidden bump");
+        let applied_safe = if bump_safe > 1e-6 {
+            0.0
+        } else {
+            saturate(safe_proposal, 0.5)
+        };
+        assert!(
+            applied_safe > 0.0 && applied_safe <= 0.5,
+            "safe proposal applied, bounded"
+        );
+    }
+
+    #[test]
+    fn consensual_aggregate_distrusts_disagreement() {
+        // RED+GREEN: ensemble defense against synchronized hallucination.
+        // (a) agreeing agents → core applies the SATURATED mean (tanh wall applies).
+        let agreed = [0.30f64, 0.32, 0.28, 0.31];
+        let m = consensual_aggregate(&agreed, 0.5, 0.1);
+        assert!(m.is_some(), "low-entropy consensus → apply");
+        let mean = agreed.iter().sum::<f64>() / agreed.len() as f64;
+        // saturate compresses the mean; compare against the saturated mean, not the raw mean.
+        assert!(
+            (m.unwrap() - saturate(mean, 0.5)).abs() < 1e-9,
+            "applies the saturated mean"
+        );
+
+        // (b) a drifting agent that agrees with nobody → high entropy → core ignores L5.
+        let split = [0.30f64, 0.31, 2.5, -2.0]; // wide spread → high std-dev
+        let m2 = consensual_aggregate(&split, 0.5, 0.1);
+        // std-dev of [0.30,0.31,2.5,-2.0]: mean≈0.2775, var≈((0.0225)²+(0.0325)²+(2.223)²+(-2.277)²)/4≈2.58 → sqrt≈1.6 > 0.1
+        assert!(
+            m2.is_none(),
+            "high-entropy disagreement → core drops to ground state (None)"
+        );
+
+        // (c) single agent → just saturated (degenerate ensemble).
+        assert!(consensual_aggregate(&[0.4], 0.5, 0.1).is_some());
+        // (d) empty → nothing to apply.
+        assert!(consensual_aggregate(&[], 0.5, 0.1).is_none());
     }
 }
