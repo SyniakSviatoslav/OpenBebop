@@ -34,6 +34,7 @@ pub mod radio; // the ship's lounge — free-to-listen Lofi/Jazz streams
 pub mod reconnect; // MHD "magnetic reconnection": topology change to shed overload energy
 pub mod redteam; // T3MP3ST deterministic red-team prompt scanner
 pub mod registry; // content-addressed module registry (deterministic)
+pub mod research_patterns; // reverse-engineered patterns (research pass 2026-07-10)
 pub mod router; // the token/model router (cheapest adequate)
 pub mod sealfb; // SEAL closed-loop: field energy → self-tightened tolerance
 pub mod stabilizer; // inherent Lyapunov stability: V̇≤0 monitor, saturation, potential well, ground state
