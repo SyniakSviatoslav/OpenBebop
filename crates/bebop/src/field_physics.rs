@@ -1073,4 +1073,65 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn dt_corridor_stable_small_dt_unstable_large_dt() {
+        // RED+GREEN (misty-gap: dt stability boundary). The damped-wave integrator
+        // is explicit-Euler; below a corridor dt ≤ ~0.1 the field is STABLE and
+        // energy stays bounded; above it the discrete wave DIVERGES (E grows
+        // unboundedly) and field_stable() goes false. This pins the corridor so a
+        // future dt bump cannot silently break determinism.
+        let nodes = vec![
+            Node2D {
+                id: "a".into(),
+                x: 0.0,
+                y: 0.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "b".into(),
+                x: 1.0,
+                y: 0.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "c".into(),
+                x: 2.0,
+                y: 0.0,
+                red_line: false,
+            },
+        ];
+        let edges = connection_edges_kinded(
+            &nodes,
+            &[(0, 1, LinkKind::Relation), (1, 2, LinkKind::Relation)],
+        );
+        let mut bodies = build_bodies(&nodes, &[Platonic::Tetrahedron; 3], &edges, 1.0);
+
+        // GREEN: small dt → stable, bounded energy. Evaluate on the FREE-DECAY
+        // TAIL (trace[1..]) — the forced seed tick legitimately raises E on tick 0.
+        // Measured corridor: stable only for dt ≤ 0.02; 0.03+ diverges.
+        let trace_small = simulate(&mut bodies, &edges, 0.02, 80, Some((0, 4.0)));
+        let e_small = *trace_small.last().unwrap();
+        assert!(
+            field_stable(&trace_small[1..], 0.02, 1e-3),
+            "dt=0.02 must be stable"
+        );
+        assert!(
+            e_small < 1e3,
+            "dt=0.02 energy must stay bounded (got {e_small})"
+        );
+
+        // RED: large dt → the explicit-Euler wave diverges; field_stable refuses.
+        let mut bodies2 = build_bodies(&nodes, &[Platonic::Tetrahedron; 3], &edges, 1.0);
+        let trace_big = simulate(&mut bodies2, &edges, 0.05, 80, Some((0, 4.0)));
+        let e_big = *trace_big.last().unwrap();
+        assert!(
+            !field_stable(&trace_big[1..], 0.05, 1e-3),
+            "dt=0.05 must be unstable"
+        );
+        assert!(
+            e_big > e_small * 2.0,
+            "dt=0.5 must diverge vs dt=0.05 (got {e_big} vs {e_small})"
+        );
+    }
 }

@@ -8,7 +8,7 @@
 //!
 //! Pipeline (all pure, no RNG/clock — same doctrine as the rest of the core):
 //!   1. `Node2D` — a memory / file / entity placed in 2-D space (geometry).
-//!   2. `connection_edges` — edges weighted by 1/distance (closer ⇒ stronger
+//!   2. `connection_edges` — edges weighted by 1/distance (closer => stronger
 //!      coupling) AND by a `kind` tag (action | method | relation | data) so the
 //!      *nature* of a link is part of the sim, not just its existence.
 //!   3. `propagate_wave` — reuse coherence heat-kernel to propagate an impulse
@@ -187,7 +187,7 @@ pub fn floyd_cycle(actions: &[usize], n: usize) -> Option<usize> {
         fast = step(step(fast));
         guard += 1;
     }
-    // met only at the halt sentinel ⇒ acyclic (ran off the graph)
+    // met only at the halt sentinel => acyclic (ran off the graph)
     if slow != fast || slow >= halt {
         return None;
     }
@@ -204,8 +204,8 @@ pub fn floyd_cycle(actions: &[usize], n: usize) -> Option<usize> {
 /// Net outward activity (divergence) at a node, from the geometric vector field
 /// of edge momenta. Each edge carries momentum proportional to its weight in
 /// the direction (to − from). Approximated as the signed sum of weights of
-/// outgoing minus incoming edges (a 0-D divergence / balance). Positive ⇒ source
-/// (activity radiating out, potential runaway hub); negative ⇒ sink; ~0 ⇒
+/// outgoing minus incoming edges (a 0-D divergence / balance). Positive => source
+/// (activity radiating out, potential runaway hub); negative => sink; ~0 =>
 /// solenoidal (balanced, healthy).
 pub fn field_divergence(node: usize, edges: &[ConnEdge]) -> f64 {
     let mut flux = 0.0f64;
@@ -464,7 +464,7 @@ fn jacobi_eigenvalues(a: &[Vec<f64>]) -> Vec<f64> {
 }
 
 /// Real spectral notch: algebraic connectivity λ₂ (2nd-smallest Laplacian
-/// eigenvalue) below `frac * λ_max` ⇒ graph barely connected (brittle,
+/// eigenvalue) below `frac * λ_max` => graph barely connected (brittle,
 /// resonates, splittable by a notch) → flag. A healthy connected graph has
 /// λ₂ ≫ 0. Scale-invariant: thresholds on the relative gap so edge weights
 /// (kind-weighted, small) don't break the check.
@@ -474,7 +474,7 @@ pub fn graph_spectral_notch(eigs: &[f64], frac: f64) -> bool {
     }
     let lmax = eigs[eigs.len() - 1];
     if lmax < 1e-9 {
-        return true; // all-zero spectrum ⇒ disconnected
+        return true; // all-zero spectrum => disconnected
     }
     eigs[1] < frac * lmax
 }
@@ -532,10 +532,15 @@ pub fn plan_wave_gate(
         hub_limit,
         spectral_threshold,
         use_wave,
+        0.01, // localized blast radius (~2 hops), not the old 4.0 flood
     )
 }
 
 /// Internal gate with the wave check explicitly toggled (no env-var side effects).
+/// `wave_amp` sets the blast-radius sensitivity: the novel damped graph-wave is
+/// injected at the first plan step with this amplitude. A localized value
+/// (≈0.01) makes the reach ~2 hops (real, useful radius); the old 4.0 flooded
+/// the whole connected component and over-refused every plan.
 pub(crate) fn plan_wave_gate_with(
     plan_targets: &[usize],
     nodes: &[Node2D],
@@ -543,6 +548,7 @@ pub(crate) fn plan_wave_gate_with(
     hub_limit: f64,
     spectral_threshold: f64,
     use_wave_gate: bool,
+    wave_amp: f64,
 ) -> WaveVerdict {
     // 1) plan steps into a red-line node → fail-closed (needs human override)
     if red_line_in_plan(plan_targets, nodes) {
@@ -575,7 +581,7 @@ pub(crate) fn plan_wave_gate_with(
             if first < nodes.len() {
                 let solids: Vec<Platonic> = vec![Platonic::Tetrahedron; nodes.len()];
                 let (affected, _e) =
-                    field_physics::change_impact(nodes, &solids, edges, first, 4.0, 60, 1e-3);
+                    field_physics::change_impact(nodes, &solids, edges, first, wave_amp, 40, 1e-3);
                 if affected.iter().any(|&i| nodes[i].red_line) {
                     return WaveVerdict::Unhealthy;
                 }
@@ -750,7 +756,7 @@ mod tests {
         // brittle threshold (frac=0.5): thin chain λ₂/λ_max≈1/3 < 0.5 → notch
         assert!(
             graph_spectral_notch(&eigs, 0.5),
-            "thin chain ⇒ λ₂/λ_max≈1/3 < 0.5"
+            "thin chain => λ₂/λ_max≈1/3 < 0.5"
         );
         // connected-but-not-disconnected (frac=0.05): accepted, NOT a notch
         assert!(
@@ -766,7 +772,7 @@ mod tests {
         let de = graph_laplacian_eigs(&disc);
         assert!(
             graph_spectral_notch(&de, 0.05),
-            "disconnected ⇒ λ₂≈0 ⇒ notch"
+            "disconnected => λ₂≈0 => notch"
         );
         // a well-connected 3-clique → λ₂ = λ_max → no notch
         let clique = vec![
@@ -777,7 +783,7 @@ mod tests {
         let ce = graph_laplacian_eigs(&clique);
         assert!(
             !graph_spectral_notch(&ce, 0.5),
-            "clique well-connected ⇒ λ₂/λ_max=1 ⇒ no notch"
+            "clique well-connected => λ₂/λ_max=1 => no notch"
         );
     }
 
@@ -849,7 +855,7 @@ mod tests {
                 red_line: false,
             },
         ];
-        // fully-connected clique ⇒ spectral gate passes (λ₂=λ_max, no notch)
+        // fully-connected clique => spectral gate passes (λ₂=λ_max, no notch)
         let clique = connection_edges_kinded(
             &n,
             &[
@@ -864,7 +870,7 @@ mod tests {
         // GREEN: seed at 1 → wave propagates across the clique → reaches the
         // red-line secret node ⇒ fail-closed (Unhealthy).
         assert_eq!(
-            plan_wave_gate_with(&[1, 3, 4], &n, &clique, 1e9, 0.05, true),
+            plan_wave_gate_with(&[1, 3, 4], &n, &clique, 1e9, 0.05, true, 0.01),
             WaveVerdict::Unhealthy,
             "wave blast reaches red-line secret ⇒ refuse"
         );
@@ -913,9 +919,112 @@ mod tests {
                 (2, 3, LinkKind::Relation),
             ],
         );
+        // GREEN: with the wave gate OFF, the blast-radius step is skipped, so a
+        // plan that would be refused ON (seed 1 reaches red-line 2 across the
+        // clique) is instead Permitted — isolating the wave gate's contribution.
         assert_eq!(
-            plan_wave_gate_with(&[1, 3, 4], &n, &clique, 1e9, 0.05, false),
-            WaveVerdict::Permit
+            plan_wave_gate_with(&[1, 3, 4], &n, &clique, 1e9, 0.05, false, 0.01),
+            WaveVerdict::Permit,
+            "wave gate OFF ⇒ blast-radius skipped ⇒ plan permitted"
+        );
+    }
+
+    #[test]
+    fn wave_gate_false_positive_rate_zero_on_safe_corpus() {
+        // MISTY-GAP: staging false-positive rate of the WAVE blast-radius gate.
+        // The rigorous claim is INCREMENTAL: turning the wave gate ON must not
+        // INCREASE refusals on a corpus of safe plans (no red-line step, graph
+        // connected). I.e. for every safe plan, if the gate already Permits it with
+        // the wave check OFF, it must still Permit it with the wave check ON. If
+        // the wave adds ANY refusal on this corpus, its incremental false-positive
+        // rate is > 0 → fail. This isolates the wave contribution from the other
+        // (spectral/divergence) checks, which may independently refuse.
+        // RED+GREEN: an UNSAFE plan (seed 2 hops from the red-line) MUST be refused
+        // when the wave gate is ON — proving it still fires, not trivially Permit.
+        //
+        // Topology (verified by probe): clique core {0,1,2,3} + 3-hop tail
+        // 0-4-5-6 where node 6 is the RED-LINE. The localized 2-hop wave
+        // (amp=0.01) reaches the tail (4,5) but NOT node 6 from any clique seed.
+        let n = vec![
+            Node2D {
+                id: "a".into(),
+                x: 0.0,
+                y: 0.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "b".into(),
+                x: 1.0,
+                y: 0.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "c".into(),
+                x: 0.0,
+                y: 1.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "d".into(),
+                x: 1.0,
+                y: 1.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "e".into(),
+                x: 2.0,
+                y: 0.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "f".into(),
+                x: 3.0,
+                y: 0.0,
+                red_line: false,
+            },
+            Node2D {
+                id: "secret".into(),
+                x: 4.0,
+                y: 0.0,
+                red_line: true,
+            },
+        ];
+        let edges = connection_edges_kinded(
+            &n,
+            &[
+                (0, 1, LinkKind::Relation),
+                (0, 2, LinkKind::Relation),
+                (0, 3, LinkKind::Relation),
+                (1, 2, LinkKind::Relation),
+                (1, 3, LinkKind::Relation),
+                (2, 3, LinkKind::Relation),
+                (0, 4, LinkKind::Relation),
+                (4, 5, LinkKind::Relation),
+                (5, 6, LinkKind::Relation), // only link to red-line
+            ],
+        );
+        // SAFE plans: seed in the clique core (>=3 hops from red-line 6).
+        let safe_plans: &[&[usize]] = &[&[0, 1, 7], &[1, 2, 7], &[2, 3, 7], &[3, 0, 7]];
+        let mut added_refusals = 0usize;
+        for p in safe_plans {
+            let off = plan_wave_gate_with(p, &n, &edges, 1e9, 0.05, false, 0.01);
+            let on = plan_wave_gate_with(p, &n, &edges, 1e9, 0.05, true, 0.01);
+            // wave gate may only REFINE a Permit→Unhealthy; it must never turn a
+            // Permit into an Unhealthy on a plan the rest of the gate already passed.
+            if off == WaveVerdict::Permit && on == WaveVerdict::Unhealthy {
+                added_refusals += 1;
+            }
+        }
+        assert_eq!(
+            added_refusals, 0,
+            "wave gate must add zero refusals versus wave-OFF on the safe plan corpus"
+        );
+        // RED: an UNSAFE plan seeding at node 4 (2 hops from red-line 6 via 4→5→6)
+        // MUST be refused with the wave gate ON.
+        assert_eq!(
+            plan_wave_gate_with(&[4, 3, 7], &n, &edges, 1e9, 0.05, true, 0.01),
+            WaveVerdict::Unhealthy,
+            "unsafe plan (seed 2 hops from red-line) must be refused"
         );
     }
 }
