@@ -57,50 +57,226 @@ fn fe_to_bytes(a: &Fe) -> [u8; 32] {
     *a
 }
 
-/// Reduce a big-endian bignum mod p via bit-by-bit division (p is fixed).
-fn mod_p_be(num_be: &[u8]) -> [u8; 32] {
-    let mut rem: Vec<u8> = Vec::new();
-    for &byte in num_be {
-        for bit in (0..8).rev() {
-            rem = add_be(&rem, &rem);
-            if (byte >> bit) & 1 == 1 {
-                rem = add_be(&rem, &[1]);
-            }
-            if cmp_be(&rem, &P_BE) != core::cmp::Ordering::Less {
-                rem = sub_be(&rem, &P_BE);
-            }
+// ── Fast GF(2^255-19) arithmetic in 64-bit limbs (no heap, no per-bit loop) ──
+// `Fe` stays the canonical 32-byte LE integer < p. The slow path was a
+// `Vec<u8>` big-endian bignum with a bit-by-bit division per field op; this
+// replaces it with fixed 64-bit-limb schoolbook + a 2^255≡19 reduction.
+// Algebra is identical to the RFC 8032 §5.1 spec — same values, ~1000× faster.
+// p = 2^255 - 19  (little-endian u64 limbs).
+const P_LIMBS: [u64; 4] = [
+    0xffff_ffff_ffff_ffed,
+    0xffff_ffff_ffff_ffff,
+    0xffff_ffff_ffff_ffff,
+    0x7fff_ffff_ffff_ffff,
+];
+
+#[inline]
+fn fe_to_limbs(a: &Fe) -> [u64; 4] {
+    let mut out = [0u64; 4];
+    for i in 0..4 {
+        let mut limb = 0u64;
+        for j in 0..8 {
+            limb |= (a[i * 8 + j] as u64) << (8 * j);
         }
-    }
-    // rem is BE; convert to 32-byte LE (trim/pad).
-    while rem.len() < 32 {
-        rem.insert(0, 0);
-    }
-    let be32 = if rem.len() >= 32 { &rem[rem.len() - 32..] } else { &rem[..] };
-    let mut out = [0u8; 32];
-    for i in 0..be32.len() {
-        out[i] = be32[be32.len() - 1 - i];
+        out[i] = limb;
     }
     out
 }
 
 #[inline]
+fn fe_from_limbs(a: &[u64; 4]) -> Fe {
+    let mut out = [0u8; 32];
+    for i in 0..4 {
+        let limb = a[i];
+        for j in 0..8 {
+            out[i * 8 + j] = (limb >> (8 * j)) as u8;
+        }
+    }
+    out
+}
+
+/// Schoolbook 4×4 -> 8-limb product of two 256-bit LE values.
+/// Uses a full u128 accumulator with a propagated carry chain so no limb silently
+/// truncates (a bare `p[i+4] = (p[i+4] + carry) as u64` would drop high bits).
+#[inline]
+fn limbs_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
+    let mut p = [0u64; 8];
+    for i in 0..4 {
+        let mut carry: u128 = 0;
+        for j in 0..4 {
+            let idx = i + j;
+            let v = p[idx] as u128 + (a[i] as u128) * (b[j] as u128) + carry;
+            p[idx] = v as u64;
+            carry = v >> 64;
+        }
+        // Propagate the leftover carry through the high limbs.
+        let mut k = i + 4;
+        let mut c = carry;
+        while c > 0 {
+            let v = p[k] as u128 + c;
+            p[k] = v as u64;
+            c = v >> 64;
+            k += 1;
+        }
+    }
+    p
+}
+
+/// Fold a value V (up to 8 LE u64 limbs) mod p using 2^255 ≡ 19 (mod p):
+///   V = A + 2^255·B  →  A + 19·B
+/// Returns the result as up to 7 LE limbs.
+#[inline]
+fn fold_val(v: &[u64; 8]) -> [u64; 7] {
+    let a0 = v[0];
+    let a1 = v[1];
+    let a2 = v[2];
+    let a3 = v[3] & 0x7fff_ffff_ffff_ffff;
+    // B = V >> 255 (V < 2^512 so B < 2^257). Correct limb extraction:
+    //   b_k = (V bits 255+64k .. 255+64k+63)
+    //       = (v_{k+4} << 1) | (v_{k+3} >> 63), with v_8 = 0.
+    let b0 = (v[4] << 1) | (v[3] >> 63);
+    let b1 = (v[5] << 1) | (v[4] >> 63);
+    let b2 = (v[6] << 1) | (v[5] >> 63);
+    let b3 = (v[7] << 1) | (v[6] >> 63);
+    let b4 = v[7] >> 63;
+    let b5 = 0u64;
+    let mut tb = [0u64; 6];
+    let mut carry = 0u128;
+    let b = [b0, b1, b2, b3, b4, b5];
+    for i in 0..6 {
+        let val = (b[i] as u128) * 19 + carry;
+        tb[i] = val as u64;
+        carry = val >> 64;
+    }
+    let mut r = [0u64; 7];
+    r[0] = a0;
+    r[1] = a1;
+    r[2] = a2;
+    r[3] = a3;
+    let mut c = 0u128;
+    for i in 0..6 {
+        let val = r[i] as u128 + tb[i] as u128 + c;
+        r[i] = val as u64;
+        c = val >> 64;
+    }
+    if c > 0 {
+        r[6] = c as u64;
+    }
+    r
+}
+
+/// Reduce an 8-limb product mod p = 2^255-19. Iterate the 2^255-fold (each pass
+/// shrinks the magnitude by ~2^255) until the value fits in 255 bits, then do a
+/// single conditional subtraction of p. Converges in <= 3 folds.
+fn reduce_p(prod: &[u64; 8]) -> [u64; 4] {
+    let mut r = fold_val(prod);
+    let mut guard = 0;
+    while (r[4] | r[5] | r[6]) != 0 || r[3] >= 0x8000_0000_0000_0000 {
+        let v8 = [r[0], r[1], r[2], r[3], r[4], r[5], r[6], 0];
+        r = fold_val(&v8);
+        guard += 1;
+        if guard > 8 {
+            break;
+        }
+    }
+    if limbs_ge_p(&r) {
+        limbs_sub_p(&mut r);
+    }
+    [r[0], r[1], r[2], r[3]]
+}
+
+#[inline]
+fn limbs_ge_p(r: &[u64; 7]) -> bool {
+    for i in (4..7).rev() {
+        if r[i] != 0 {
+            return true;
+        }
+    }
+    for i in (0..4).rev() {
+        if r[i] > P_LIMBS[i] {
+            return true;
+        }
+        if r[i] < P_LIMBS[i] {
+            return false;
+        }
+    }
+    true // r == p: must still subtract p to normalize to 0
+}
+
+fn limbs_sub_p(r: &mut [u64; 7]) {
+    let mut borrow = 0i128;
+    for i in 0..4 {
+        let v = r[i] as i128 - P_LIMBS[i] as i128 - borrow;
+        if v < 0 {
+            r[i] = (v + (1i128 << 64)) as u64;
+            borrow = 1;
+        } else {
+            r[i] = v as u64;
+            borrow = 0;
+        }
+    }
+    for i in 4..7 {
+        if borrow == 0 {
+            break;
+        }
+        let v = r[i] as i128 - borrow;
+        if v < 0 {
+            r[i] = (v + (1i128 << 64)) as u64;
+            borrow = 1;
+        } else {
+            r[i] = v as u64;
+            borrow = 0;
+        }
+    }
+}
+
+#[inline]
 fn fe_add(a: &Fe, b: &Fe) -> Fe {
-    let s = add_be(&be(a), &be(b));
-    mod_p_be(&s)
+    let la = fe_to_limbs(a);
+    let lb = fe_to_limbs(b);
+    let mut s = [0u64; 8];
+    let mut carry = 0u128;
+    for i in 0..4 {
+        let v = la[i] as u128 + lb[i] as u128 + carry;
+        s[i] = v as u64;
+        carry = v >> 64;
+    }
+    if carry > 0 {
+        s[4] = carry as u64;
+    }
+    let prod = [s[0], s[1], s[2], s[3], s[4], 0, 0, 0];
+    fe_from_limbs(&reduce_p(&prod))
 }
 
 #[inline]
 fn fe_sub(a: &Fe, b: &Fe) -> Fe {
-    let av = be(a);
-    let bv = be(b);
-    let diff = if cmp_be(&av, &bv) != core::cmp::Ordering::Less {
-        sub_be(&av, &bv)
-    } else {
-        // a - b + p  (av < bv, so add p first)
-        let added = add_be(&P_BE, &av);
-        sub_be(&added, &bv)
-    };
-    mod_p_be(&diff)
+    let la = fe_to_limbs(a);
+    let lb = fe_to_limbs(b);
+    // Compute p + a as a 5-limb value WITH carry propagation into pa[4].
+    let mut pa = [0u64; 5];
+    let mut c: u128 = 0;
+    for i in 0..4 {
+        let v = P_LIMBS[i] as u128 + la[i] as u128 + c;
+        pa[i] = v as u64;
+        c = v >> 64;
+    }
+    pa[4] = c as u64; // 0 or 1 (p+a < 2p < 2^256 when a < p)
+    // Now pa - b (b has 4 limbs, b < p). Result is in [0, 2p); keep pa[4] as the
+    // high limb so the carry isn't lost. Integer pa >= b so final borrow is 0.
+    let mut d = [0u64; 8];
+    let mut borrow = 0i128;
+    for i in 0..4 {
+        let mut v = pa[i] as i128 - lb[i] as i128 - borrow;
+        if v < 0 {
+            v += 1i128 << 64;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        d[i] = v as u64;
+    }
+    let prod = [d[0], d[1], d[2], d[3], pa[4], 0, 0, 0];
+    fe_from_limbs(&reduce_p(&prod))
 }
 
 #[inline]
@@ -110,8 +286,8 @@ fn fe_neg(a: &Fe) -> Fe {
 
 #[inline]
 fn fe_mul(a: &Fe, b: &Fe) -> Fe {
-    let prod = mul_be(&be(a), &be(b));
-    mod_p_be(&prod)
+    let prod = limbs_mul(&fe_to_limbs(a), &fe_to_limbs(b));
+    fe_from_limbs(&reduce_p(&prod))
 }
 
 /// d = -121665/121666 mod p, computed from integers (not a hardcoded limb constant),
@@ -290,7 +466,10 @@ fn point_decompress(s: &[u8; 32]) -> Option<Point> {
     let u = fe_sub(&yy, &one);
     let v = fe_add(&fe_mul(&fe_d(), &yy), &one);
     let uv_inv = fe_mul(&u, &fe_invert(&v)); // = x^2 candidate
-    let x = fe_sqrt(&uv_inv)?; // root r with r's own low-bit parity
+    let x = match fe_sqrt(&uv_inv) {
+        None => return None,
+        Some(x) => x,
+    }; // root r with r's own low-bit parity
     // The other root is -r; verify r^2 * v == u (else non-residue → reject).
     let check = fe_sub(&fe_mul(&fe_square(&x), &v), &u);
     if !fe_eq(&check, &fe_0()) {

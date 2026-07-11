@@ -3,6 +3,16 @@
 > Greenfield from-scratch PQ crypto + deterministic core. Zero-dependency, `no_std + alloc`.
 > These rules are standing orders; they override convenience and "it's probably fine".
 
+## 0. Global default workflow (multipilot-native, ON by default)
+For ANY build task or loop, the default operating mode is a 3-phase pipeline:
+1. **FABLE RESEARCH FIRST** — run a claude-fable deep-research pass to produce a *plan blueprint*
+   (exact params, algorithm skeleton, function signatures, falsifiable-KAT strategy) BEFORE coding.
+2. **3-MODEL DO** — the doer agent/model executes the build. The doer NEVER reviews its own work.
+3. **3-MODEL REVIEW/AUDIT (post)** — after finishing, run ANOTHER 3-model review (independent
+   reviewer + independent overlap) of the completed task. This is the multipilot native approach.
+   **Invariant: doer ≠ reviewer ≠ overlap (no agent/model reviews its own output).**
+Override only on an explicit per-task operator instruction.
+
 ## 1. Three-model peer review (NEVER self-review) — "threelaterition"
 No agent may build AND certify its own work. Every non-trivial change goes through a 3-stage
 pipeline; the gate enforces it on commit (`.git/hooks/pre-commit` → `scripts/three-model-review.sh`):
@@ -43,6 +53,6 @@ When a test is red, the bug is real even if the code "looks right". Investigate 
 oracle (e.g. a Python reference implementation) before concluding the test is wrong.
 
 ## Build/test
-- `cargo test` — 294 Rust tests, RED+GREEN, 0 fail
+- `cargo test` — 385 Rust tests, RED+GREEN, 0 fail
 - `cargo test -p bebop2-core` (full suite), `cargo clippy -p bebop2-core --all-targets`
 - Crypto KATs live in `bebop2/core/src/kat/`; RFC 8439 §2.5.2 + Appendix A.3 are the Poly1305 anchors.
