@@ -18,6 +18,86 @@ use crate::redteam::{default_rules, scan, verdict};
 use crate::zkvm::{cross, verify, verify_expect};
 use std::io::{BufRead, Write};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DoS hardening — resource-exhaustion guards for `call_tool`.
+//
+// Prior fable audit (deleg_91222529) flagged `call_tool` as the #1 attack
+// surface: it accepted an arbitrary JSON `args` blob with NO size bound, and
+// several arms (sandbox/recon/harvest/wave_probe/dispatch) allocated directly
+// from attacker-controlled fields. An oversized `args` (e.g. `tail /dev/zero`
+// style) or a huge per-arg string / array, or an unbounded `dispatch` fan-out
+// `n`, could be used to saturate RAM or spawn a fork-bomb. All caps below are
+// defensive; they fire BEFORE any tool engine runs. `field_gate` vetoes and
+// red-line checks are untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Hard cap on the serialized size of the entire `args` JSON blob (1 MiB).
+/// Any request exceeding this is rejected at the entry of `call_tool`.
+pub const MAX_TOOL_ARG_BYTES: usize = 1_048_576;
+
+/// Hard cap on any single string argument (e.g. `task`/`query`/`text`/`cmd`)
+/// — 64 KiB. Prevents a single oversized string from saturating allocation.
+pub const MAX_ARG_STR_BYTES: usize = 65_536;
+
+/// Hard cap on the number of elements in any array argument (e.g. `handles`,
+/// `sources`, `scope`) — bounds allocation + downstream iteration.
+pub const MAX_ARG_ARRAY_LEN: usize = 1_024;
+
+/// Hard cap on the multipilot fan-out `n` for `dispatch`. Even if an attacker
+/// asks for `n=10_000`, the fan-out is clamped so we never spawn unbounded
+/// sub-processes / pilots.
+pub const MAX_DISPATCH_FANOUT: usize = 16;
+
+/// Extract a string argument, capped at [`MAX_ARG_STR_BYTES`].
+/// Returns an `Err` (matching `call_tool`'s error contract) if the string
+/// exceeds the cap — so the caller can `?`-propagate it.
+pub fn take_str(args: &serde_json::Value, key: &str) -> Result<String, String> {
+    let s = args
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if s.len() > MAX_ARG_STR_BYTES {
+        return Err(format!(
+            "arg '{key}' exceeds max length {} bytes (got {})",
+            MAX_ARG_STR_BYTES,
+            s.len()
+        ));
+    }
+    Ok(s)
+}
+
+/// Extract a string-array argument, capped at [`MAX_ARG_ARRAY_LEN`] elements
+/// AND at [`MAX_ARG_STR_BYTES`] per element.
+pub fn take_str_array(args: &serde_json::Value, key: &str) -> Result<Vec<String>, String> {
+    let v = args
+        .get(key)
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+    if v.len() > MAX_ARG_ARRAY_LEN {
+        return Err(format!(
+            "arg '{key}' array exceeds max length {} (got {})",
+            MAX_ARG_ARRAY_LEN,
+            v.len()
+        ));
+    }
+    for el in &v {
+        if el.len() > MAX_ARG_STR_BYTES {
+            return Err(format!(
+                "arg '{key}' element exceeds max length {} bytes (got {})",
+                MAX_ARG_STR_BYTES,
+                el.len()
+            ));
+        }
+    }
+    Ok(v)
+}
+
 /// A tool exposed over MCP.
 pub struct McpTool {
     pub name: &'static str,
@@ -218,14 +298,25 @@ pub fn call_tool(
     mm: &mut crate::memory::LivingMemory,
     audit: &mut crate::research_patterns::AuditLog,
 ) -> Result<String, String> {
+    // ── DoS hardening (entry guard) ───────────────────────────────────────────
+    // Reject any request whose serialized `args` exceeds 1 MiB BEFORE any tool
+    // engine runs. `to_string` is bounded (no streaming) so this itself cannot
+    // be exhausted by a malicious payload.
+    let arg_bytes = args.to_string().len();
+    if arg_bytes > MAX_TOOL_ARG_BYTES {
+        return Err(format!(
+            "args too large: {} bytes exceeds cap of {} bytes (1 MiB)",
+            arg_bytes, MAX_TOOL_ARG_BYTES
+        ));
+    }
+
     match name {
         "dispatch" => {
-            let task = args
-                .get("task")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
-            let n = args.get("n").and_then(|n| n.as_u64()).unwrap_or(3) as usize;
+            let task = take_str(args, "task")?;
+            // Clamp attacker-controlled fan-out `n` so multipilot can never
+            // spawn unbounded sub-processes / pilots.
+            let requested = args.get("n").and_then(|n| n.as_u64()).unwrap_or(3) as usize;
+            let n = requested.min(MAX_DISPATCH_FANOUT);
             let r = run_multipilot(
                 &task,
                 n,
@@ -239,11 +330,7 @@ pub fn call_tool(
             ))
         }
         "recall" => {
-            let q = args
-                .get("query")
-                .and_then(|q| q.as_str())
-                .unwrap_or("")
-                .to_string();
+            let q = take_str(args, "query")?;
             let mm = seed_memory();
             let r = recall(&mm, &q, 3);
             if r.hits.is_empty() {
@@ -259,11 +346,7 @@ pub fn call_tool(
         }
         "outfit" => Ok(OUTFIT.banner()),
         "scan" => {
-            let text = args
-                .get("text")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
+            let text = take_str(args, "text")?;
             let rules = default_rules();
             let v = verdict(&text, &rules);
             let hits = scan(&text, &rules);
@@ -322,11 +405,7 @@ pub fn call_tool(
             // refused flag for telemetry, while staying fail-closed (Unhealthy
             // also refuses). Honest signal: caller can distinguish physics
             // veto (override) from sim-degraded refusal (unhealthy).
-            let task = args
-                .get("task")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
+            let task = take_str(args, "task")?;
             let verdict = field_gate_verdict(&task);
             Ok(format!(
                 "field: verdict={:?} refused={} string='{}'",
@@ -336,21 +415,9 @@ pub fn call_tool(
             ))
         }
         "boundary" => {
-            let prev = args
-                .get("prev")
-                .and_then(|s| s.as_str())
-                .unwrap_or("ledger-v1")
-                .to_string();
-            let input = args
-                .get("input")
-                .and_then(|s| s.as_str())
-                .unwrap_or("+100")
-                .to_string();
-            let meta = args
-                .get("meta")
-                .and_then(|s| s.as_str())
-                .unwrap_or("credit")
-                .to_string();
+            let prev = take_str(args, "prev")?;
+            let input = take_str(args, "input")?;
+            let meta = take_str(args, "meta")?;
             let (computed, r) = cross(
                 prev.as_bytes(),
                 input.as_bytes(),
@@ -449,11 +516,7 @@ pub fn call_tool(
         }
         "wire" => {
             // 3-LAYER RUNTIME (field sim ↔ L5 stabilizer ↔ living memory ↔ project gate).
-            let task = args
-                .get("task")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
+            let task = take_str(args, "task")?;
             let l5 = crate::wiring::L5Proposal {
                 v_prev: args.get("v_prev").and_then(|v| v.as_f64()).unwrap_or(1.0),
                 v_cur: args.get("v_cur").and_then(|v| v.as_f64()).unwrap_or(1.0),
@@ -536,11 +599,7 @@ pub fn call_tool(
             // CLOUD SANDBOX — isolated command exec, network-off by default
             // (fail-closed: refuses egress unless explicitly opted in AND the
             // sandbox permits it). Air-gapped per the no-network runtime rule.
-            let cmd = args
-                .get("cmd")
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-                .to_string();
+            let cmd = take_str(args, "cmd")?;
             let allow_network = args
                 .get("network")
                 .and_then(|n| n.as_bool())
@@ -561,20 +620,8 @@ pub fn call_tool(
             // target, dedups findings, records to living memory + audit. Fail-closed:
             // out-of-scope target is refused (no recon performed).
             let target_ip: u32 = args.get("target_ip").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            let target_host = args
-                .get("target_host")
-                .and_then(|h| h.as_str())
-                .unwrap_or("")
-                .to_string();
-            let scope_cidrs: Vec<String> = args
-                .get("scope")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let target_host = take_str(args, "target_host")?;
+            let scope_cidrs: Vec<String> = take_str_array(args, "scope")?;
 
             let mut scope = crate::research_patterns::TargetScope::new();
             for c in &scope_cidrs {
@@ -658,24 +705,8 @@ pub fn call_tool(
         "harvest" => {
             // OSINT naming enumeration (theHarvester/maigret/spiderfoot pattern).
             // Deterministic + network-OFF. Fail-closed: empty handles/sources → refuse.
-            let handles: Vec<String> = args
-                .get("handles")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let sources: Vec<String> = args
-                .get("sources")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let handles: Vec<String> = take_str_array(args, "handles")?;
+            let sources: Vec<String> = take_str_array(args, "sources")?;
             if handles.is_empty() || sources.is_empty() {
                 return Ok("HARVEST: REFUSED — empty handles or sources (fail-closed)".to_string());
             }
@@ -1136,6 +1167,133 @@ mod tests {
         assert!(
             txt.contains("WAVE_PROBE: OK"),
             "safe graph must be OK: {txt}"
+        );
+    }
+
+    // ── DoS-hardening regression tests (RED + GREEN, all falsifiable) ──────────
+
+    #[test]
+    fn mcp_call_tool_rejects_oversized_args_red() {
+        // RED (the #1 audit finding): an `args` blob > MAX_TOOL_ARG_BYTES must
+        // be rejected at the `call_tool` entry, BEFORE any tool engine runs.
+        // Falsifiable: removing the entry guard makes this fail.
+        let big = "x".repeat(MAX_TOOL_ARG_BYTES + 1);
+        let mut mm = crate::memory::LivingMemory::new();
+        let mut audit = crate::research_patterns::AuditLog::new();
+        let r = call_tool(
+            "recall",
+            &serde_json::json!({ "query": big }),
+            &mut mm,
+            &mut audit,
+        );
+        assert!(r.is_err(), "oversized args must be rejected");
+        assert!(
+            r.unwrap_err().contains("args too large"),
+            "error must name the cap"
+        );
+    }
+
+    #[test]
+    fn mcp_call_tool_accepts_max_sized_string_arg_green() {
+        // GREEN: a string argument exactly AT the per-arg cap (MAX_ARG_STR_BYTES)
+        // is accepted (the boundary is inclusive). This proves the guard does
+        // not reject legitimate max-sized input. Falsifiable: lowering
+        // MAX_ARG_STR_BYTES below 64 KiB (or making the cap exclusive) fails.
+        let exact = "x".repeat(MAX_ARG_STR_BYTES);
+        let mut mm = crate::memory::LivingMemory::new();
+        let mut audit = crate::research_patterns::AuditLog::new();
+        let r = call_tool(
+            "scan",
+            &serde_json::json!({ "text": exact }),
+            &mut mm,
+            &mut audit,
+        );
+        assert!(
+            r.is_ok(),
+            "string arg exactly at per-arg cap must be accepted: {:?}",
+            r.err()
+        );
+    }
+
+    #[test]
+    fn mcp_call_tool_rejects_oversized_string_arg_red() {
+        // RED: a single string arg (> MAX_ARG_STR_BYTES) must be rejected.
+        // Falsifiable: removing the take_str cap makes this fail.
+        let big = "y".repeat(MAX_ARG_STR_BYTES + 1);
+        let mut mm = crate::memory::LivingMemory::new();
+        let mut audit = crate::research_patterns::AuditLog::new();
+        let r = call_tool(
+            "scan",
+            &serde_json::json!({ "text": big }),
+            &mut mm,
+            &mut audit,
+        );
+        assert!(r.is_err(), "oversized string arg must be rejected");
+        assert!(
+            r.unwrap_err().contains("exceeds max length"),
+            "error must name the string cap"
+        );
+    }
+
+    #[test]
+    fn mcp_call_tool_normal_dispatch_recall_still_work_green() {
+        // GREEN: normal-sized dispatch + recall continue to succeed after the
+        // caps are added. Falsifiable: a broken cap would break these paths.
+        let mut mm = crate::memory::LivingMemory::new();
+        let mut audit = crate::research_patterns::AuditLog::new();
+        let d = call_tool(
+            "dispatch",
+            &serde_json::json!({ "task": "wire the field core", "n": 3 }),
+            &mut mm,
+            &mut audit,
+        );
+        assert!(d.is_ok(), "normal dispatch must succeed: {:?}", d.err());
+        assert!(
+            d.unwrap().contains("multipilot(3)"),
+            "dispatch must report clamped-as-requested fan-out n=3"
+        );
+
+        let r = call_tool(
+            "recall",
+            &serde_json::json!({ "query": "copilot" }),
+            &mut mm,
+            &mut audit,
+        );
+        assert!(r.is_ok(), "normal recall must succeed: {:?}", r.err());
+        assert!(
+            r.unwrap().contains("doer/checker"),
+            "recall must return payload"
+        );
+    }
+
+    #[test]
+    fn mcp_call_tool_clamps_dispatch_fanout_red() {
+        // RED: `dispatch` with attacker-controlled n=10_000 must be CLAMPED to
+        // MAX_DISPATCH_FANOUT (16). The output must report n=16, and must NOT
+        // report a larger fan-out. Falsifiable: removing `.min(MAX_DISPATCH_FANOUT)`
+        // makes this fail (it would report multipilot(10000)).
+        let mut mm = crate::memory::LivingMemory::new();
+        let mut audit = crate::research_patterns::AuditLog::new();
+        let d = call_tool(
+            "dispatch",
+            &serde_json::json!({ "task": "fuzz", "n": 10_000 }),
+            &mut mm,
+            &mut audit,
+        );
+        assert!(
+            d.is_ok(),
+            "clamped dispatch must still succeed: {:?}",
+            d.err()
+        );
+        let out = d.unwrap();
+        assert!(
+            out.contains(&format!("multipilot({})", MAX_DISPATCH_FANOUT)),
+            "fan-out must be clamped to {}: {out}",
+            MAX_DISPATCH_FANOUT
+        );
+        assert!(
+            !out.contains("multipilot(10000)"),
+            "fan-out must NOT reflect the attacker-requested 10000: {out}"
         );
     }
 }
