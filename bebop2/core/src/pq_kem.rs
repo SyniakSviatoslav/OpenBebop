@@ -201,13 +201,13 @@ fn sha3_512(data: &[u8]) -> [u8; 64] {
     o
 }
 // XOFs (SHAKE). `out` length may be arbitrary.
-fn shake128(data: &[u8], out: &mut [u8]) {
+pub fn shake128(data: &[u8], out: &mut [u8]) {
     let mut k = Keccak::new(168);
     k.absorb(data);
     k.pad(0x1f);
     k.squeeze(out);
 }
-fn shake256(data: &[u8], out: &mut [u8]) {
+pub fn shake256(data: &[u8], out: &mut [u8]) {
     let mut k = Keccak::new(136);
     k.absorb(data);
     k.pad(0x1f);
