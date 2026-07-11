@@ -300,22 +300,35 @@ fn sample_in_ball(seed: &[u8; 32]) -> Poly {
 // ─────────────────────────────────────────────────────────────────────────────
 // Decompose / hint (FIPS 204 §6.2.3)
 // ─────────────────────────────────────────────────────────────────────────────
-fn highbits(r: i32, alpha: i32) -> i32 {
-    // FIPS 204 §6.2.3 decompose: r1 = round((r mod⁺ Q)/α), so r0 = r mod⁺ Q − r1·α ∈ [−α/2, α/2].
+fn decompose(r: i32, alpha: i32) -> (i32, i32) {
+    // FIPS 204 Alg 36 Decompose(r): r0 = r mod± α (centered in (-α/2, α/2]);
+    // r1 = (r - r0)/α, special case r - r0 = q-1 ⇒ r1 ← 0, r0 ← r0 - 1.
+    // Yields r1 ∈ [0, (q-1)/(2γ2)] = [0,16] for ML-DSA-65 (top bin maps to 0).
     let rq = mod_q(r); // [0, Q)
-    (rq + alpha / 2) / alpha
+    let mut r0 = rq % alpha; // [0, alpha)
+    if r0 > alpha / 2 {
+        r0 -= alpha; // centered (-α/2, α/2]
+    }
+    if rq - r0 == Q - 1 {
+        (0, r0 - 1)
+    } else {
+        ((rq - r0) / alpha, r0)
+    }
+}
+
+fn highbits(r: i32, alpha: i32) -> i32 {
+    decompose(r, alpha).0
 }
 
 fn lowbits(r: i32, alpha: i32) -> i32 {
-    let rq = mod_q(r);
-    rq - highbits(r, alpha) * alpha
+    decompose(r, alpha).1
 }
 
-/// MakeHint(c, r) = 1 if HighBits(r) != HighBits(r - c). (FIPS 204 §6.2.3.3)
+/// MakeHint(c, r) = 1 if HighBits(r) != HighBits(r + c). (FIPS 204 Alg 39: v1 = HighBits(r + z))
 fn make_hint(c: &Poly, r: &Poly) -> Poly {
     let mut h = [0i32; N];
     for i in 0..N {
-        let rc = sub_mod(r[i], c[i]);
+        let rc = add_mod(r[i], c[i]);
         if highbits(r[i], ALPHA) != highbits(rc, ALPHA) {
             h[i] = 1;
         }
@@ -534,8 +547,6 @@ pub fn sign(sk: &MlDsa65Sk, msg: &[u8], rnd: &[u8; 32]) -> MlDsa65Sig {
         }
         let mut c_input = Vec::with_capacity(64 + K * N / 2);
         c_input.extend_from_slice(&mu);
-        #[cfg(test)]
-        { let e = w1_encode(&w1); eprintln!("TMP sign   w1enc[0..8]={:?}", &e[..8.min(e.len())]); }
         c_input.extend_from_slice(&w1_encode(&w1));
         let mut c_hash = [0u8; 32];
         shake256(&c_input, &mut c_hash);
@@ -635,23 +646,16 @@ pub fn verify(pk: &MlDsa65Pk, msg: &[u8], sig: &MlDsa65Sig) -> bool {
     }
     // w1' = UseHint(h, w')
     let mut w1_prime = [[0i32; N]; K];
-    let mut uh_md = 0i32;
     for i in 0..K {
         let u = use_hint(&sig.h[i], &w_[i]);
         for n in 0..N {
             // u is ALREADY the reconstructed HighBits(w, 2*gamma2) in [0,16] (use_hint returns r1).
             // Do NOT re-apply highbits here — that would collapse to 0 (see w1_encode note).
             w1_prime[i][n] = u[n];
-            let d = (u[n] - highbits(w_[i][n], ALPHA)).abs();
-            if d > uh_md { uh_md = d; }
         }
     }
-    #[cfg(test)]
-    eprintln!("TMP verify use_hint vs highbits(w') maxdiff={}", uh_md);
     let mut c_input = Vec::with_capacity(64 + K * N / 2);
     c_input.extend_from_slice(&mu);
-    #[cfg(test)]
-    { let e = w1_encode(&w1_prime); eprintln!("TMP verify w1enc[0..8]={:?}", &e[..8.min(e.len())]); }
     c_input.extend_from_slice(&w1_encode(&w1_prime));
     let mut c_hash = [0u8; 32];
     shake256(&c_input, &mut c_hash);
