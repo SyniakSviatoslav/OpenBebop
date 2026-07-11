@@ -53,6 +53,22 @@ When a test is red, the bug is real even if the code "looks right". Investigate 
 oracle (e.g. a Python reference implementation) before concluding the test is wrong.
 
 ## Build/test
-- `cargo test` — 385 Rust tests, RED+GREEN, 0 fail
+- `cargo test` — 394 Rust tests, RED+GREEN, 0 fail
 - `cargo test -p bebop2-core` (full suite), `cargo clippy -p bebop2-core --all-targets`
 - Crypto KATs live in `bebop2/core/src/kat/`; RFC 8439 §2.5.2 + Appendix A.3 are the Poly1305 anchors.
+
+---
+
+## Operating rules — memory-first + push-plans-first (operator, 2026-07-11)
+
+1. **Update living memory FIRST.** Before writing/planning any code, record new changes, plans,
+   decisions, and ground-truth facts to the canonical corpus. Source of truth = the corpus, not chat.
+   - bebop/bebop2 (protocol) → `/root/.claude/projects/-root-bebop-repo/` corpus.
+   - dowiz (product) → `/root/.claude/projects/-root-dowiz/memory/MEMORY.md`.
+2. **Push plans to remote FIRST.** Plans/roadmaps/decision docs are committed + pushed to `origin`
+   before execution — so they can never be lost to a crashed session or stale context.
+3. **Ground truth outranks plans.** Re-verify code claims (`grep`/`git`/`cargo test`) before trusting a
+   pasted "verified" status. Plan = desired state; live repo = what IS. Keep DONE (verified) vs PLANNED
+   separate. bebop is PARKED as a protocol until dowiz carries it (cold-start depends on a working product).
+4. **Structure before code:** PARALLEL-SAFE (independent files, zero-pivot, non-red-line → own branch)
+   vs SEQUENTIAL GATES (red-line, external validation, tier deps). Shared Tier spine with dowiz.
