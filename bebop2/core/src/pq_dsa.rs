@@ -581,7 +581,7 @@ pub fn sign(sk: &MlDsa65Sk, msg: &[u8], rnd: &[u8; 32]) -> MlDsa65Sig {
                 }
             }
         }
-        if !r0_ok {
+        if !r0_ok || !z_ok {
             nonce += 1;
             continue;
         }
