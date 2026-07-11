@@ -15,6 +15,12 @@
 
 #![allow(dead_code)]
 
+// `alloc::vec::Vec` is used by the packing helpers (w1_encode/pack_pk/pack_sig and the
+// sign/verify hash-input buffers). Under no_std this resolves through the crate-wide
+// `extern crate alloc` + bump allocator provided by lib.rs; under std it is the usual
+// allocator. Imported here so the symbols resolve in both builds.
+use alloc::vec::Vec;
+
 // SHAKE256 delegates to the verified FIPS-202 Keccak core in pq_kem (no duplicate).
 pub fn shake256(data: &[u8], out: &mut [u8]) {
     crate::pq_kem::shake256(data, out)

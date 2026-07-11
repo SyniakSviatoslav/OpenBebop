@@ -11,6 +11,7 @@
 //! `&mut [Complex]` scratch). f64 throughout (spectral eigen-decomposition demands precision).
 
 #![allow(dead_code)]
+use alloc::vec::Vec;
 
 /// A complex number, stored as (re, im) f64-pair. No external `num-complex` dependency.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -34,7 +35,7 @@ impl Complex {
     }
     #[inline]
     pub fn norm(self) -> f64 {
-        self.norm_sq().sqrt()
+        crate::math::fsqrt(self.norm_sq())
     }
     #[inline]
     pub fn conj(self) -> Self {
@@ -143,8 +144,8 @@ pub fn fft(data: &mut [Complex], sign: f64) {
     while len <= n {
         // wlen = exp(i·sign·2π/len)
         let ang = sign * 2.0 * pi / (len as f64);
-        let wr = ang.cos();
-        let mut wi = ang.sin();
+        let wr = crate::math::fcos(ang);
+        let mut wi = crate::math::fsin(ang);
         let mut i = 0usize;
         while i < n {
             let mut w = Complex::new(1.0, 0.0);
@@ -195,7 +196,7 @@ pub fn dft_oracle(x: &[Complex], sign: f64) -> Vec<Complex> {
         let mut acc = Complex::zero();
         for m in 0..n {
             let ang = sign * 2.0 * pi * (k as f64) * (m as f64) / (n as f64);
-            let tw = Complex::new(ang.cos(), ang.sin());
+            let tw = Complex::new(crate::math::fcos(ang), crate::math::fsin(ang));
             acc = acc.add(x[m].mul(tw));
         }
         out[k] = acc;

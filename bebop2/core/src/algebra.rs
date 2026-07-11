@@ -40,7 +40,7 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
         na += a[i] * a[i];
         nb += b[i] * b[i];
     }
-    let denom = (na * nb).sqrt();
+    let denom = crate::math::fsqrt(na * nb);
     if denom <= 1e-12 {
         0.0
     } else {
@@ -65,7 +65,7 @@ pub fn sinc(x: f64) -> f64 {
     if x.abs() < 1e-9 {
         1.0
     } else {
-        x.sin() / x
+        crate::math::fsin(x) / x
     }
 }
 

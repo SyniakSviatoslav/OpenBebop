@@ -159,8 +159,8 @@ pub fn spectral_propagate(
         for i in 0..n {
             res[i] += c[k] * t_next[i];
         }
-        std::mem::swap(&mut t_prev, &mut t_cur);
-        std::mem::swap(&mut t_cur, &mut t_next);
+        core::mem::swap(&mut t_prev, &mut t_cur);
+        core::mem::swap(&mut t_cur, &mut t_next);
     }
     Some(res)
 }
