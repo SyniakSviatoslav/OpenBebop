@@ -19,6 +19,7 @@
 #![allow(dead_code)]
 
 use crate::fft::Complex;
+use alloc::vec::Vec;
 
 /// Jacobi eigenvalue algorithm for a real square (diagonalizable) matrix A (n×n row-major).
 /// Returns `(eigenvalues as Complex (real parts for the reference systems), eigenvectors V
@@ -51,8 +52,8 @@ fn real_eig(a: &[f64], n: usize) -> (Vec<Complex>, Vec<f64>) {
                 let app = m[p * n + p];
                 let aqq = m[q * n + q];
                 let phi = 0.5 * (aqq - app) / apq;
-                let t = phi.signum() / (phi.abs() + (1.0 + phi * phi).sqrt());
-                let c = 1.0 / (1.0 + t * t).sqrt();
+                let t = phi.signum() / (phi.abs() + crate::math::fsqrt(1.0 + phi * phi));
+                let c = 1.0 / crate::math::fsqrt(1.0 + t * t);
                 let s = t * c;
                 for r in 0..n {
                     let arp = m[r * n + p];

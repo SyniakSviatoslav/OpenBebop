@@ -15,3 +15,19 @@ crate-type = ["cdylib", "rlib"]
 
 [dev-dependencies]
 # none — KAT vectors are committed in core/kat/ and read by #[test].
+
+# `std` is the default. Disable it (`--no-default-features`) for a genuine no_std /
+# empty-import wasm32 build (core+alloc only). Native + test builds keep std so tests
+# can allocate + panic. The empty-import gate (reloop v2) enforces no_std on wasm when
+# std is disabled.
+#
+# `host` (default-on) gates the f64-heavy analytic kernel (field/vsa/algebra/kalman/
+# lyapunov/chebyshev/fft/active + the libm `math`/`fexp` shims). These use f64 trig
+# (sin/cos/sqrt/ln/exp) and heap-allocated `Vec<f64>` spectra that wasm32-unknown-unknown
+# cannot provide without std math. They are NOT part of the PQ crypto core. Disabling
+# `host` (`--no-default-features`) yields a pure, zero-float-dependency PQ crypto lib that
+# compiles to wasm32 with an EMPTY import section (no_std + self-contained bump allocator).
+[features]
+default = ["std", "host"]
+std = []
+host = []

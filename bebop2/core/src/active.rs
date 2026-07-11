@@ -30,7 +30,7 @@ pub fn entropy(b: &[f64]) -> f64 {
     let mut h = 0.0f64;
     for &p in b {
         if p > 0.0 {
-            h -= p * p.ln();
+            h -= p * crate::math::fln(p);
         }
     }
     h
@@ -131,7 +131,7 @@ mod tests {
         // a normalized belief
         let mut b = vec![0.0f64; nn];
         for i in 0..nn {
-            b[i] = ((i as f64 + 1.0) * 0.3).sin().abs() + 0.05;
+            b[i] = crate::math::fsin((i as f64 + 1.0) * 0.3).abs() + 0.05;
         }
         let s: f64 = b.iter().sum();
         for v in b.iter_mut() {

@@ -20,6 +20,7 @@
 #![allow(dead_code)]
 
 use crate::chebyshev::{fexp, spectral_propagate, Graph};
+use alloc::vec::Vec;
 
 /// Reference dt corridor (B11 carry-forward): stable 0.02, never the old divergent 0.05.
 pub const DT_STABLE: f32 = 0.02;
@@ -206,7 +207,7 @@ impl LaplacianSpectrum {
                     }
                 }
             }
-            std::mem::swap(&mut u, &mut unext);
+            core::mem::swap(&mut u, &mut unext);
             total_active += active_now;
         }
         let ac = (1000.0 * total_active as f64 / (steps as f64 * n as f64).max(1.0)) as i32;
@@ -288,9 +289,9 @@ fn jacobi_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
                 let t = if phi == 0.0 {
                     1.0
                 } else {
-                    phi.signum() / (phi.abs() + (1.0 + phi * phi).sqrt())
+                    phi.signum() / (phi.abs() + crate::math::fsqrt(1.0 + phi * phi))
                 };
-                let c = 1.0 / (1.0 + t * t).sqrt();
+                let c = 1.0 / crate::math::fsqrt(1.0 + t * t);
                 let s = t * c;
                 // rotate rows/cols p,q of A and V
                 for r in 0..n {
