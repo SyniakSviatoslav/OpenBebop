@@ -69,6 +69,9 @@ oracle (e.g. a Python reference implementation) before concluding the test is wr
    before execution — so they can never be lost to a crashed session or stale context.
 3. **Ground truth outranks plans.** Re-verify code claims (`grep`/`git`/`cargo test`) before trusting a
    pasted "verified" status. Plan = desired state; live repo = what IS. Keep DONE (verified) vs PLANNED
-   separate. bebop is PARKED as a protocol until dowiz carries it (cold-start depends on a working product).
+   separate. **Both artifacts are maintained (2026-07-12 operator directive):** `bebop` is the live
+   Rust coding-agent CLI (`crates/bebop/`); `bebop2/` is the from-scratch, zero-dep, FIPS 203/204
+   protocol (ACVP-verified, canonical TLV, rustls — see `docs/design/BEBOP-CLAIM-AUDIT-2026-07-12.md`).
+   The old "bebop is PARKED as a protocol" note is RETIRED — both ship.
 4. **Structure before code:** PARALLEL-SAFE (independent files, zero-pivot, non-red-line → own branch)
    vs SEQUENTIAL GATES (red-line, external validation, tier deps). Shared Tier spine with dowiz.

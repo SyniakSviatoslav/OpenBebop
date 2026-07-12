@@ -62,3 +62,33 @@ bebop2/
   EMPTY import section (reloop checks this).
 - Every crypto primitive: KAT vectors in core/kat/ must pass bit-exact.
 - `cargo test -p bebop2` → all equivalence tests vs old bebop oracle pass.
+
+---
+
+## Status — 2026-07-12 (truthful, post-Phase-0)
+
+**Protocol-in-code, not just in-name.** The red-team review (2026-07-12) correctly flagged
+that `bebop2` was previously a "protocol-in-name" (signatures over non-canonical `serde_json`,
+OpenSSL in `proto-wire`, self-captured KATs, unanchored capabilities). Those are now CLOSED:
+
+| Red-team finding | Fix | Evidence |
+|---|---|---|
+| §2 `proto-wire` pulls OpenSSL/native-tls (66 crates, C compiler at build) | replaced with **rustls** | `cargo tree -i openssl-sys` → no match |
+| §3A self-issued capabilities (auth bypass) | **AnchorRoster** + UCAN-subset delegation, fail-closed | `proto-cap` roster tests |
+| §4A signatures over non-canonical JSON | **canonical TLV** codec (`tlv_signing_input`), `DOMAIN_DELEGATION` for delegation wire | `proto-cap` TLV tests |
+| "neither PQ primitive has external KAT" | **ML-DSA-65 60/60 NIST ACVP** byte-exact (vendored `core/kat/acvp/`) | `cargo test -p bebop2-core` ACVP suite |
+| numeric instability (C8/B- family) | 7 numeric fixes in `core` | `core` 157 tests green |
+
+**Verified:** `cargo test --workspace` → **499 Rust tests pass, 0 fail**.
+
+**Still TODO (honest gaps — not claimed done):**
+- **Wire-spec document** — a standalone byte-level spec for the canonical TLV framing +
+  WSS transport, with shared interop test vectors (so a second implementation can be built).
+- **Versioning/negotiation** — no on-wire version handshake yet.
+- **Second implementation / interop** — only one implementation exists; cross-impl vectors pending.
+- **Entropy source (WS-1)** — fail-closed CSPRNG hardening still in flight (Wave 1).
+- **Side-channel** — KAT correctness + empty-import determinism hold; full physical
+  side-channel resistance is NOT provable without hardware (documented gap, not claimed).
+
+See [`../docs/design/BEBOP-CLAIM-AUDIT-2026-07-12.md`](../docs/design/BEBOP-CLAIM-AUDIT-2026-07-12.md)
+for the full claim-by-claim audit.

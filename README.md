@@ -12,15 +12,24 @@
 > cigar sign-off. Palette is the cosmo-noir luminous spec: ship `#F4C25A` · tele `#F2933E` ·
 > void `#12100E`.*
 
+> **Two artifacts, one repo.** This README describes **`bebop`** — the live Rust coding-agent CLI
+> (`crates/bebop/`, run via `bin/bebop`). The from-scratch, zero-dependency, FIPS 203/204
+> **protocol** lives in **`bebop2/`** (ML-KEM-768 + ML-DSA-65 from scratch, ACVP-verified, canonical
+> TLV, rustls transport). Both are maintained; the agent reuses `rust-core/` for deterministic math
+> and RustCrypto crates for PQ, whereas `bebop2/` is hand-rolled and KAT-gated. See
+> [`docs/design/BEBOP-CLAIM-AUDIT-2026-07-12.md`](docs/design/BEBOP-CLAIM-AUDIT-2026-07-12.md).
+
 What makes it **not just another wrapper** (verified, not claimed):
 
 - **Bebop core** — a Rust/WASM guard OS (`bebop_core.wasm`) that *denies* auth/money/secrets/migrations
   unless a human approves. `bebop boot` proves the gates go RED. Math, not vibes.
 - **Node identity** — every node gets a **hybrid post-quantum** self-certifying identity and an
   encrypted-at-rest vault: **ML-KEM-768 ⊕ X25519** KEM, **ML-DSA-65 ⊕ Ed25519** signature,
-  **Argon2id** KDF, **XChaCha20-Poly1305** AEAD (`src/vault.rs`, pure Rust). The classical half
-  keeps the node safe even if a PQ primitive regresses; a wrong passphrase / tampered blob /
-  tampered id all fail closed. No central server, ever. `bebop node` prints it.
+  **Argon2id** KDF, **XChaCha20-Poly1305** AEAD (`crates/bebop/src/vault.rs`). The PQ primitives
+  come from audited RustCrypto crates (`ml-dsa`/`ml-kem`); the deterministic math core (field_*/VSA/
+  kalman) lives dependency-free in `rust-core/`. The classical half keeps the node safe even if a PQ
+  primitive regresses; a wrong passphrase / tampered blob / tampered id all fail closed. No central
+  server, ever. `bebop node` prints it.
 - **Living memory** — a bundled VSA hypervector + graph store with forgetting and a persisted
   snapshot. `bebop recall "kernel law"` returns real payloads. (The richer §0·GP retriever lives in
   the dowiz monorepo and is an optional add-on — `recall` says so honestly.)
