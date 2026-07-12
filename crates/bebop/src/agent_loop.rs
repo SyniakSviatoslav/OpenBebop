@@ -9,6 +9,7 @@
 //! Offline + deterministic: `step` and `verify` are injected by the caller
 //! (no LLM in the loop). Safe to run autonomously under `governor`.
 
+use crate::changes::ChangeRecord;
 use crate::intent::Intent;
 
 /// Outcome of a single loop iteration.
@@ -30,6 +31,39 @@ pub struct LoopReport {
     /// True if the loop reached a natural end (verify passed every iteration
     /// up to max_iter) rather than stopping on a failure.
     pub done: bool,
+    /// Recorded mutating actions (Hermes-style key-changes visibility).
+    pub changes: Vec<ChangeRecord>,
+    /// Error-pattern summary block (auto-learning), rendered at loop end.
+    pub error_summary: String,
+}
+
+impl LoopReport {
+    /// Render a compact loop summary: iterations, outcome, key-changes, errors.
+    /// Dropped into the session/loop summary (operator: "показуватись чітко у самері").
+    pub fn summary(&self) -> String {
+        let outcome = if self.done {
+            "DONE (all iterations verified)"
+        } else if let Some(f) = self.last_failure {
+            &format!("STOPPED at iter {f} (verify failed)")
+        } else {
+            "incomplete"
+        };
+        let mut out = format!(
+            "⟳ LOOP: {} iterations, {} ok, {}\n",
+            self.iterations, self.successes, outcome
+        );
+        let changes = crate::changes::render_changes(&self.changes);
+        if !changes.is_empty() {
+            out.push_str("  key-changes:\n");
+            for line in changes.lines() {
+                out.push_str(&format!("    {line}\n"));
+            }
+        }
+        if !self.error_summary.is_empty() {
+            out.push_str(&format!("{}\n", self.error_summary));
+        }
+        out
+    }
 }
 
 /// Run a governed agentic loop.
@@ -67,6 +101,8 @@ pub fn run_loop(
         successes,
         last_failure,
         done: last_failure.is_none() && i >= max_iter,
+        changes: Vec::new(),
+        error_summary: String::new(),
     }
 }
 
@@ -122,5 +158,25 @@ mod tests {
         let a = run_loop(Intent::Loop, 4, |_| StepStatus::Ok, |s| matches!(s, StepStatus::Ok));
         let b = run_loop(Intent::Loop, 4, |_| StepStatus::Ok, |s| matches!(s, StepStatus::Ok));
         assert_eq!(a, b, "loop is non-deterministic");
+    }
+
+    #[test]
+    fn summary_shows_loop_and_errors() {
+        // GREEN: summary() renders iterations + error-pattern block clearly.
+        let mut r = run_loop(Intent::Loop, 4, |_| StepStatus::Ok, |s| matches!(s, StepStatus::Ok));
+        r.error_summary = crate::error_patterns::render_summary(&[
+            crate::error_patterns::ErrorPattern {
+                id: "panic".to_string(),
+                label: "Rust panic".to_string(),
+                count: 2,
+                last_context: "thread panicked".to_string(),
+                last_scope: "loop".to_string(),
+            },
+        ]);
+        let s = r.summary();
+        assert!(s.contains("⟳ LOOP"));
+        assert!(s.contains("DONE"));
+        assert!(s.contains("ERROR PATTERNS"));
+        assert!(s.contains("Rust panic"));
     }
 }

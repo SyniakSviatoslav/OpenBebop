@@ -41,6 +41,7 @@ pub mod outfit;
 pub mod agent_profile; // DEFAULT agent identity: free soul + masculine + reptile logic + empathy
 pub mod gender; // R: configurable grammatical-gender + gender-communication style (default Masculine)
 pub mod intent; // P: auto-detect GOAL vs LOOP intent from a prompt
+pub mod error_patterns; // AUTO-LEARNING: error-pattern scan at session/loop/debug end → persisted summary
 pub mod changes; // Q: Hermes-style change/action record (key-changes visibility)
 pub mod drift; // GLOBAL RULE: systems-thinking / architecture drift detector (configurable, CLI flag)
 pub mod settings; // Q: settings dictionary (self-service; agent turns knobs per user request)
