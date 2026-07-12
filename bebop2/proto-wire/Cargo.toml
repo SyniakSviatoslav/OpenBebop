@@ -1,0 +1,27 @@
+[package]
+name = "bebop-proto-wire"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "W (wire transport) — bebop2 protocol library line. iroh + WSS transport carrying signed proto-cap frames."
+
+[dependencies]
+# Real authorization line: signed frames + hybrid gate (classical leg live, PQ TODO).
+bebop-proto-cap = { path = "../proto-cap" }
+
+# Async runtime + WebSocket carrier (tokio-tungstenite, pure-Rust, std-friendly).
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+tokio-tungstenite = { version = "0.23", features = ["native-tls"] }
+futures-util = "0.3"
+
+# Deterministic (de)serialization of the envelope/frame onto carrier bytes.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+futures-util = "0.3"
+# Real Ed25519 keygen (RFC 8032, from scratch) for the round-trip tests. The lib
+# itself stays free of a direct core dependency (signing is reached via
+# `bebop_proto_cap`), but the tests need to mint keys.
+bebop2-core = { path = "../core", default-features = false, features = ["std"] }
