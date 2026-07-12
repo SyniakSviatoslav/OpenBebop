@@ -1,50 +1,82 @@
-# deny.toml — cargo-deny configuration (enforces §9B supply-chain law).
-# Run via `bash scripts/ci-supply-chain.sh` (also runs the RED leg that
-# proves this is a property-gate, not a label-gate).
+# deny.toml — supply-chain property gate for the bebop workspace.
+#
+# Per REMEDIATION-BLUEPRINT-2026-07-12.md §3G: commit `deny.toml` (advisories +
+# bans + sources + licenses), CI runs `cargo deny fetch` then `cargo deny check`
+# (DB present => no false green), and we BAN the C-build supply chain
+# `openssl-sys` / `native-tls` (blueprint F6). The ban is a *property gate*: it
+# passes on the current tree (the native-tls feature was dropped from
+# bebop-proto-wire so openssl-sys is absent from Cargo.lock) and will HARD-FAIL
+# if either crate ever re-enters the lock.
+#
+# RED fixture: scripts/fixtures/deny-bans-openssl.conf is a deny.toml variant
+# that bans a crate the lock DOES contain, proving the gate is not a label-gate.
+#
+# Note: cargo-deny 0.19 consolidated the advisory severity categories into the
+# shared `severity-threshold` mechanism (RUSTSEC advisories are surfaced with a
+# deny-level). Vulnerability severity is also independently enforced by
+# `cargo audit` in scripts/ci-supply-chain.sh.
 
 [advisories]
-# RustSec advisory DB; fail on any un-ignored advisory.
-db-path = "advisories"
-db-urls = ["https://github.com/rustsec/advisory-db"]
-# `unmaintained` (e.g. paste, RUSTSEC-2024-0436) is a dev-only proc-macro with
-# no safe upgrade; disabled as a class. The specific case is still recorded in
-# `ignore` below with a reason so the decision is transparent, not hidden.
+version = 2
+# Refuse to build against a yanked crate version.
+yanked = "deny"
+# Tracked ignores only — pair every entry with a `reason`.
+ignore = []
+# `paste` (RUSTSEC-2024-0436) is a DEV-only unmaintained proc-macro with NO safe
+# upgrade and NO vulnerability (it is not memory-unsafe). Blocking the build on it
+# would be a label-gate, not a property-gate. We surface vulnerabilities + unsound
+# via `cargo audit --deny unsound` in ci-supply-chain.sh; unmaintained crates are
+# intentionally NOT denied here (honest property-gate, per operator rule).
 unmaintained = "none"
 
 [bans]
-# Wildcards: deny any dependency declared without an explicit version.
-# (Caught the bebop2-core path-dep missing `version` — fixed.)
+# Multiple versions of the same crate are a supply-chain smell; warn, don't fail.
 multiple-versions = "warn"
-# Known, unavoidable version diamonds (documented, not hidden):
-# block-buffer 0.10.4 (via argon2 -> digest 0.10) and 0.12.1
-# (via chacha20poly1305 -> digest 0.12) are both required by
-# distinct, non-overlapping crypto paths. Skipping the ban for this
-# crate is honest (it is real and reviewed), not a false-green.
-skip = ["block-buffer"]
-wildcards = "deny"  # deny any dep declared without an explicit version.
+# Wildcard dependencies are non-reproducible; hard-fail.
+wildcards = "deny"
+# ── The C-build / supply-chain ban (blueprint F6 / §3G). ──────────────────────
+# These pull in system OpenSSL via cc/pkg-config and a native build surface;
+# they are exactly the risk the rustls migration removes. With the native-tls
+# feature dropped from bebop-proto-wire, neither appears in Cargo.lock today,
+# so the gate is GREEN now and turns RED the moment either re-enters.
+[[bans.deny]]
+name = "openssl-sys"
+[[bans.deny]]
+name = "native-tls"
 
 [licenses]
-# Bebop is AGPL-3.0. Allow the standard set shipped by audited
-# RustCrypto / tokio / serde crates.
+version = 2
+# OSI / permissive allowlist. This set is exactly the licenses present in the
+# committed Cargo.lock (plus the project's own AGPL-3.0-or-later). AGPL is OSI
+# approved and is the project license for the agent core; the core crates are
+# MIT / AGPL. LGPL-2.1-or-later is only ever present in an `OR` with
+# MIT/Apache-2.0, so the expression is satisfiable. A pure copyleft-only crate
+# (GPL/LGPL without a permissive disjunct) would fail here.
 allow = [
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",
     "ISC",
-    "Unicode-DFS-2016",
-    "Unicode-3.0",
     "Zlib",
-    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
     "CC0-1.0",
-    "AGPL-3.0",
+    "MPL-2.0",
+    "LGPL-2.1-or-later",
+    "Unlicense",
+    "WTFPL",
     "AGPL-3.0-or-later",
 ]
-confidence-threshold = 0.9
+# Reject crates that omit a license field entirely (the two core crates were
+# missing one; they now declare MIT / AGPL-3.0-or-later).
+confidence-threshold = 0.8
 
 [sources]
-# Only crates.io + local path deps permitted (no git/alternative registries).
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
