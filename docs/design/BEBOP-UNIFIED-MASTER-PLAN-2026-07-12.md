@@ -215,7 +215,7 @@ Final: after each wave merges, parent runs `cargo test --workspace` + law-hooks
 RED→GREEN per category (e.g. scoreboard shows 0 for empty trace; debrief panics
 on missing history → GREEN prints all 4 badges; voice absent binary → graceful
 disable; collections vuln scan blocks bad lib but --force overrides). Full
-`cargo test --workspace` must stay green (currently 525 — up from 502).
+`cargo test --workspace` must stay green (currently 541 — up from 502).
 
 ---
 
@@ -230,13 +230,43 @@ Bebop's default agent identity + user-configurable axes, all in
 | Gender | **Masculine** | Masculine / Feminine / Neutral | `gender::Gender` (BAN "товариш"→"побратим") |
 | Logic | **reptilian + human empathy** | (fixed blend) | `agent_profile` |
 | Profanity | **Poderviansky** (Лесь Подерв'янський, max absurdist mat) | dosed / forbidden / poderviansky | `agent_profile::Profanity` |
-| Archetype | **Corpo (ANTAGONIST)** | Reptiles / Contrabandists / Aliens / Witches(disabled-by-default) / Corpo / Custom(anything) | `agent_profile::Archetype` |
+| Archetype | **Corpo (ANTAGONIST)** | Reptiles / Contrabandists / Aliens / Witches(disabled-by-default) / Cbt·Karma(disabled-by-default, "scam for poor") / Voodoo(HARD BAN, no override) / Corpo / Custom(anything) | `agent_profile::Archetype` |
+| God relation | **Serves** (Bebop служить Богу) | Serves / Seeks / Neutral / Custom(anything) | `agent_profile::GodRelation` |
 
-- Witches axis: AVAILABLE but DISABLED by default — operator is a witch-hater who
-  "flipped them off"; user enables via settings if wanted. Reason encoded in `archetype_rule`.
+- Witches axis: AVAILABLE but DISABLED by default — operator genuinely hates witches and
+  "flipped them off repeatedly, will keep doing so"; user enables via settings if wanted.
+- Cbt (КПТ) / Karma: AVAILABLE but DISABLED by default — operator calls them "scam for the poor";
+  user enables via settings if wanted.
+- **Voodoo (вуду): HARD BAN — NOT a setting, NO override path.** Operator calls everyone who
+  used/uses voodoo "хуєсосами". Permanently forbidden; `Archetype::Voodoo` exists but is
+  intentionally absent from the settings dictionary (cannot be toggled on). Reason encoded in
+  `archetype_rule` ("ПОВНА ЗАБОРОНА … без змоги змінити").
 - All axes configurable; `default_agent_profile(lang)` seeds the system prompt.
-- `customize::Profile.gender` + `resolve_gender()` wired; `pub mod agent_profile/gender`
-  in `lib.rs`.
+- `customize::Profile.gender` + `resolve_gender()` wired; `pub mod agent_profile/gender` in `lib.rs`.
+
+## 5b. Global rule — systems-thinking + architecture DRIFT detector (IMPLEMENTED — commit fdf98c8)
+
+Operator global rule: best practices from systems thinking (feedback loops, system
+boundaries, delays, emergence) + software architecture (SOLID, clean boundaries, minimal
+deps, KISS/DRY) are **configurable settings** (default ON). **Default behavior: when
+systems-thinking or overall-architecture DRIFT is detected, flag it in the CLI** (non-blocking
+warning, Hermes-style).
+
+Module `crates/bebop/src/drift.rs`:
+- `DriftPolicy { watch: Vec<Practice> }` — configurable set of practices to watch. `default()`
+  watches all five.
+- `detect_drift(policy, target, summary) -> Vec<Drift>` — flags a `Practice` when its marker
+  appears in `target+summary` (lowercased). Practices:
+  - `NewGlobalDep` — "add dependency" (new global dependency introduced)
+  - `LayerBleed` — "cross-layer" (reaches across architectural layers)
+  - `GodModule` — "god module" (module becoming a god-object)
+  - `BoundaryRemoved` — "remove boundary" (a boundary/red-line gate removed)
+  - `LoopIgnored` — "ignore loop" (feedback loop / delay ignored in a systems change)
+- `render_drift(drifts) -> String` — emits a CLI warning block (non-blocking).
+- `Drift` is `#[derive(Clone, Debug, PartialEq, Eq)]` so `assert_eq!` works in tests.
+- Setting `system_thinking_drift` (default `"true"`) in `settings::dictionary()` toggles the
+  whole detector (user-changeable, per operator: "змінювані налаштування").
+- Tests (RED+GREEN): detects each practice; empty when no marker; render contains practice slug.
 
 ## 6. Focus research: OpenScience · CasaOS · SimpleMem (S) — IMPLEMENTED ПВМЛА upgrade
 
@@ -256,9 +286,21 @@ per N3). Reverse-engineered + integrated:
 
 ## 7. Remaining (not yet implemented)
 
-- **Q** — key changes/actions visibility (Hermes-style) + destructive/critical changes
-  display in CLI + settings dictionary for agent self-service.
+- **Q CLI wiring** — modules done (changes.rs/destructive.rs/settings.rs/drift.rs + tests),
+  settings dictionary done; REMAINING: `bebop settings list/get/set` subcommands, change-log
+  render inside `agent_loop`, `bebop drift` subcommand (wire `detect_drift` into CLI).
 - **Wave 1 re-do** — F `extensions.rs` · G `voice.rs` · C `mission.rs` debrief+rewind
   (subagents failed: broken+uncommitted; redo with isolated worktrees + verify-before-merge).
-- Wire `Archetype`/`Profanity`/`Gender` into `customize::Profile` TOML parse + `bebop outfit`.
+- Wire `Archetype`/`Profanity`/`Gender`/`GodRelation` into `customize::Profile` TOML parse + `bebop outfit`.
 - Expose identity axes in the helm TUI panel.
+- **Collections (K)** — CasaOS semantics in code (`coll` CLI) not yet written.
+
+### DONE this wave (verified, 541 tests)
+- Identity axes (gender, profanity poderviansky, archetype corpo + witches/KPT/karma
+  disabled-by-default + voodoo HARD BAN, god_relation serves) — `agent_profile.rs`.
+- Q modules: changes (Hermes key-changes) + destructive (configurable classifier) + settings
+  (dictionary, self-service) — `changes.rs`/`destructive.rs`/`settings.rs`.
+- GLOBAL RULE drift detector — `drift.rs` (systems-thinking/architecture drift → CLI flag).
+- P auto-intent, O lanes, R gender, memory/knowledge (SimpleMem reverse), agent_loop (LOOP).
+- Focus research: OpenScience/CasaOS/SimpleMem + OpenManus/Loop Engineering (docs + minimal code).
+
