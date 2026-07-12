@@ -118,3 +118,36 @@ did not catch them. So the check is automated and in the path:
 Adding a new doc claim? Add the matching check to the verifier (with a RED case) in the same change.
 Never weaken the verifier to make a doc pass — fix the doc or the code.
 
+## Standing rule: newest plan/decision outranks older (operator, 2026-07-12)
+
+> **When an older roadmap/blueprint and a newer approved decision conflict, the NEWEST wins.**
+> MANIFESTO.md + DECISIONS.md (dated 2026-07-12) are the current source of truth and SUPERSEDE
+> any 2026-07-11 ROADMAP-GROUND-TRUTH, MASTER-BUILD-SEQUENCE, or stale blueprint citation.
+
+Rationale: plans drift within a session as the operator refines intent (e.g. mesh machinery was
+deferred under C8, then pulled forward via D6 operator override; transport was reselected to
+DTN/BPv7 + QUIC/BIBE after a deeper research pass showed libp2p was wrong). A stale plan must
+never silently overwrite a newer decision.
+
+- Before acting on a roadmap tier/sequence, check the date + the D-series decisions. If a conflict
+  exists, follow the newer artifact.
+- Record DONE (verified on disk via `grep`/`git`/`cargo test`) separately from PLANNED (desired),
+  per the existing ground-truth discipline — but the *precedence* of which plan is live is set by date.
+- This rule is mirrored in dowiz DECISIONS.md (D8) and the agent's operating memory.
+
+## Standing setting: newest approved plan/decision IS the source of truth (precedence = setting, not just rule)
+> This is a **first-class setting** of both projects, equivalent to a red-line invariant, not a
+> soft guideline. It is recorded here as a *setting* so it is discoverable alongside other settings
+> (not buried in prose) and cannot be overridden by a stale roadmap.
+
+- **Precedence order (highest → lowest):** operator's latest explicit message in-session
+  > newest dated DECISIONS.md / MANIFESTO.md entry > older D-series > 2026-07-11 ROADMAP-GROUND-TRUTH
+  > any `MASTER-BUILD-SEQUENCE` / stale blueprint citation.
+- **Mesh + post-quantum are NOT deferred.** D6 (operator override of C8) pulls mesh machinery and the
+  full PQ protocol into in-scope NOW. C8 still gates *over-engineering*, never the six invariants
+  (decentralized · local-first · post-quantum · crypto · mesh · reliability-over-latency).
+- **Anu QRNG is wired in**, but native OS entropy is the DEFAULT and FALLBACK (dowiz DECISIONS D9).
+  Remote quantum noise upgrades the seed when available; a missing/broken QRNG never breaks boot.
+- Any agent operating in either repo MUST re-read DECISIONS.md / MANIFESTO.md (dowiz) and RULES.md +
+  this setting (bebop) at session start; a stale plan must never silently overwrite a newer decision.
+
