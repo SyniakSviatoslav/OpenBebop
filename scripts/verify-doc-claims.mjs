@@ -87,7 +87,7 @@ try {
   // Enumerate EVERY workspace lib target so the count stays honest as crates are added/removed.
   // `--workspace --lib` runs all member lib unittests; dead/legacy crates are excluded from the
   // workspace (see root Cargo.toml `exclude`) and are deliberately NOT counted.
-  const out = execFileSync('cargo', ['test', '--quiet', '--lib', '--workspace'], { encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const out = execFileSync('cargo', ['test', '--lib', '--workspace'], { encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const line of out.split('\n')) {
     const m = line.match(/test result: ok\.\s*(\d+) passed/);
     if (m) pass += Number(m[1]);
