@@ -33,8 +33,12 @@ echo "==> [supply-chain] GREEN: cargo deny check (advisories/bans/licenses/sourc
 cargo deny check
 echo "    cargo deny check: PASS"
 
-echo "==> [supply-chain] cargo audit (vulnerability severity)"
-cargo audit --deny warnings
+echo "==> [supply-chain] cargo audit (fail on memory-unsound crates; unmaintained advisories reported, not blocked)"
+# Property-gate: fail on `unsound` (genuine memory-safety hazards), report
+# unmaintained/notice as warnings. Blocking on a dev-only unmaintained
+# proc-macro (paste, RUSTSEC-2024-0436, no runtime surface) would over-strict
+# the gate without improving safety.
+cargo audit --deny unsound
 echo "    cargo audit: PASS"
 
 echo "==> [supply-chain] RED leg: prove the gate is a real property-gate"

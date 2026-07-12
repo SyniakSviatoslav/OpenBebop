@@ -70,7 +70,7 @@ const SHAKE256_RATE: usize = 136;
 fn montgomery_reduce(a: i64) -> i32 {
     // For -2^{31}Q <= a <= Q*2^31, compute a*2^{-32} mod Q in (-Q, Q).
     let t = (a as i32).wrapping_mul(QINV); // low 32 bits of (int32)a * QINV
-    (((a - (t as i64) * (Q as i64)) >> 32) as i32)
+    ((a - (t as i64) * (Q as i64)) >> 32) as i32
 }
 
 #[inline]

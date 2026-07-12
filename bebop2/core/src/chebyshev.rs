@@ -12,6 +12,7 @@
 
 /// f64 libm shims (bit-trick frexp/ldexp; Taylor exp/cos). Identical to old rust-core so the
 /// Chebyshev coefficients are bit-equivalent. These are range-reduced exactly as the oracle used.
+#[allow(clippy::approx_constant)] // no_std: f64::consts::PI unavailable; shim's own constant
 const PI: f64 = 3.141592653589793;
 
 /// exp(x) with range reduction x = n·ln2 + r (|r| ≤ ln2/2), Taylor on r. Matches oracle `fexp`.

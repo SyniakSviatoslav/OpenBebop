@@ -9,7 +9,14 @@
 - dowiz living-memory spec: MEMORY.md:3-4 — index injected per-call; closed topics live in ATTIC; promote back when reactivated.
 - ATTIC pattern (tiering design): MEMORY-ATTIC.md:1-5 — "Moved from MEMORY.md 2026-07-05… files remain intact… promote a line back only when its topic goes active again." ~95 archived lines, each a back-pointer to an intact .md.
 - Hermes secondary cache: /root/.hermes/cache/delegation/subagent-summary-*.txt, /root/.hermes/memories/MEMORY.md (operator pref ledger, NOT a memory tier). No dedup/retrieval/index layer.
-- bebop LivingMemory (the *code* analogue): memory.rs:60-66 — `tick()` does `nodes.retain(|_, n| hash(n.concept)%7 != clock%7)`. This DELETES nodes from the HashMap **permanently**. No cold tier, no restore pointer, no raw-preservation. **DESTRUCTIVE.**
+- bebop LivingMemory (the *code* analogue): memory.rs:60-66 — `tick()` was
+  `nodes.retain(|_, n| hash(n.concept)%7 != clock%7)`. This DELETED
+  nodes from the HashMap **permanently**. No cold tier, no restore pointer,
+  no raw-preservation. **DESTRUCTIVE.**  **RESOLVED 2026-07-12:**
+  `memory.rs:101-118` now does move-to-ATTIC (cold tier) + `restore()`;
+  test `tick_moves_evicted_node_to_attic` PASSES (`cargo test -p bebop
+  memory` → 6 passed). The non-destructive design this audit recommended
+  has SHIPPED — this finding is closed, not open.
 - Padovan aperiodic TTL: PROPOSED, UNIMPLEMENTED in bebop (bebop-fable-research-2026-07-11.md:23,48-49,74,146).
 
 ## 1. Strategy safety matrix (9 items)

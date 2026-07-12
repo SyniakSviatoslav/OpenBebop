@@ -50,7 +50,7 @@ static ACCUM: std::sync::Mutex<(usize, Vec<f64>)> = std::sync::Mutex::new((0usiz
 /// Upload a CSR adjacency (A, undirected treated as L=D-A) of an n-node graph.
 /// `row_ptr` has n+1 entries, `col_idx` has nnz entries. Returns 0 on success.
 #[no_mangle]
-pub extern "C" fn field_build(row_ptr: *const i32, col_idx: *const i32, nnz: i32, n: i32) -> i32 {
+pub unsafe extern "C" fn field_build(row_ptr: *const i32, col_idx: *const i32, nnz: i32, n: i32) -> i32 {
     if n <= 0 || nnz < 0 {
         return 1;
     }
@@ -75,7 +75,7 @@ pub extern "C" fn field_build(row_ptr: *const i32, col_idx: *const i32, nnz: i32
 /// arrays. Halves CSR storage (the binding's biggest fixed cost), lifting the practical graph-size
 /// ceiling without changing numerical results (matvec runs on f64). Returns 0 on success.
 #[no_mangle]
-pub extern "C" fn field_build_f32(
+pub unsafe extern "C" fn field_build_f32(
     row_ptr: *const i32,
     col_idx: *const i32,
     nnz: i32,
@@ -104,7 +104,7 @@ pub extern "C" fn field_build_f32(
 /// Drop all stored graph data and release the Vec allocations. Lets a long-running agent reclaim
 /// memory between graphs (prevents silent accumulation across many rebuilds).
 #[no_mangle]
-pub extern "C" fn field_reset() {
+pub unsafe extern "C" fn field_reset() {
     let mut st = STATE.lock().unwrap();
     *st = GraphState {
         row_ptr: Vec::new(),
@@ -162,7 +162,7 @@ fn field_matvec_raw(
 
 /// C-ABI wrapper: y = L·x over the stored graph.
 #[no_mangle]
-pub extern "C" fn field_matvec(x: *const f64, y: *mut f64, mask: *const u8) {
+pub unsafe extern "C" fn field_matvec(x: *const f64, y: *mut f64, mask: *const u8) {
     with_graph(|rp, ci, d, n| {
         let xs = unsafe { core::slice::from_raw_parts(x, n) };
         let ys = unsafe { core::slice::from_raw_parts_mut(y, n) };
@@ -243,7 +243,7 @@ fn spectral_propagate(
 
 /// C-ABI wrapper: writes u(t)=exp(-coeff·L·t)·u0 into `out` (len n). Returns 0 on success, 1 on error.
 #[no_mangle]
-pub extern "C" fn field_spectral(
+pub unsafe extern "C" fn field_spectral(
     u0: *const f64,
     t: f64,
     coeff: f64,
@@ -279,7 +279,7 @@ pub extern "C" fn field_spectral(
 ///
 /// Memory: double-buffered u (2·n) + one reused lu scratch + mask. No per-step reallocation.
 #[no_mangle]
-pub extern "C" fn field_active(
+pub unsafe extern "C" fn field_active(
     u0: *const f64,
     steps: i32,
     dt: f64,
@@ -358,7 +358,7 @@ pub extern "C" fn field_active(
 /// `seed` is the disruption source (e.g. impulse at the node an action would take down). Writes the
 /// n-vector into `out`. `sens` may be null (uniform 1.0). Returns 0 on success, 1 on empty graph.
 #[no_mangle]
-pub extern "C" fn field_rank(
+pub unsafe extern "C" fn field_rank(
     seed: *const f64,
     sens: *const f64,
     t: f64,
@@ -394,7 +394,7 @@ pub extern "C" fn field_rank(
 /// This is the numeric cost predicate PDDL consumes. Always ≥ 0 (heat kernel is nonnegative);
 /// returns -1.0 only as an error sentinel for an empty graph / invalid deg.
 #[no_mangle]
-pub extern "C" fn field_cost(
+pub unsafe extern "C" fn field_cost(
     seed: *const f64,
     sens: *const f64,
     t: f64,
@@ -431,7 +431,7 @@ pub extern "C" fn field_cost(
 /// `out` is monotonic-normalized to [0,1] (max node = 1.0) so it is directly usable as `sensitivity`.
 /// If no propagations have run, returns uniform 1.0 (no bias). Empty graph → rc 1.
 #[no_mangle]
-pub extern "C" fn field_sensitivity(out: *mut f64) -> i32 {
+pub unsafe extern "C" fn field_sensitivity(out: *mut f64) -> i32 {
     let acc = ACCUM.lock().unwrap();
     let (count, e) = (&acc.0, &acc.1);
     let n = e.len();
@@ -453,19 +453,10 @@ pub extern "C" fn field_sensitivity(out: *mut f64) -> i32 {
 }
 
 // ── f64 libm shims (no_std: exp/cos aren't in core; implemented via bit tricks + Taylor, no deps) ──
+#[allow(clippy::approx_constant)] // no_std: f64::consts::PI unavailable; this literal is the shim's own constant
 const PI: f64 = 3.141592653589793;
+#[allow(clippy::approx_constant)] // no_std: f64::consts::LN_2 unavailable; shim's own constant
 const LN2: f64 = 0.6931471805599453;
-
-/// frexp: split x = m·2^e with m∈[0.5,1). Bit-level, no float methods needed.
-fn frexp(x: f64) -> (f64, i32) {
-    let bits = x.to_bits();
-    let exp = ((bits >> 52) & 0x7ff) as i32;
-    if exp == 0 || exp == 0x7ff {
-        return (x, 0);
-    }
-    let mant = f64::from_bits((bits & 0x800f_ffff_ffff_ffff) | 0x3fe0_0000_0000_0000);
-    (mant, exp - 1022)
-}
 /// ldexp: x·2^e via exponent bits.
 fn ldexp(x: f64, e: i32) -> f64 {
     let bits = x.to_bits();
@@ -529,7 +520,7 @@ fn fcos(x: f64) -> f64 {
     a = a - fround(x / (2.0 * PI)) * 2.0 * PI;
     let mut t = 1.0;
     let mut term = 1.0;
-    let mut x2 = a * a;
+    let x2 = a * a;
     for i in 1..10 {
         term *= -x2 / ((2 * i) as f64 * (2 * i - 1) as f64);
         t += term;
@@ -539,7 +530,7 @@ fn fcos(x: f64) -> f64 {
 
 /// Bipolar dot-product similarity of two f64 hypervectors. Returns Σ a_i·b_i (f64).
 #[no_mangle]
-pub extern "C" fn vsa_similarity(a: *const f64, b: *const f64, dim: i32) -> f64 {
+pub unsafe extern "C" fn vsa_similarity(a: *const f64, b: *const f64, dim: i32) -> f64 {
     let n = dim as usize;
     let sa = unsafe { core::slice::from_raw_parts(a, n) };
     let sb = unsafe { core::slice::from_raw_parts(b, n) };
@@ -556,7 +547,7 @@ pub extern "C" fn vsa_similarity(a: *const f64, b: *const f64, dim: i32) -> f64 
 /// magnitude bias — prevents "decision drift" caused by norm inflation (audit
 /// 29155: similarity via dot/cross; this is the normalized similarity half).
 #[no_mangle]
-pub extern "C" fn cosine_similarity(a: *const f64, b: *const f64, dim: i32) -> f64 {
+pub unsafe extern "C" fn cosine_similarity(a: *const f64, b: *const f64, dim: i32) -> f64 {
     let n = dim as usize;
     let sa = unsafe { core::slice::from_raw_parts(a, n) };
     let sb = unsafe { core::slice::from_raw_parts(b, n) };
@@ -581,7 +572,7 @@ pub extern "C" fn cosine_similarity(a: *const f64, b: *const f64, dim: i32) -> f
 /// detect collinear/degenerate tensor directions (audit 29155: cross product =
 /// orthogonality). Pure, no-alloc.
 #[no_mangle]
-pub extern "C" fn cross_product(a: *const f64, b: *const f64, out: *mut f64) {
+pub unsafe extern "C" fn cross_product(a: *const f64, b: *const f64, out: *mut f64) {
     let sa = unsafe { core::slice::from_raw_parts(a, 3) };
     let sb = unsafe { core::slice::from_raw_parts(b, 3) };
     let so = unsafe { core::slice::from_raw_parts_mut(out, 3) };
@@ -595,7 +586,7 @@ pub extern "C" fn cross_product(a: *const f64, b: *const f64, out: *mut f64) {
 /// for the signal layer (audit 29159): spatial/temporal interpolation of
 /// congestion samples, anti-aliasing of the cost signal.
 #[no_mangle]
-pub extern "C" fn sinc(x: f64) -> f64 {
+pub unsafe extern "C" fn sinc(x: f64) -> f64 {
     if x.abs() < 1e-9 {
         1.0
     } else {
@@ -1037,7 +1028,7 @@ mod tests {
     /// GREEN: sinc(0) = 1 (removable singularity, L'Hôpital), sinc(π) = 0.
     #[test]
     fn test_sinc_singularity_and_zero() {
-        assert!((sinc(0.0) - 1.0).abs() < 1e-12, "sinc(0)=1 by limit");
-        assert!((sinc(core::f64::consts::PI)).abs() < 1e-12, "sinc(π)=0");
+        assert!((unsafe { sinc(0.0) } - 1.0).abs() < 1e-12, "sinc(0)=1 by limit");
+        assert!((unsafe { sinc(core::f64::consts::PI) }).abs() < 1e-12, "sinc(π)=0");
     }
 }

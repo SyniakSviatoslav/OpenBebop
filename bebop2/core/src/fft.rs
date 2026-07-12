@@ -63,6 +63,7 @@ impl Complex {
     }
 }
 
+#[allow(clippy::approx_constant)] // no_std libm shim: 0.6931… is ln2 the shim computes with
 fn fexp_local(x: f64) -> f64 {
     // Local copy of the C8-correct range-reduced exp (kept self-contained for no_std fft).
     let ln2 = 0.6931471805599453_f64;

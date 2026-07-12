@@ -161,6 +161,7 @@ mod no_std_support {
         (mant, exp)
     }
     #[inline]
+    #[allow(clippy::approx_constant)] // no_std libm shim: 0.6931… is ln2 the shim computes with
     fn ldexp(mant: f64, exp: i32) -> f64 {
         if exp > 1023 {
             return f64::INFINITY;
@@ -252,6 +253,7 @@ mod no_std_support {
         }
         y + (e as f64) * 0.6931471805599453
     }
+    #[allow(clippy::approx_constant)] // no_std libm shim: 0.6931… is ln2 the shim computes with
     pub fn exp_taylor(x: f64) -> f64 {
         let ln2 = 0.6931471805599453;
         let q = x / ln2;
@@ -322,6 +324,7 @@ pub mod kat;
 /// gated behind `feature = "host"`. Excluded from the wasm32 no_std/alloc-free crypto build.
 #[cfg(feature = "host")]
 #[inline]
+#[allow(clippy::approx_constant)] // no_std libm shim: 0.6931… is ln2 the shim computes with
 pub fn fexp(x: f64) -> f64 {
     // C8 FIX: symmetric range reduction `r = x - round(x/ln2)*ln2` — correct for ALL
     // signs (old `|r| <= ln2/2` form silently broke for x<0, the hottest spectral path).

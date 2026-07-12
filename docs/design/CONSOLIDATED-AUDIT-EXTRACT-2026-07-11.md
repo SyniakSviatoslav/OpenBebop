@@ -94,10 +94,14 @@
 - vault flaky test: same_passphrase_vaults_are_distinct — /tmp collision across 3 parallel tests
   (surfaced by all 6 reviewers). Pre-existing, not a builder regression.
 
-### B2. DESTRUCTIVE design defect (memory-opt audit §4)
-- bebop memory.rs:60-66 `tick()` does `nodes.retain(hash%7 != clock%7)` = PERMANENT delete,
-  no cold tier, no restore pointer. Contrast dowiz ATTIC (move-not-delete). MUST refactor
-  tick→move-to-ATTIC + restore pointer + RED test before LivingMemory holds real state.
+### B2. DESTRUCTIVE design defect (memory-opt audit §4) — RESOLVED 2026-07-12
+- bebop memory.rs:60-66 `tick()` did `nodes.retain(hash%7 != clock%7)`
+  = PERMANENT delete, no cold tier, no restore pointer. Contrast dowiz
+  ATTIC (move-not-delete).  **RESOLVED:** `memory.rs:101-118` now moves
+  evicted nodes to an `attic` cold tier + `restore()` recovers them; test
+  `tick_moves_evicted_node_to_attic` PASSES. The refactor the audit
+  recommended has shipped — LivingMemory is now non-destructive and holds
+  real state. See BEBOP-AGENT-SELF-IMPROVEMENT-RESEARCH.md Part C.2.
 
 ### B3. STALE findings from fable-review (2026-07-10, already resolved)
 - H2 bitrev7/NTT corruption → RESOLVED (NTT removed). M2 chebyshev fexp → RESOLVED.
