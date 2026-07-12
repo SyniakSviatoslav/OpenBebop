@@ -16,6 +16,7 @@ pub mod cli; // the `bebop <cmd>` dispatcher (also the TUI entry)
 pub mod coherence; // wave interference (|ψ₁±ψ₂|²) over the field kernel
 pub mod copilot;
 pub mod cost_estimate; // Hybrid Cost-Aware Engine: k-d filter + BFS guard + A*/Dijkstra + CH (the "Cost Estimation" node)
+pub mod collections; // J: library collections (share/install/rename/snapshot/icon)
 pub mod customize; // the three customization axes (looks / narration / patrons)
 pub mod detect; // N1–N8 operational-graph detector battery (deterministic, RED+GREEN)
 pub mod doc_claims;
@@ -66,6 +67,7 @@ pub mod sealfb; // SEAL closed-loop: field energy → self-tightened tolerance
 pub mod stabilizer; // inherent Lyapunov stability: V̇≤0 monitor, saturation, potential well, ground state
 pub mod stress; // 3-level stress benchmark (injection / double-bind / telemetry)
 pub mod svc; // space-vector control smoothing (αβ trajectory, damping)
+pub mod termux; // K: Termux/Kali dual-use (recon-manual + explicit dual_use opt-in + vuln gate)
 pub mod tui; // the ratatui TUI: red-spaceship launch + interactive frame
 pub mod vault; // XChaCha20 + scrypt encrypted memory vault (deterministic key deriv)
 pub mod wavefield; // geometric + wave sim of the CONNECTION GRAPH (geometry, waves, cycles, divergence)
