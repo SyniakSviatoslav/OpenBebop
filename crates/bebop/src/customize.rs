@@ -9,6 +9,7 @@
 //! sets them; `bebop outfit` shows the resulting contract. This is the
 //! "make it yours" hook that Claude/OpenCode/Hermes lack as first-class.
 
+use crate::gender::{parse_gender, Gender};
 use crate::outfit::{Narration, Outfit, OUTFIT};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -17,6 +18,9 @@ use std::path::PathBuf;
 pub struct Profile {
     pub looks: Option<LooksOverride>,
     pub narration: Option<String>,
+    /// Grammatical-gender + gender-communication style axis (category R).
+    /// `None` -> operator default Masculine (see `gender::Gender::default`).
+    pub gender: Option<String>,
     pub patrons: Option<PatronsOverride>,
 }
 
@@ -72,6 +76,14 @@ impl Profile {
             }
         }
         o
+    }
+
+    /// Resolve the effective gender axis, defaulting to Masculine (operator).
+    pub fn resolve_gender(&self) -> Gender {
+        match &self.gender {
+            Some(g) => parse_gender(g).unwrap_or_default(),
+            None => Gender::default(),
+        }
     }
 }
 
@@ -183,5 +195,16 @@ mod tests {
         let loaded = Profile::load();
         assert_eq!(loaded.narration, Some("sarcastic".into()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gender_defaults_masculine() {
+        // GREEN (operator default): unset gender -> Masculine.
+        let p = Profile::default();
+        assert_eq!(p.resolve_gender(), crate::gender::Gender::Masculine);
+        // explicit override wins + round-trips
+        let mut p2 = Profile::default();
+        p2.gender = Some("жіночий".into());
+        assert_eq!(p2.resolve_gender(), crate::gender::Gender::Feminine);
     }
 }

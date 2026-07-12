@@ -14,7 +14,7 @@
 // point, or let the test count drift), this script exits 1.
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { execFileSync, execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 const ROOT = path.resolve(process.cwd());
@@ -83,19 +83,14 @@ function check(name, ok, detail = '') {
 
 // --- F. Test-count honesty: README + AGENTS counts must match `cargo test` (all crates) ---
 let pass = 0, failc = 0;
-try {
-  // Enumerate EVERY workspace lib target so the count stays honest as crates are added/removed.
-  // `--workspace --lib` runs all member lib unittests; dead/legacy crates are excluded from the
-  // workspace (see root Cargo.toml `exclude`) and are deliberately NOT counted.
-  const out = execFileSync('cargo', ['test', '--lib', '--workspace'], { encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
-  for (const line of out.split('\n')) {
-    const m = line.match(/test result: ok\.\s*(\d+) passed/);
-    if (m) pass += Number(m[1]);
-    const f = line.match(/test result: FAILED\.\s*(\d+) failed/);
-    if (f) failc += Number(f[1]);
-  }
-} catch (e) {
-  const out = String(e.stdout ?? e.stderr ?? '');
+{
+  // `cargo test` writes `test result:` lines to STDERR, not stdout. Capture BOTH
+  // (spawnSync returns {stdout, stderr} without throwing) so the count stays honest
+  // across every workspace member, not just the first crate that happens to log to stdout.
+  const { stdout, stderr } = spawnSync('cargo', ['test', '--lib', '--workspace'], {
+    encoding: 'utf8', timeout: 300000,
+  });
+  const out = (stdout ?? '') + '\n' + (stderr ?? '');
   for (const line of out.split('\n')) {
     const m = line.match(/test result: ok\.\s*(\d+) passed/);
     if (m) pass += Number(m[1]);

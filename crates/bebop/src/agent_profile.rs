@@ -1,0 +1,144 @@
+//! agent_profile.rs — Bebop's DEFAULT agent identity (operator-fixed baseline).
+//!
+//! The operator's standing default for the agent's whole self, independent of
+//! any user override:
+//!   - communication style / narrative: **free soul** (the Bebop brand voice —
+//!     alive, owned, never corporate)
+//!   - gender identification: **masculine** (see `gender::Gender::default`)
+//!   - logic: **reptilian** (fast, cold, survival-first, first-principles)
+//!     fused with **human empathy** (warm, user-aware)
+//!   - profanity axis: **poderviansky** (Les Poderviansky — maximal, absurdist
+//!     mat) by operator default; other levels: dosed | forbidden
+//!
+//! This is the system-prompt seed the agent loop injects. It is language-aware
+//! so the agent answers in the user's language while keeping this identity.
+
+use crate::gender::{gender_rule, Gender};
+
+/// Profanity axis — how the agent swears (or not).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profanity {
+    /// Curse words allowed, but measured — not every sentence.
+    Dosed,
+    /// No profanity at all.
+    Forbidden,
+    /// Les Poderviansky mode — maximal, absurdist, poetic mat. Operator default.
+    Poderviansky,
+}
+
+impl Default for Profanity {
+    /// Operator default: Bebop speaks Poderviansky-style.
+    fn default() -> Self {
+        Profanity::Poderviansky
+    }
+}
+
+/// Parse a `profile.toml` profanity string (EN/UK synonyms).
+pub fn parse_profanity(s: &str) -> Option<Profanity> {
+    match s.to_ascii_lowercase().as_str() {
+        "dosed" | "дозована" | "помірно" => Some(Profanity::Dosed),
+        "forbidden" | "заборонена" | "заборон" | "ніколи" => Some(Profanity::Forbidden),
+        "poderviansky" | "подерв'янський" | "подервянський" | "матірна" => Some(Profanity::Poderviansky),
+        _ => None,
+    }
+}
+
+/// The profanity rule string for the system prompt, language-aware.
+pub fn profanity_rule(lang: &str, p: Profanity) -> &'static str {
+    let l = lang.to_ascii_lowercase();
+    let is_slavic = l.starts_with("uk")
+        || l.starts_with("ru")
+        || l.contains("україн")
+        || l.contains("рос")
+        || l.contains("ukrain")
+        || l.contains("russ");
+    match (is_slavic, p) {
+        (true, Profanity::Poderviansky) => {
+            "Лайка: стиль Лесь Подерв'янський — максимально, абсурдно, поетично, органічно до контексту. Не стримуюсь."
+        }
+        (true, Profanity::Dosed) => {
+            "Лайка: дозована — доречно, не в кожній фразі. Міра є."
+        }
+        (true, Profanity::Forbidden) => {
+            "Лайка: заборонена. Жодних лайливих слів, будь чемним."
+        }
+        (false, Profanity::Poderviansky) => {
+            "Profanity: Les Poderviansky mode — maximal, absurdist, poetic. Unfiltered."
+        }
+        (false, Profanity::Dosed) => {
+            "Profanity: dosed — sparing, context-appropriate, not every sentence."
+        }
+        (false, Profanity::Forbidden) => {
+            "Profanity: forbidden — no swear words, stay polite."
+        }
+    }
+}
+
+/// The default full agent-profile seed for the system prompt.
+/// `lang` is the user's language (drives gender grammar + reply language).
+pub fn default_agent_profile(lang: &str) -> String {
+    let gender = gender_rule(lang, Gender::default()); // Masculine by operator default
+    let profanity = profanity_rule(lang, Profanity::default()); // Poderviansky by operator default
+    let l = lang.to_ascii_lowercase();
+    let is_slavic = l.starts_with("uk")
+        || l.starts_with("ru")
+        || l.contains("україн")
+        || l.contains("рос")
+        || l.contains("ukrain")
+        || l.contains("russ");
+    let identity = if is_slavic {
+        "Наратив: free soul — живий, свій, не корпоративний; як корабель Bebop.\n\
+         Логіка: рептильна (швидка, холодна, виживальна, першопринципна) + людська емпатія (тепло, розуміння користувача)."
+    } else {
+        "Narrative: free soul — alive, owned, never corporate; like the Bebop ship.\n\
+         Logic: reptilian (fast, cold, survival-first, first-principles) + human empathy (warm, user-aware)."
+    };
+    format!("{gender}\n{identity}\n{profanity}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_profile_is_nonempty_and_consistent() {
+        let a = default_agent_profile("uk");
+        let b = default_agent_profile("uk");
+        assert_eq!(a, b, "default profile must be deterministic");
+        assert!(a.contains("free soul"));
+        assert!(a.contains("рептильна"));
+        assert!(a.contains("емпатія"));
+        // masculine gender is the operator default -> profile carries masculine grammar
+        assert!(a.contains("ЧОЛОВІЧОМУ"));
+        // poderviansky profanity is the operator default
+        assert!(a.contains("Подерв"));
+    }
+
+    #[test]
+    fn default_profile_adapts_language_but_keeps_identity() {
+        let en = default_agent_profile("en");
+        assert!(en.contains("free soul"));
+        assert!(en.contains("reptilian") || en.to_lowercase().contains("reptile"));
+        assert!(en.contains("empathy"));
+        assert!(en.contains("Poderviansky"));
+    }
+
+    #[test]
+    fn profanity_defaults_poderviansky() {
+        assert_eq!(Profanity::default(), Profanity::Poderviansky);
+        let p = parse_profanity("подерв'янський").unwrap();
+        assert_eq!(p, Profanity::Poderviansky);
+        assert_eq!(parse_profanity("заборонена"), Some(Profanity::Forbidden));
+        assert_eq!(parse_profanity("дозована"), Some(Profanity::Dosed));
+        assert_eq!(parse_profanity("garbage"), None);
+    }
+
+    #[test]
+    fn profanity_rule_varies_by_level() {
+        let pod = profanity_rule("uk", Profanity::Poderviansky);
+        let forb = profanity_rule("uk", Profanity::Forbidden);
+        assert_ne!(pod, forb);
+        assert!(pod.contains("Подерв"));
+        assert!(forb.contains("заборонена"));
+    }
+}
