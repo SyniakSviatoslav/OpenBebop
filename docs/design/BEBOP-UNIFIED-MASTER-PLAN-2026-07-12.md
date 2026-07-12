@@ -1,0 +1,188 @@
+# Bebop — UNIFIED MASTER PLAN (consolidated)
+
+Date: 2026-07-12 · Operator: SyniakSviatoslav · Status: PLAN → PARALLEL IMPLEMENTATION
+Supersedes (incorporated, kept as detail): BEBOP-AGENT-PLAN-2026-07-12.md,
+BEBOP-AGENT-MODES-AND-CINEMATIC-TELEMETRY-2026-07-12.md,
+BEBOP-EXTENSIONS-VOICE-RESOURCES-COLLECTIONS-TERMUX-2026-07-12.md.
+Companion: LIBRARIES-FOR-STARS.md (GitHub star list).
+
+---
+
+## 0. Operator vision (all asks, consolidated)
+
+A. Telemetry panel: dynamic metrics + accuracy DRIFT, REGRESSION, speed vs prior
+   prompts, lures. Borrow best UX from game-design.
+B. Agent MODES (build / plan / auto) like Claude: plan=propose-only, build=pause
+   on red-line, auto=TRUE autopilot (ZERO clarify calls). auto → verbose
+   self-review (explains every change).
+C. After EVERY session/loop/series: cinematic DEBRIEF + dynamic REWIND showing
+   MVP / HIGHEST TOKEN USAGE / LEVELED UP / DEGRADED agents. Game-design:
+   Dota scoreboard + XCOM after-action.
+D. MINIMAP (zoomable repo/subsystem/file) — agent work across files.
+E. USER-DEFINED rules/hooks/loops/gates/prompts/settings — dynamic OR static,
+   deep customizable, fully open & modifiable.
+F. Native VOICE control of agent + CLI — offline, NO AI in the voice path.
+G. RESOURCE telemetry (system / OS / device consumption).
+H. Easy file UPLOAD + BROWSE.
+I. LIBRARY COLLECTIONS (GitHub): name/gist/version/memory/downloads/langs;
+   share/install/rename/snapshot/backup/32-bit pixel icon.
+J. Termux-tools registry (local, reverse-eng reusable logic); recon=manual-enable
+   + pre-integration vuln scan; wormgpt flagged dual-use, NOT default.
+K. DEFAULT collection (operator's) auto-enabled, changeable/disableable.
+L. GitHub AUTHOR attribution + CLI star-reminder; settings open-source thank-you
+   + full author list + borrowed resources (Hermes/OpenCode/Claude).
+M. Collections per-environment; telemetry on long-unused; AUTO vuln-scan before
+   integration; PERIODIC vuln/update scan. Everything enable/disable/extend/
+   delete in settings — NO blockers.
+N. **NEW default policies (this revision):**
+   - N1. AUTO-STRUCTURE tasks, CATEGORIZE, determine MAX-EV + PRIORITIZE
+     (default ON, changeable).
+   - N2. PARALLEL-SESSION launch policy — run maximally in parallel where
+     possible (default ON, changeable).
+   - N3. DESCARTES-SQUARE auto-comparison (exact pros / exact cons) for:
+     proposed changes, research, analysis, library loading (default ON, changeable).
+
+---
+
+## 1. Categories (structured, mapped to existing modules — no new crate where avoidable)
+
+| # | Category            | Goal (short)                              | Owned module(s)                     | Phase |
+|---|---------------------|-------------------------------------------|-------------------------------------|-------|
+| A | Drift/regression tel.| drift/regression/speed/lure panel        | `tui::Telemetry` (extend)           | A·B   |
+| B | Modes              | plan/build/auto + clarify-ban + verbose  | `customize::Profile`, `cli`, `tui`  | 1     |
+| C | Cinematic debrief  | MVP/HIGHEST/LEVELUP/DEGRADED + rewind    | `mission.rs` (extend)               | 2     |
+| D | Scoreboard         | Dota-style per-match K/D/A/GPM/XP/net    | `enrich::Trace`, `tui` (widget)     | 3     |
+| E | Minimap            | zoomable file-territory blips             | `tui` (widget)                     | 4     |
+| F | User extensions    | rules/hooks/loops/gates/prompts TOML     | `extensions.rs` (new) + manifests   | 5     |
+| G | Native voice       | espeak-ng/piper TTS + whisper.cpp STT    | `voice.rs` (new, shell-outs)        | 6     |
+| H | Resource tel.      | sysinfo CPU/RAM/disk/OS                  | `tui` + `sysinfo` dep              | 7     |
+| I | File up/browse     | ratatui tree + dufs/zenoh                | `tui` + `fs` subcmd                | 8     |
+| J | Collections        | GitHub lib collections + default          | `collections.rs` (new)             | 9     |
+| K | Termux registry    | local tool registry, recon manual         | `termux.rs` (new)                  | 10    |
+| L | Settings+attrib.   | all toggles + thank-you + authors         | `customize::Profile` + `ATTRIBUTIONS.md` | 11 |
+| M | Vuln/audit gates   | pre-int + periodic scan                   | reuse `ci-supply-chain.sh` logic    | 12    |
+| N | Default policies   | N1 structure/max-EV, N2 parallel, N3 sq | `policy.rs` (new) + `descartes.rs`  | 13    |
+
+### A. Drift / regression telemetry
+Extend `tui::Telemetry` with `drift: Vec<f64>`, `regression: Vec<bool>`,
+`speed_vs_prior: Vec<f64>`, `lure_score: Vec<f64>`. Render as ratatui
+Sparkline/Line. Source = `enrich::Trace` aggregates + governor PID error.
+
+### B. Modes (plan / build / auto)
+`Profile { mode, headless, ... }`. `auto` forbids `clarify` (fail-closed:
+return operator default). `auto` → `verbose_self_review = true`. Env override
+`BEBOP_MODE`. (Resolved: plan=describe-only; auto may open PR; build pauses
+on red-line.)
+
+### C. Cinematic debrief + rewind
+Extend `mission.rs::mission_summary` to accept scoreboard + awards + rewind.
+Compute MVP / HIGHEST TOKEN / LEVELED UP / DEGRADED from `enrich::Trace` +
+`Telemetry` aggregates. Rewind animates `agentic_git` history (reuse
+cursor-up/redraw). Leveling stored as **living-memory nodes** (`memory.rs`) —
+NOT agentic_git metadata, NOT a json file (most anti-clutter: inherits
+MAX_NODES cap + TTL forgetting + snapshot/backup, never touches git).
+
+### D. Scoreboard (Dota-style)
+`enrich::Trace` gains K/D/A/GPM/XPM/networth/damage/healing counters.
+Render ratatui Table in `tui`. MVP = highest net-worth; HIGHEST TOKEN =
+max GPM; LEVELED UP = level increased; DEGRADED = net<0 or drift>thr.
+
+### E. Minimap
+Arena = repo file-tree; tile heat = token spend (default) / commits / files.
+Agents = blips (color per `Outfit` accent) moving as they work (driven by
+`agentic_git` step locations). Zoom repo/subsystem/file. ratatui Canvas or
+block-grid Paragraph; static ASCII in pipes.
+
+### F. User extensions
+`~/.bebop/extensions/{rules,hooks,loops,gates,prompts}.toml`. New
+`extensions.rs` loads + validates (fail-closed: bad rule skipped+logged).
+Static = literal; dynamic = expression over live `Telemetry`/`Trace`.
+Port hook-runner to Rust (Node-free runtime).
+
+### G. Native voice
+`voice.rs`: `listen` (whisper.cpp mic→text) + `speak` (espeak-ng/piper).
+Transcribed text → same command parser as typed input. `voice.auto` narrates
+debrief. NO network, NO cloud LLM in transcription. Graceful disable if binary
+absent.
+
+### H. Resource telemetry
+Add `sysinfo` dep. `resource` panel: CPU%/RAM/disk/OS+ver/arch/host/uptime/
+bebop RSS. Shown in helm + debrief.
+
+### I. File upload / browse
+`bebop fs browse [path]` (ratatui tree). `bebop fs get/put` (local/dufs/
+zenoh). Browse read-only by default; write gated by `mode`.
+
+### J. Collections
+`~/.bebop/collections/{default,<name>}.toml` + `icons/<name>.png`.
+`coll list/add/rm/rename/snapshot/backup/share/install/icon`. GitHub metadata
+cached. Pre-integration vuln scan (cargo-deny); `coll add --force` overrides
+(no blocker). Default collection auto-enabled; `coll disable default` opts out.
+Per-env tags; unused telemetry; periodic `coll audit`.
+
+### K. Termux registry
+`termux.rs`: each tool = manifest (repo, binary, install, category, dual_use,
+enabled). `tool list/enable/run`. Recon = manual-enable, explicit args, never
+auto-scan. Reverse-eng reusable pure logic (chafa→block-grid, onefetch→info).
+wormgpt = dual_use, not default, opt-in.
+
+### L. Settings + attribution
+Extend `Profile` with `[agent]/[voice]/[telemetry]/[collections]/[termux]`
+sections. `bebop settings` UI shows every toggle (no blockers). Generate
+`docs/ATTRIBUTIONS.md` (authors + borrowed resources: Hermes/OpenCode/Claude/
+RustCrypto). `bebop coll star-reminder` prints authors.
+
+### M. Vuln / audit gates
+Reuse `scripts/ci-supply-chain.sh` (cargo-deny + `cargo audit --deny unsound`)
+for `coll add` pre-scan + `coll audit` periodic. RED leg proves property-gate.
+
+### N. Default policies (NEW)
+New `policy.rs` + `descartes.rs`:
+- **N1** `auto_structure`: when given a task, agent decomposes into structured
+  categories, assigns max-EV approach + priority score. Default ON.
+- **N2** `parallel_sessions`: orchestrator launches independent workstreams as
+  parallel sessions/worktrees maximally. Default ON (this very execution uses it).
+- **N3** `descartes_square`: for proposed changes / research / analysis / library
+  loading, auto-emit a 2×2 comparison (exact ADVANTAGES / exact DISADVANTAGES)
+  via `descartes::compare(a,b)`. Default ON.
+All three are `Profile` toggles (changeable). Implemented as config + helper
+functions; the orchestrator (parent) honors N2 when dispatching.
+
+---
+
+## 2. Parallel execution plan (worktrees off CURRENT HEAD, verify-before-merge)
+
+Base for every worktree = `origin/feat/logic-governance` (current HEAD
+`1b94031`) — NOT a stale base (lesson: stale base deletes governance files).
+Each subagent: implements its category, RED→GREEN `cargo test`, **commits to
+its worktree branch (NO stash, NO push, NO merge)**, reports exact files +
+test counts. Parent re-runs `cargo test` in the worktree and merges ONLY if
+green (distrust subagent "green").
+
+Waves (≤3 concurrent, per max_concurrent_children):
+- **Wave 1** (disjoint new files): F `extensions.rs` · G `voice.rs` · C `mission.rs` debrief+rewind.
+- **Wave 2**: J `collections.rs` · K `termux.rs` · A+H+D+E `tui` cluster (ONE owner of `tui.rs` + `enrich.rs` + `sysinfo`).
+- **Wave 3**: B+L `customize::Profile`/`cli` (modes+settings+attrib) · N `policy.rs`+`descartes.rs`.
+
+File-ownership to avoid conflicts: `tui.rs` only Wave 2; `customize.rs`/`cli.rs`
+only Wave 3; each other category owns its new file or single existing file.
+
+Final: after each wave merges, parent runs `cargo test --workspace` + law-hooks
++ doc-claims + supply-chain to keep ALL gates green. Push after each wave.
+
+---
+
+## 3. Resolved decisions
+
+- plan=describe-only; auto opens PR (after verbose self-review); build pauses on red-line.
+- minimap heat default = tokens (commits/files selectable).
+- leveling stored as living-memory nodes (anti-clutter; not git-metadata, not json).
+- dual-use Termux tools = package-manager entries only; never auto-scan; wormgpt opt-in.
+- N1/N2/N3 default ON, all changeable in settings.
+
+## 4. Verification gates (each category)
+
+RED→GREEN per category (e.g. scoreboard shows 0 for empty trace; debrief panics
+on missing history → GREEN prints all 4 badges; voice absent binary → graceful
+disable; collections vuln scan blocks bad lib but --force overrides). Full
+`cargo test --workspace` must stay green (currently 502 + new tests).
