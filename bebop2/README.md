@@ -61,7 +61,7 @@ bebop2/
 - `cargo build -p bebop2-core --target wasm32-unknown-unknown --release` → artifact must have
   EMPTY import section (reloop checks this).
 - Every crypto primitive: KAT vectors in core/kat/ must pass bit-exact.
-- `cargo test -p bebop2` → all equivalence tests vs old bebop oracle pass.
+- `cargo test -p bebop2` → all equivalence tests vs the prior `crates/bebop` implementation (used as an oracle for behavioral parity, not a refactor source) pass.
 
 ---
 

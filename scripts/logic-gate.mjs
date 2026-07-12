@@ -15,7 +15,7 @@
 // NOT claim to prove logic. Limits are documented in LOGIC-LAWS.md §8.
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, existsSync, appendFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync, appendFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
@@ -123,4 +123,4 @@ if (escCount > 0) {
 console.log('✓ LOGIC-GATE: all claims grounded, no contradiction.');
 process.exit(0);
 
-function writeFileSyncSafe(p, c) { appendFileSync(p, ''); require('node:fs').writeFileSync(p, c); }
+function writeFileSyncSafe(p, c) { writeFileSync(p, c); }
