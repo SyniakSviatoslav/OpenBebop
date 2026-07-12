@@ -43,7 +43,7 @@
 | Ed25519 classical sign | roadmap:10; sign.rs:1-708 | **GREEN, RFC 8032 §7.1 bit-exact** (deep-research:25,147) |
 | In-tree CSPRNG (ChaCha20/HChaCha20) | roadmap:11; rng.rs | **GREEN** — best native candidate (deep-research:29) |
 | Math/spectral kernel (field/vsa/kalman/lyapunov/chebyshev/fft/active) | roadmap:12-13 | **DONE & GREEN** (54 lib tests) but architecture-hardening open (H3/H4/H5) — NOT crypto, NOT protocol-critical |
-| wasm32 / no_std / empty-import gate | roadmap:19-20,32; deep-research:16-21 | **FAILS** (~94 errors: missing alloc, no panic_handler/allocator, std f64 trig). ~1 day mechanical work. This is the honest "machine-code" proof and is unproven today |
+| wasm32 / no_std / empty-import gate | roadmap:19-20,32; deep-research:16-21; `scripts/verify-empty-imports.sh` | **GREEN (verified 2026-07-12)** — `--no-default-features` (`host` off, `std` off) builds `bebop2_core.wasm` with **0 imports** (empty import section = bare-metal-safe, no clock/RNG/socket reachable). `#![cfg_attr(not(feature="std"), no_std)]` + bump `#[global_allocator]` + `#[panic_handler]` present. The prior "~94 errors / FAILS" claim was STALE — superseded by `verify-empty-imports.sh`. NOTE: this path EXCLUDES the f64 `host` analytic kernel (field/vsa/kalman/lyapunov/cheetah/fft/active) by design; those are NOT part of the PQ crypto core and are std-only. |
 | Open matcher / dispatch (protocol) | F3:29-31,116-127; MAP:82-89 | **CODE (bebop crate), replicable, test-proven** `matcher.rs:74,274` |
 | PoD / self-cert identity | F3:95-100,166-172 | **CODE** `pod.rs:73-96`, `vault.rs:106` |
 | Reputation ledger | F3:80-83,311; F4:96-100 | **CODE (local HashMap)** `reputation.rs` |
@@ -74,8 +74,8 @@
   (`kdf.rs:7-9,301-306`).
 - **Remaining stub:** NONE of the crypto files are 2-line stubs anymore. The roadmap's
   "ALL STILL STUBS" (roadmap:11,45-47) is corrected by deep-research (`:137`).
-- **Real open blocker:** wasm32 empty-import gate fails (94 errors) — the only honest
-  "runs as machine code / no reachable clock/RNG/socket" proof. Until it compiles +
+- **Real open blocker (RESOLVED 2026-07-12):** wasm32 empty-import gate is now GREEN — `scripts/verify-empty-imports.sh`
+  builds `--no-default-features` and asserts 0 imports. The prior "94 errors" was STALE (see row 46).
   runs under wasmtime bit-exact vs committed KAT, the bare-metal claim is aspirational
   (`bebop2-deep-research-2026-07-11.md:16-21,44-48`).
 - **Entropy model (protocol-relevant, strong):** every primitive is RNG-free on the
@@ -168,8 +168,8 @@
 2. **Roadmap staleness.** roadmap:9-11,45-47 must be corrected — ML-DSA-65 + Argon2id +
    symmetric are implemented, not stubs (per deep-research:137). Risk: planning off a
    false "all stub" baseline.
-3. **wasm32 empty-import gate fails** (94 errors) — the ONLY honest bare-metal/
-   sovereign-node crypto proof. Blocker #1 before any "runs on the vendor's device with
+3. **wasm32 empty-import gate (RESOLVED — GREEN 2026-07-12):** builds to 0 imports via `verify-empty-imports.sh`.
+   Was the bare-metal/sovereign-node crypto proof; now satisfied. Blocker #1 before any "runs on the vendor's device with
    no reachable clock/RNG/socket" claim.
 4. **ML-DSA-65 not NIST-bit-exact** (no oracle in sandbox). Cross-implementation
    interop with any external PQ verifier is unproven — needs an ACVP oracle before

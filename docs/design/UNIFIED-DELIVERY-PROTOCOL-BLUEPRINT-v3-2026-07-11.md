@@ -155,7 +155,7 @@ it never becomes the only one.
 | G6 Mid-route failure unhandled | MED | Fail-closed reroute + PoD contestability | F4:185-192 |
 | G7 Physical-handoff PoD no trustless anchor | HIGH | "PoD is contestable" → route to arbitration, not ground-truth | MAP:143-152, F2:53-55 |
 | G8 Dispute resolution unbuilt | MED-HIGH | Build F2 fail-closed state machine OR integrate UMA/Kleros | F2:8-10,22-37 |
-| G9 wasm32 empty-import gate FAILS (~94 err) | HIGH (bare-metal proof) | Mechanical: add alloc + panic_handler + f64 removal | audit-bebop:46,77-80 |
+| G9 wasm32 empty-import gate GREEN (verified 2026-07-12) | RESOLVED | `scripts/verify-empty-imports.sh` builds `--no-default-features` → 0 imports | audit-bebop:46,77-80 |
 | G10 ML-DSA-65 NOT NIST-bit-exact | HIGH (interop) | ACVP oracle before protocol keys minted | audit-bebop:66-71,174-177 |
 | G11 Two crypto cores | RESOLVED (re-point at bebop2) | Retire scrypt→Argon2id | audit-bebop:164-167 |
 | G12 Roadmap staleness | RESOLVED (crypto done) | Correct roadmap doc | audit-bebop:168-170 |

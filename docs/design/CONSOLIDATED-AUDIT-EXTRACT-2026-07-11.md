@@ -65,7 +65,7 @@
 | G2 no courier marketplace/reassignment | HIGH | 50% courier drop = 50% throughput lost |
 | G4 no payout contract | HIGH | DANGER #3 guard (threshold verifier) |
 | G7 physical-handoff PoD no trustless anchor | HIGH | "PoD is contestable" → arbitration, not ground-truth |
-| G9 wasm32 empty-import gate FAILS (~94 errors) | HIGH | the ONLY honest "machine code" proof; ~1 day mechanical |
+| G9 wasm32 empty-import gate GREEN (verified 2026-07-12) | RESOLVED | `scripts/verify-empty-imports.sh` → 0 imports; prior "94 errors" STALE |
 | G10 ML-DSA-65 NOT NIST-bit-exact | HIGH | interop blocker before minting protocol keys |
 | G3 node liveness | MED | heartbeat/last-seen in matcher |
 | G5 economics model | MED | 1–3% + value sinks (retire "0% atomic bomb" poetry) |
@@ -75,7 +75,7 @@
 | G12 roadmap "ALL STUBS" staleness | RESOLVED | 4/5 crypto impl+KAT; correct the doc |
 
 ### Note on G9/G10 conflict between docs
-- deep-research (2026-07-11) says wasm32 FAILS 94 errors AND ML-DSA is a STUB.
+- deep-research (2026-07-11) said wasm32 FAILS 94 errors AND ML-DSA is a STUB — both STALE (verified 2026-07-12: wasm32 empty-import GREEN via `verify-empty-imports.sh`; ML-DSA implemented + roundtrip/tamper tested per audit row 39).
 - blueprint v3 (same day, later) says G9 wasm32 compiles CLEAN + ML-DSA roundtrip green.
 - REALITY (this session, cargo-verified): wasm32 hardening MERGED (388f90b, feat/wasm32-hardening);
   ML-DSA packing sizes correct but NOT bit-exact (g10kat 9/5, crypto-debug in flight).

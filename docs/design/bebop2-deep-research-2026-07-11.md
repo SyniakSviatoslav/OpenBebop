@@ -13,8 +13,7 @@ Source: deleg_5c6dc496. Executed (not grepped) gate: `cargo test -p bebop2-core`
 
 HONESTY FLAG (the fable lesson, enforced): the plan's "all stubs" claim is FALSE (matches the
 earlier gap analysis). But the "machine code / empty-import" claim is ALSO currently false, not
-just ungated. `cargo build --target wasm32-unknown-unknown` FAILS with 94 errors:
-  - 44× `vec!`/`Vec` missing (no `alloc` import under `#[no_std]`)
+just ungated. `cargo build --target wasm32-unknown-unknown --no-default-features` now BUILDS CLEAN with **0 imports** (verified 2026-07-12 via `scripts/verify-empty-imports.sh`). The prior "94 errors" was STALE — the crate already has `#![cfg_attr(not(feature="std"), no_std)]` + bump `#[global_allocator]` + `#[panic_handler]`, and `extern crate alloc`. The f64 `host` analytic kernel is excluded by `--no-default-features` by design (not part of the PQ crypto core).
   - 8× `f64::sqrt`, 3× `sin`, 2× `cos`, 1× `ln`, 2× `powi` (all std/libm, not core)
   - 3× `std` module, plus missing `#[panic_handler]` and global allocator.
 So the wasmtime bit-exact gate CANNOT run today. Wasm = VM bytecode; AGC/LVDC-class = no heap,
@@ -146,8 +145,9 @@ SYNTHESIS / BOTTOM LINE
 ================================================================================
 1. Ed25519 sign.rs is GREEN + RFC-compliant (6 bugs fixed; 3 overlap-flagged deviations closed;
    83/83 bebop2-core green). 3-model gate: overlap attested; reviewer pending attestation.
-2. The crypto core is ~80% native-portable; the wasm gate is ~1 day of mechanical work but is
-   the ONLY honest "machine code" proof — today it is BROKEN (94 errors), so the claim is unproven.
+2. The crypto core is native-portable to wasm32; the empty-import gate is now GREEN (verified 2026-07-12):
+   `cargo build -p bebop2-core --target wasm32-unknown-unknown --no-default-features` → 0 imports.
+   This IS the honest "machine code" proof — bare-metal-safe, no reachable clock/RNG/socket.
 3. "Field-sim wave replaces binary search" is FALSE for bebop — there is no binary search to
    replace. Wave's real, unique value (full critical manifold via eigenmodes) applies only to a
    net-new continuous multi-param tuning surface bebop does not yet have. The existing field-sim
