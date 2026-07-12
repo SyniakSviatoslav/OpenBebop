@@ -129,8 +129,18 @@ Built on existing `mission.rs::mission_summary` + `agentic_git` history.
 
 ### 3.3 Leveling model (XCOM rank-up)
 - Each agent/pilot accumulates "xp" = verified-successful actions (K + A) minus
-  reverts (D). `level = floor(sqrt(xp))` capped. Stored in `agentic_git`
-  metadata so it persists across sessions (a real "leveled up" arc).
+  reverts (D). `level = floor(sqrt(xp))` capped.
+- STORAGE (operator-decided, most anti-clutter option): progression lives as
+  **nodes in the living-memory layer** (`memory.rs`), NOT in `agentic_git`
+  metadata (would clutter the replay history) and NOT in a standalone json.
+  Why this is the optimized no-clutter choice:
+  - inherits `MAX_NODES` cap → cannot grow unbounded;
+  - inherits TTL-based forgetting → stale progression self-prunes (matches the
+    living-memory TTL/forgetting-toggle ask from the 17-point plan);
+  - snapshots/backups together with the rest of memory (no extra file);
+  - never touches git history.
+  A lightweight in-memory aggregate is rebuilt each session from these nodes,
+  so the "leveled up" arc persists without polluting anything.
 - DEGRADED = net-worth < 0 OR drift > threshold (reuses `Telemetry::drift`).
 
 ---
@@ -235,12 +245,18 @@ No new dependencies. ratatui (already a dep) covers Table/Canvas/Sparkline.
 
 ---
 
-## 9. Open questions for operator (NOT blocking — auto mode decides)
-- Q1: Should `plan` mode also be allowed to *propose* a PR, or only describe?
-  (Default: describe only; auto may open the PR.)
-- Q2: Minimap heat default — tokens or commits? (Default: tokens.)
-- Q3: Leveling persistence location — `agentic_git` metadata vs a separate
-  `agents.jsonl`? (Default: `agentic_git` metadata, content-addressed.)
+## 9. Resolved operator decisions (were open questions)
 
-These are surfaced here for transparency; in `auto` mode bebop picks the default
-and records the choice in the verbose self-review.
+- **Q1 (plan mode scope):** `plan` mode DESCRIBES ONLY — it never opens a PR.
+  Only `auto` may open the PR (after its verbose self-review). `build` pauses on
+  red-line and asks (human-in-loop) before a PR.
+- **Q2 (minimap heat default):** `tokens` (heat = token spend per file-tile).
+  `commits`/`files` remain selectable in settings.
+- **Q3 (leveling storage — most anti-clutter option):** progression is stored as
+  **nodes in the living-memory layer** (`memory.rs`), NOT in `agentic_git`
+  metadata (would clutter replay) and NOT in a standalone json. Inherits
+  `MAX_NODES` cap + TTL forgetting + snapshot/backup — zero extra clutter,
+  never touches git history. (See §3.3.)
+
+All three decided by the operator; no longer blocking. In `auto` mode bebop would
+have picked these same defaults and recorded them in the verbose self-review.
