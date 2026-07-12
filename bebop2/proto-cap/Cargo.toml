@@ -8,7 +8,7 @@ description = "A (authorization) — bebop2 protocol library line. Per-frame sig
 [dependencies]
 # Real from-scratch PQ core (Ed25519 classical leg is wired; ML-DSA-65 PQ leg is a
 # marked TODO pending the pack/unpack API — see signed_frame.rs / hybrid_gate.rs).
-bebop2-core = { path = "../core", default-features = false, features = ["std"] }
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std"] }
 
 # `serde` is the ONLY third-party dep, used purely to canonicalize the capability
 # struct for signing (no externally-tagged/envelope fields that could vary by RUSTC

@@ -40,6 +40,7 @@ hex = "0.4"
 
 [dependencies.bebop-core]
 path = "../../rust-core"
+version = "0.2.0"
 
 [features]
 default = ["native"]

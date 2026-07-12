@@ -1,0 +1,76 @@
+# deny.toml — supply-chain property gate for the bebop workspace.
+#
+# Per REMEDIATION-BLUEPRINT-2026-07-12.md §3G: commit `deny.toml` (advisories +
+# bans + sources + licenses), CI runs `cargo deny fetch` then `cargo deny check`
+# (DB present => no false green), and we BAN the C-build supply chain
+# `openssl-sys` / `native-tls` (blueprint F6). The ban is a *property gate*: it
+# passes on the current tree (the native-tls feature was dropped from
+# bebop-proto-wire so openssl-sys is absent from Cargo.lock) and will HARD-FAIL
+# if either crate ever re-enters the lock.
+#
+# RED fixture: scripts/fixtures/deny-bans-openssl.conf is a deny.toml variant
+# that bans a crate the lock DOES contain, proving the gate is not a label-gate.
+#
+# Note: cargo-deny 0.19 consolidated the advisory severity categories into the
+# shared `severity-threshold` mechanism (RUSTSEC advisories are surfaced with a
+# deny-level). Vulnerability severity is also independently enforced by
+# `cargo audit` in scripts/ci-supply-chain.sh.
+
+[advisories]
+version = 2
+# Refuse to build against a yanked crate version.
+yanked = "deny"
+# Tracked ignores only — pair every entry with a `reason`.
+ignore = []
+
+[bans]
+# Multiple versions of the same crate are a supply-chain smell; warn, don't fail.
+multiple-versions = "warn"
+# Wildcard dependencies are non-reproducible; hard-fail.
+wildcards = "deny"
+# ── The C-build / supply-chain ban (blueprint F6 / §3G). ──────────────────────
+# These pull in system OpenSSL via cc/pkg-config and a native build surface;
+# they are exactly the risk the rustls migration removes. With the native-tls
+# feature dropped from bebop-proto-wire, neither appears in Cargo.lock today,
+# so the gate is GREEN now and turns RED the moment either re-enters.
+[[bans.deny]]
+name = "openssl-sys"
+[[bans.deny]]
+name = "native-tls"
+
+[licenses]
+version = 2
+# OSI / permissive allowlist. This set is exactly the licenses present in the
+# committed Cargo.lock (plus the project's own AGPL-3.0-or-later). AGPL is OSI
+# approved and is the project license for the agent core; the core crates are
+# MIT / AGPL. LGPL-2.1-or-later is only ever present in an `OR` with
+# MIT/Apache-2.0, so the expression is satisfiable. A pure copyleft-only crate
+# (GPL/LGPL without a permissive disjunct) would fail here.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "MPL-2.0",
+    "LGPL-2.1-or-later",
+    "Unlicense",
+    "WTFPL",
+    "AGPL-3.0-or-later",
+]
+# Reject crates that omit a license field entirely (the two core crates were
+# missing one; they now declare MIT / AGPL-3.0-or-later).
+confidence-threshold = 0.8
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
