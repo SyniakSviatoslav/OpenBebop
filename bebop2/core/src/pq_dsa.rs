@@ -547,7 +547,7 @@ fn pack_pk_bytes(rho: &[u8; SEEDBYTES], t1: &PolyVecK) -> Vec<u8> {
     pk
 }
 
-fn unpack_pk_bytes(pk: &[u8]) -> ([u8; SEEDBYTES], PolyVecK) {
+pub fn unpack_pk_bytes(pk: &[u8]) -> ([u8; SEEDBYTES], PolyVecK) {
     let mut rho = [0u8; SEEDBYTES];
     rho.copy_from_slice(&pk[..SEEDBYTES]);
     let mut t1 = [poly_zero(); K];
@@ -647,7 +647,7 @@ fn pack_sig_bytes(c_tilde: &[u8], z: &PolyVecL, h: &PolyVecK) -> Vec<u8> {
 }
 
 /// Unpack signature. Returns None on malformed hint (strong-unforgeability checks).
-fn unpack_sig_bytes(sig: &[u8]) -> Option<([u8; CTILDEBYTES], PolyVecL, PolyVecK)> {
+pub fn unpack_sig_bytes(sig: &[u8]) -> Option<([u8; CTILDEBYTES], PolyVecL, PolyVecK)> {
     if sig.len() != SIGNATUREBYTES {
         return None;
     }
@@ -993,6 +993,14 @@ pub fn sign(sk: &MlDsa65Sk, msg: &[u8], rnd: &[u8; RNDBYTES]) -> MlDsa65Sig {
 pub fn verify(pk: &MlDsa65Pk, msg: &[u8], sig: &MlDsa65Sig) -> bool {
     verify_internal_bytes(&pk.bytes, msg, &sig.bytes)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NIST ACVP FIPS204 ML-DSA-65 byte-exact property-gate (GREEN)
+// Parses the vendored official NIST ACVP vectors and asserts byte-exact agreement
+// for keyGen / sigGen-internal-deterministic / sigVer. Test-only; see acvp_tests.rs.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod acvp_tests;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
