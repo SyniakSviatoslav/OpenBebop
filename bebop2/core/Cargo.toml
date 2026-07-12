@@ -15,7 +15,12 @@ crate-type = ["cdylib", "rlib"]
 # none.
 
 [dev-dependencies]
-# none — KAT vectors are committed in core/kat/ and read by #[test].
+# Test-only (NOT in the production crypto dependency graph). Vendored NIST ACVP
+# FIPS204 ML-DSA vectors are parsed by the ACVP byte-exact property-gate test.
+# `paste` is used ONLY to synthesize one discrete #[test] per ACVP tcId.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+paste = "1.0"
 
 # `std` is the default. Disable it (`--no-default-features`) for a genuine no_std /
 # empty-import wasm32 build (core+alloc only). Native + test builds keep std so tests
