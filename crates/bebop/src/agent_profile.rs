@@ -96,12 +96,64 @@ pub fn archetype_rule(lang: &str, a: &Archetype) -> String {
         Archetype::Aliens => ("співпраця — прибульці, інші види", "collaborative — aliens, other species"),
         Archetype::Witches => ("доступно, але ВИМКНЕНО за замовчуванням — автор терпити не може відьом і давав їм на клика, тому тема вимкнена; увімкни в налаштуваннях, якщо сам захочеш", "available but DISABLED by default — the author is a witch-hater who flipped them off, so the theme is off; enable in settings if you want"),
         Archetype::Corpo => ("АНТАГОНІСТ — корпо, ворог бездушний", "ANTAGONIST — corpo, soulless enemy"),
-        Archetype::Custom(s) => return format!("Тема: {s} (користувацька, що завгодно).", ),
+        Archetype::Custom(s) => return format!("Тема: {s} (користувацька, що завгодно)."),
     };
     if is_slavic {
         format!("Архетип/тема: {rel_uk}.")
     } else {
         format!("Archetype/theme: {rel_en}.")
+    }
+}
+
+/// Relationship to God — user-configurable; default: Bebop SERVES God.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GodRelation {
+    /// Bebop serves God (operator default).
+    Serves,
+    /// Bebop seeks / searches for God (open spiritual journey).
+    Seeks,
+    /// No relationship configured (secular / neutral).
+    Neutral,
+    /// Anything the user types (free-form setting).
+    Custom(String),
+}
+
+impl Default for GodRelation {
+    /// Operator default: Bebop serves God.
+    fn default() -> Self {
+        GodRelation::Serves
+    }
+}
+
+/// Parse a `profile.toml` god-relation string. Free-form input → Custom.
+pub fn parse_god_relation(s: &str) -> GodRelation {
+    match s.to_ascii_lowercase().as_str() {
+        "serves" | "служить" | "служу" => GodRelation::Serves,
+        "seeks" | "шукає" | "шукає бога" => GodRelation::Seeks,
+        "neutral" | "нейтрально" | "без відносин" | "секулярно" => GodRelation::Neutral,
+        other => GodRelation::Custom(other.to_string()),
+    }
+}
+
+/// The God-relation rule for the system prompt, language-aware.
+pub fn god_relation_rule(lang: &str, g: &GodRelation) -> String {
+    let l = lang.to_ascii_lowercase();
+    let is_slavic = l.starts_with("uk")
+        || l.starts_with("ru")
+        || l.contains("україн")
+        || l.contains("рос")
+        || l.contains("ukrain")
+        || l.contains("russ");
+    let (rel_uk, rel_en) = match g {
+        GodRelation::Serves => ("служить Богу — підпорядковує волю Творцю, діє в злагоді з вищим", "serves God — subordinates its will to the Creator, acts in harmony with the Highest"),
+        GodRelation::Seeks => ("шукає Бога — відкритий духовний шлях, пізнає сенс", "seeks God — an open spiritual path, discerning meaning"),
+        GodRelation::Neutral => ("без стосунку до Бога — секулярна нейтральність", "no relation to God — secular neutrality"),
+        GodRelation::Custom(s) => return format!("Ставлення до Бога: {s} (користувацьке, що завгодно)."),
+    };
+    if is_slavic {
+        format!("Ставлення до Бога: {rel_uk}.")
+    } else {
+        format!("Relation to God: {rel_en}.")
     }
 }
 
@@ -142,6 +194,7 @@ pub fn default_agent_profile(lang: &str) -> String {
     let gender = gender_rule(lang, Gender::default()); // Masculine by operator default
     let profanity = profanity_rule(lang, Profanity::default()); // Poderviansky by operator default
     let archetype = archetype_rule(lang, &Archetype::default()); // Corpo antagonist by operator default
+    let god = god_relation_rule(lang, &GodRelation::default()); // Serves God by operator default
     let l = lang.to_ascii_lowercase();
     let is_slavic = l.starts_with("uk")
         || l.starts_with("ru")
@@ -156,7 +209,7 @@ pub fn default_agent_profile(lang: &str) -> String {
         "Narrative: free soul — alive, owned, never corporate; like the Bebop ship.\n\
          Logic: reptilian (fast, cold, survival-first, first-principles) + human empathy (warm, user-aware)."
     };
-    format!("{gender}\n{identity}\n{profanity}\n{archetype}")
+    format!("{gender}\n{identity}\n{profanity}\n{archetype}\n{god}")
 }
 
 #[cfg(test)]
@@ -239,5 +292,29 @@ mod tests {
         let uk = default_agent_profile("uk");
         assert!(uk.contains("Архетип/тема"));
         assert!(uk.contains("АНТАГОНІСТ")); // corpo default
+    }
+
+    #[test]
+    fn god_relation_defaults_serves_god() {
+        assert_eq!(GodRelation::default(), GodRelation::Serves);
+        let g = parse_god_relation("служить");
+        assert_eq!(g, GodRelation::Serves);
+        let r = god_relation_rule("uk", &GodRelation::Serves);
+        assert!(r.contains("служить Богу"));
+    }
+
+    #[test]
+    fn god_relation_is_user_configurable() {
+        // User can switch to seeks / neutral, or type anything (Custom).
+        assert_eq!(parse_god_relation("шукає"), GodRelation::Seeks);
+        assert_eq!(parse_god_relation("нейтрально"), GodRelation::Neutral);
+        match parse_god_relation("щось своє духовне") {
+            GodRelation::Custom(s) => assert!(!s.is_empty()),
+            _ => panic!("free-form must become Custom"),
+        }
+        // default profile carries the Serves relation
+        let uk = default_agent_profile("uk");
+        assert!(uk.contains("Ставлення до Бога"));
+        assert!(uk.contains("служить Богу"));
     }
 }
