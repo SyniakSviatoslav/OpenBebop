@@ -94,3 +94,55 @@ by the gate.
   requirement*, never as self-justifying truths.
 - If the gate itself contradicts a claim it cannot prove, that is an `ESC-` entry,
   not a silent pass.
+
+## 9. Agent-code laws — the programmatic basis for ALL agents/subagents
+Every agent or subagent writing/modifying code in this repo MUST follow these
+**universally accepted, internationally recognized** software-engineering
+principles. Sources are cited; they are *professional standards*, not opinions.
+
+**A. Quality characteristics (ISO/IEC 25010)** — code must aim for:
+functional suitability, reliability, security, maintainability, and readability.
+Readability/maintainability are first-class, not optional. (ISO/IEC 25010;
+Sonar "code quality = readable + maintainable + secure + reliable".)
+
+**B. Secure coding (CERT / CWE Top 25 — SEI/CMU, MITRE)**
+- No injection (CWE-79 XSS, CWE-89 SQLi, CWE-78 OS cmd) — use typed/parameterized APIs.
+- No buffer/int overflow (CWE-120/787), no null-deref (CWE-476), no use-after-free (CWE-416).
+- No secrets in source (CWE-798/259) — `zeroize` on drop; config via env/secret store.
+- Validate trust boundaries (CWE-20 input validation); fail closed, never silent.
+- Prefer memory-safe patterns; avoid unsafe unless justified + reviewed.
+Reference: `cwe.mitre.org/top25/`, SEI CERT Secure Coding Standards.
+
+**C. Reliability & correctness**
+- **Falsifiable tests** (RED+GREEN): every non-trivial function has a test that
+  CAN fail (Verified-by-Math principle 3; this repo's `guardrail-falsifiable-proof.mjs`).
+- **Determinism at trust boundaries**: time/RNG/socket not reachable in the air-gapped
+  kernel (`rust-core/` empty-import gate). Reproducible builds.
+- **Fail-closed**: on error, deny; never approve/partial-apply silently (red-line rule).
+
+**D. Readability & simplicity (clean code, SEI/Google practices)**
+- YAGNI / smallest abstraction that works. No premature abstraction, no dead code,
+  no boilerplate nobody asked for.
+- Self-documenting names; comments explain *why*, not *what*. Delete > add.
+- One responsibility per module/function (single-responsibility).
+
+**E. Professional ethics (IEEE/ACM Software Engineering Code of Ethics)**
+- Hold paramount the **safety, health, and welfare of the public**; protect privacy.
+- Be honest about capability and limitation (no false-green, no over-claim).
+- Accept and give peer review; the **3-model review** (builder ≠ reviewer ≠ overlap)
+  here operationalizes "peer review" for machine agents.
+
+**F. Agent/subagent enforcement**
+- `logic-gate.mjs` does NOT attempt to prove code quality (undecidable). It
+  ESCALATES (exit 2) when code/doc text asserts quality/security/safety claims
+  that lack a ground (test/proof/citation) — same PSR process as §4.
+- The **CI/build** layer is the real enforcer: `cargo clippy`, `cargo test`,
+  `cargo-deny`, `cargo-audit` (WS-4 gate). Code that does not compile/test/
+  audit-clean is refused by CI, independently of this doc gate.
+- Any agent that silently drops an `OPEN` escalation, or edits tests to make them
+  pass without fixing the code, violates §E (honesty) — a hard ethics breach,
+  logged and human-arbitrated.
+
+> Honest limit: "good code" is judged by human reviewers + CI, not by this gate.
+> The gate only guarantees the *claim* "this code is secure/correct" is grounded,
+> and that the *process* (tests, review, fail-closed) is followed.
