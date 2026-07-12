@@ -146,3 +146,95 @@ Reference: `cwe.mitre.org/top25/`, SEI CERT Secure Coding Standards.
 > Honest limit: "good code" is judged by human reviewers + CI, not by this gate.
 > The gate only guarantees the *claim* "this code is secure/correct" is grounded,
 > and that the *process* (tests, review, fail-closed) is followed.
+
+## 10. UX laws — Nielsen / ISO 9241 (for ALL agents touching UI/TUI/CLI surfaces)
+Every agent building or modifying a user-facing surface (TUI `crates/bebop/src/tui.rs`,
+`launch.rs`, web, docs-that-users-read) MUST follow:
+- **Visibility of system status** (Nielsen #1): always show what the system is
+  doing; no silent hangs. (NN/g 10 heuristics; ISO 9241-110 dialogue principles.)
+- **Match real world**: speak the user's language, not jargon/implementation terms.
+- **User control & freedom** (#3): reversible actions, explicit escape, no
+  trapped states (e.g. `mission` sign-off must not lock the user out).
+- **Consistency & standards** (#4): same action = same result; reuse existing
+  patterns (`bin/bebop`, `docs/narration/`) rather than inventing new ones.
+- **Error prevention & helpful recovery** (#5/#9): prevent first, else explain in
+  plain language with a recovery path — never a bare stack trace to the user.
+- **Recognition > recall** (#6): visible options, don't force memorization.
+- **Flexibility & efficiency**: shortcuts for experts, gentle path for novices.
+- **Aesthetic & minimalist** (#8): no irrelevant info on screen at once.
+- **Help & docs**: contextual help; the agent's own docs (`docs/`) must be
+  readable by a human, not just machine-generated.
+- **Accessibility (WCAG)**: sufficient contrast, keyboard reachable, no
+  color-only signaling (the cosmo-noir palette must meet contrast minima).
+Source: Nielsen Norman Group "10 Usability Heuristics"; ISO/IEC 9241-110/171.
+
+## 11. Developer Experience (DX) laws — Osmani / DX book (for build, tooling, CLIs)
+Every agent adding tooling, build steps, CLIs, or dev workflows MUST optimize:
+- **Fast, tight feedback loops**: `cargo test`/`clippy`/`lint` must be quick and
+  runnable locally; CI mirrors local (no "works only in CI" secrets).
+- **Cognitive load**: one obvious way to do a thing; `pnpm`/`cargo` scripts
+  documented in README; no undocumented env incantations.
+- **Learning & discoverability**: `--help` is real, examples ship, errors tell
+  you the fix. `bin/bebop` commands self-document.
+- **Consistency**: Conventional Commits + SemVer (see §14) so history is
+  machine- and human-readable. No surprise breaking changes without `!`/major.
+- **Reproducibility**: pinned toolchains (`Cargo.lock`, `pnpm-lock.yaml`); the
+  air-gapped `rust-core` empty-import gate keeps deterministic builds.
+Source: Addy Osmani "Developer Experience" / DX book; getdx.com DX guide.
+
+## 12. Design laws — Dieter Rams 10 principles (for visual/brand/UI/identity)
+The bebop visual identity (cosmo-noir `#F4C25A`/`#F2933E`/`#12100E`,
+helm/radio/mission) and any new surface MUST follow Rams:
+1. **Innovative** — but never novelty for its own sake.
+2. **Useful** — makes the product usable; no decorative dead weight.
+3. **Aesthetic** — considered, not arbitrary; palette is intentional.
+4. **Understandable** — self-explanatory; the UI teaches itself.
+5. **Unobtrusive** — serves the task, not the ego.
+6. **Honest** — not manipulate, not over-claim (ties to §9E honesty).
+7. **Long-lasting** — not fashion-bound; the brand is stable.
+8. **Thorough to the last detail** — no lazy edges.
+9. **Environmentally friendly** — minimal, efficient, offline-first.
+10. **As little design as possible** — less but better (YAGNI for visuals).
+Source: Dieter Rams "10 Principles for Good Design"; ISO 9241 design guidance.
+
+## 13. QA laws — ISTQB / ISO 25010 / testing pyramid (for tests, CI, releases)
+Every agent writing or changing behavior MUST:
+- **Falsifiable RED+GREEN** (see §9C): every non-trivial fn has a test that
+  CAN fail. CI enforces via `guardrail-falsifiable-proof.mjs` + `cargo test`.
+- **Test pyramid**: mostly unit (fast, deterministic), few integration, rare e2e.
+  No inverted pyramid (all-e2e, flaky, slow).
+- **Continuous testing in CI/CD**: quality gates (deny/audit/clippy/test)
+  block merge — same gate for humans and agents (WS-4). No "agent bypass".
+- **Determinism**: tests repeatable; no time/RNG/socket in the kernel path.
+- **No silent quarantine**: a failing/flaky test is fixed or escalated (§7),
+  never `@ignore`d to fake green.
+- **Coverage of red-lines**: auth/money/RLS/crypto paths have explicit
+  RED (attack) cases, not just GREEN (happy path).
+Source: ISTQB Certified Tester syllabi; ISO/IEC 25010; AWS testing-in-CI/CD.
+
+## 14. Communication / contract laws — RFC 2119, SemVer, Conventional Commits, Conway
+Every agent communicating via commits, PRs, APIs, or docs MUST:
+- **RFC 2119 keywords**: when a spec says MUST/SHALL/MUST NOT, the code enforces
+  it (or the spec is wrong). Ambiguity in a contract is an ESC- to human.
+- **Semantic Versioning**: MAJOR=breaking, MINOR=additive-backward-compatible,
+  PATCH=fix. `Cargo.toml`/`package.json` versions reflect this honestly.
+- **Conventional Commits** (`feat:`/`fix:`/`docs:`/`test:`/`refactor:`/…):
+  history is a readable changelog; `!` marks breaking. Enforced by CI lint.
+- **Conway's law awareness**: system structure mirrors comm team structure —
+  the agent's modular boundaries (guard/OS, memory, mesh, zkVM) should map
+  to clear ownership, not tangled cross-deps.
+- **Provenance & honesty**: every doc claim cites a ground (§0/§4); no
+  fabricated evidence, no silent UPD of past claims (git history is truth).
+- **Single source of truth**: plans/claims live in `docs/design/` + memory,
+  not in chat. Push plans to remote before execution (operator rule).
+Source: RFC 2119; semver.org; conventionalcommits.org; Conway (1968)/IEEE.
+
+## 15. Cross-law enforcement note
+- §10–§14 are **process + professional-standard** laws. Like §9, the gate does
+  NOT auto-judge "is this UX good" (undecidable/subjective). It ESCALATES
+  (exit 2) when a doc/code claim asserts UX/DX/design/QA/communication
+  *correctness* without a ground (test/proof/citation). The human reviewer +
+  CI are the real judges; the gate guarantees the *claim is grounded* and the
+  *process is followed*.
+- Violating §9E/§14 honesty (faking evidence, dropping ESC-) is a hard
+  ethics breach, human-arbitrated.
