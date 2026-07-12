@@ -23,7 +23,7 @@ members = [
     "bebop2/proto-crypto",  # H — crypto ladder stub (Wycheproof→FIPS, ct marker)
 ]
 exclude = [
-    "crates/core-legacy",
+    # crates/core-legacy moved to attic/ on 2026-07-12 (deprecated ts-era guard kernel).
 ]
 
 # Hoisted from per-crate manifests so Cargo doesn't warn "profiles for the non root package

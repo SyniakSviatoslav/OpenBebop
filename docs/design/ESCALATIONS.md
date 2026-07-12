@@ -14,7 +14,7 @@ operator or a designated user) fills the `Resolution` field.
 - Never delete an `OPEN` entry to make the gate green.
 
 <!-- LOGIC-GATE:OPEN-ITEMS (regenerated each run; do not edit by hand) -->
-## Open escalations (16) — human arbiter required
+## Open escalations (18) — human arbiter required
 
 - **ESC-b259452574aa** [unbacked] `README.md:38` — - **Narration + looks** — `bebop init` picks a voice (bebop / plain / sarcastic / corporate-killer)
   - Arbiter: operator · Status: OPEN
@@ -47,6 +47,10 @@ operator or a designated user) fills the `Resolution` field.
 - **ESC-63eb279423bc** [unbacked] `docs/design/LOGIC-LAWS.md:389` —   perfectly (subjective), so it relies on the agent's own §17 self-
   - Arbiter: operator · Status: OPEN
 - **ESC-9f594d9df384** [unbacked] `bebop2/README.md:3` — > Greenfield rebuild of bebop. NOT a refactor of `crates/bebop` — a parallel implementation
+  - Arbiter: operator · Status: OPEN
+- **ESC-abbd6a9a76e1** [unbacked] `README.md:140` — | **zkVM `decide()` journal** | Every admitted command gets a tamper-evident digest over `(state, commandHash, seq)`. On by default at the kernel gate. Replay-verifiable. **Scope:** detects *accidenta
+  - Arbiter: operator · Status: OPEN
+- **ESC-864e6017dfd1** [unbacked] `README.md:143` — | **Optical field recall** | SVETlANNa/Meep optical primitive re-ranks `recall` candidates by field correlation, behind `opts.opticalRecall`. Advisory only — graph score dominates. | LIVE (knowledge.t
   - Arbiter: operator · Status: OPEN
 
 ## Resolved (0)
