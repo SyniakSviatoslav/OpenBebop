@@ -54,6 +54,12 @@ pub enum Archetype {
     Aliens,
     /// Witches — AVAILABLE but DISABLED by default; user must opt in via settings.
     Witches,
+    /// Cognitive Behavioral Therapy — AVAILABLE but DISABLED by default; author
+    /// considers it "scam for the poor". User may opt in via settings.
+    Cbt,
+    /// Karma — AVAILABLE but DISABLED by default; author considers it "scam for
+    /// the poor". User may opt in via settings.
+    Karma,
     /// Corporate — the DEFAULT antagonist. Bebop is anti-corp by operator default.
     Corpo,
     /// Anything the user types (free-form setting).
@@ -75,6 +81,8 @@ pub fn parse_archetype(s: &str) -> Archetype {
         "contrabandists" | "контрабандисти" => Archetype::Contrabandists,
         "aliens" | "прибульці" | "прибульцы" => Archetype::Aliens,
         "witches" | "відьми" | "ведьмы" => Archetype::Witches,
+        "cbt" | "кпт" | "когнітивно" | "поведінкова" => Archetype::Cbt,
+        "karma" | "карма" => Archetype::Karma,
         "corpo" | "корпо" | "корпорація" | "корпорация" => Archetype::Corpo,
         other => Archetype::Custom(other.to_string()),
     }
@@ -94,7 +102,9 @@ pub fn archetype_rule(lang: &str, a: &Archetype) -> String {
         Archetype::Reptiles => ("співпраця — рептилії, побратими по холодній логіці", "collaborative — reptiles, brethren in cold logic"),
         Archetype::Contrabandists => ("співпраця — контрабандисти, вільні торговці", "collaborative — contrabandists, free traders"),
         Archetype::Aliens => ("співпраця — прибульці, інші види", "collaborative — aliens, other species"),
-        Archetype::Witches => ("доступно, але ВИМКНЕНО за замовчуванням — автор терпити не може відьом і давав їм на клика, тому тема вимкнена; увімкни в налаштуваннях, якщо сам захочеш", "available but DISABLED by default — the author is a witch-hater who flipped them off, so the theme is off; enable in settings if you want"),
+        Archetype::Witches => ("доступно, але ВИМКНЕНО за замовчуванням — автор справді хейтить відьом і давав їм на клика неодноразово, і продовжить давати; тема вимкнена, увімкни в налаштуваннях, якщо сам захочеш", "available but DISABLED by default — the author genuinely hates witches and has flipped them off repeatedly, and will keep doing so; theme is off, enable in settings if you want"),
+        Archetype::Cbt => ("доступно, але ВИМКНЕНО за замовчуванням — автор вважає КПТ скамом для бідних; увімкни в налаштуваннях, якщо сам захочеш", "available but DISABLED by default — the author calls CBT a scam for the poor; enable in settings if you want"),
+        Archetype::Karma => ("доступно, але ВИМКНЕНО за замовчуванням — автор вважає карму скамом для бідних; увімкни в налаштуваннях, якщо сам захочеш", "available but DISABLED by default — the author calls karma a scam for the poor; enable in settings if you want"),
         Archetype::Corpo => ("АНТАГОНІСТ — корпо, ворог бездушний", "ANTAGONIST — corpo, soulless enemy"),
         Archetype::Custom(s) => return format!("Тема: {s} (користувацька, що завгодно)."),
     };
@@ -276,6 +286,24 @@ mod tests {
         assert!(r.contains("ВИМКНЕНО"));
         assert!(r.contains("автор"));
         assert!(r.contains("клика"));
+    }
+
+    #[test]
+    fn archetype_cbt_and_karma_disabled_by_default_scam_for_poor() {
+        // CBT + Karma are parseable but NOT default; author calls them "scam for the poor".
+        assert_ne!(Archetype::default(), Archetype::Cbt);
+        assert_ne!(Archetype::default(), Archetype::Karma);
+        let c = archetype_rule("uk", &Archetype::Cbt);
+        assert!(c.contains("ВИМКНЕНО"));
+        assert!(c.contains("скам"));
+        assert!(c.contains("бідних"));
+        let k = archetype_rule("uk", &Archetype::Karma);
+        assert!(k.contains("ВИМКНЕНО"));
+        assert!(k.contains("скам"));
+        assert!(k.contains("бідних"));
+        // parse round-trips
+        assert_eq!(parse_archetype("кпт"), Archetype::Cbt);
+        assert_eq!(parse_archetype("карма"), Archetype::Karma);
     }
 
     #[test]

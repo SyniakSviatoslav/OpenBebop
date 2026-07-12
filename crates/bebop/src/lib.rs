@@ -41,7 +41,9 @@ pub mod outfit;
 pub mod agent_profile; // DEFAULT agent identity: free soul + masculine + reptile logic + empathy
 pub mod gender; // R: configurable grammatical-gender + gender-communication style (default Masculine)
 pub mod intent; // P: auto-detect GOAL vs LOOP intent from a prompt
-pub mod agent_loop; // LOOP: governed agentic loop driver (max_iter + verify-gate + rollback-on-fail)
+pub mod changes; // Q: Hermes-style change/action record (key-changes visibility)
+pub mod drift; // GLOBAL RULE: systems-thinking / architecture drift detector (configurable, CLI flag)
+pub mod settings; // Q: settings dictionary (self-service; agent turns knobs per user request)
 pub mod lanes; // O: parallel-session scheduler (throughput/auto-queue/ETA)
 pub mod pddl; // deterministic STRIPS-style planner + chain-of-thought trace
 pub mod pod; // POD: pseudonymous Proof-of-Delivery (Princess Pi attribution, audit 29157)
