@@ -50,7 +50,15 @@ the RED test (fails on current tree) + GREEN test (passes after fix), and `cargo
 - WS-2 TLV codec: **GREEN** — `cargo test -p bebop-proto-cap` 21 passed; serde_json removed from signing path; tlv.rs + capability.rs + signed_frame.rs + scope.rs.
 - WS-5 AnchorRoster: **GREEN** — `cargo test -p bebop-proto-cap` 15 passed; self-issue→UnknownIssuer, escalation→ScopeViolation, broken link→ChainBroken, valid chain→Ok; roster.rs + error.rs.
 - WS-F2 ACVP gate: **GREEN (60/60)** — `cargo test -p bebop2-core` 157 passed; ML-DSA-65 byte-exact vs NIST ACVP FIPS204 (25 keyGen + 20 sigGen + 15 sigVer). The subagent's reported "1 failing sigVer tcId20" was a TEST-HARNESS TYPO (hardcoded `20 => false` vs JSON `testPassed=true`), not a crypto bug — fixed by deriving `want` from parsed testPassed and gating `mod acvp_tests` with `#[cfg(test)]`. Impl was already interoperable (25/25 keyGen + 20/20 sigGen proved it). Module doc already states ACVP verification (stale "network blocked" claim gone).
-- **"post-quantum" claim is now SATISFIED** (F2) — verified by external NIST vectors, not self-KAT.
+### Wave 3 status (2026-07-12, independently re-verified)
+- WS-6 rustls TLS: **GREEN** — `cargo tree -p bebop-proto-wire -i openssl-sys` → "did not match any packages" (OpenSSL gone, kills deadliest §2); `cargo test -p bebop-proto-wire` → 8 passed; new rustls handshake smoke test passes. Independent re-check confirmed.
+- WS-7 channel binding: **GREEN** — `cargo test -p bebop-proto-cap -p bebop-proto-wire` → 13 + 10 passed; cross-channel replay rejected, binding tamper rejected, legacy None→zero slot flagged.
+
+### Integration / merge coordination (do NOT parallel-merge blindly)
+- WS-2 and WS-7 BOTH edit `bebop2/proto-cap/src/signed_frame.rs` (WS-2 TLV signing_domain; WS-7 channel_binding + binding_signing_domain). → integrate in the SAME batch; expect a rebase/conflict at `signed_frame.rs`. WS-7 was built additive (kept `signing_domain` name, added `binding_signing_domain`/`with_binding`) to minimize conflict, but the file will still need a manual 3-way merge.
+- WS-6 edits `bebop2/proto-wire/Cargo.toml` + `wss_transport.rs`; WS-7 edits `bebop2/proto-wire/src/handshake.rs` + `wss_transport.rs`. → WS-6 and WS-7 touch `wss_transport.rs` (WS-6 TLS setup, WS-7 passes binding into SignedFrame after handshake). Integrate together; WS-7's edit is a call-site addition, low conflict risk.
+- WS-1 (rng.rs), WS-3 (core numeric), WS-4 (repo infra/CI) touch disjoint areas from WS-2/5/6/7 → can merge independently.
+- WS-F2 lives on `feat/mldsa-acvp-gate` based on `fix/mldsa-fips204-acvp` (NOT review/proto-crypto) → merges into the F2 fix branch first, then that branch into main. It is the only Phase-0 item on a different base branch.
   (source: RustCrypto/signatures `ml-dsa/tests`, which are the canonical NIST ACVP-Server exports).
 - Counts (ML-DSA-65): keyGen=25, sigGen=20, sigVer=15. Format: `testGroups[].parameterSet=ML-DSA-65`,
   tests carry `seed`/`pk`/`sk`/`msg`/`rnd`/`signature` as hex. `vsId=42, revision=FIPS204, isSample=false`.
