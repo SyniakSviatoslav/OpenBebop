@@ -7,11 +7,16 @@ description = "W (wire transport) — bebop2 protocol library line. iroh + WSS t
 
 [dependencies]
 # Real authorization line: signed frames + hybrid gate (classical leg live, PQ TODO).
-bebop-proto-cap = { path = "../proto-cap" }
+bebop-proto-cap = { path = "../proto-cap", version = "0.1.0" }
 
 # Async runtime + WebSocket carrier (tokio-tungstenite, pure-Rust, std-friendly).
 tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
-tokio-tungstenite = { version = "0.23", features = ["native-tls"] }
+# NOTE: deliberately NO `native-tls` feature. The blueprint (§3G/F6) bans the C-build
+# supply chain (openssl-sys/native-tls). Plain `ws://` transport (used by the round-trip
+# tests) works without any TLS feature; `wss://` support lands with the rustls migration
+# in a later phase. Keeping this feature off keeps openssl-sys OUT of the lock entirely,
+# so `cargo deny` can hard-fail if it ever re-enters.
+tokio-tungstenite = "0.23"
 futures-util = "0.3"
 
 # Deterministic (de)serialization of the envelope/frame onto carrier bytes.
@@ -27,4 +32,4 @@ futures-util = "0.3"
 # Real Ed25519 keygen (RFC 8032, from scratch) for the round-trip tests. The lib
 # itself stays free of a direct core dependency (signing is reached via
 # `bebop_proto_cap`), but the tests need to mint keys.
-bebop2-core = { path = "../core", default-features = false, features = ["std"] }
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std"] }

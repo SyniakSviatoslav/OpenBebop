@@ -2,6 +2,7 @@
 name = "bebop2-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "From-scratch zero-dep post-quantum core for bebop2. Pure core+alloc, empty-import wasm. No vendors."
 
 [lib]
