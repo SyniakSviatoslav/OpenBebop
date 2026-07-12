@@ -42,9 +42,22 @@ the RED test (fails on current tree) + GREEN test (passes after fix), and `cargo
 
 ## 3. Launch order (max parallelism within `delegate_task` batch-of-3 limit)
 
-- Wave 1 (now): **WS-1 + WS-3 + WS-4** (all touch disjoint areas: rng.rs / core numeric / repo infra).
-- Wave 2 (after W1 reports, or concurrent second batch): **WS-2 + WS-5 + V-1** (proto-cap tlv / proto-cap roster / F2-verify).
-- Wave 3 (sequential gate): F6 rustls + F7 channel binding — depend on WS-2/WS-5, so AFTER they land.
+- Wave 1 (launched): **WS-1 + WS-3 + WS-4** (disjoint: rng.rs / core numeric / repo infra).
+- Wave 2 (launched): **WS-2 + WS-5 + WS-F2** (proto-cap tlv / proto-cap roster / F2 ACVP gate).
+- Wave 3 (launched, additive): **WS-6 + WS-7** (rustls TLS replaces native-tls/OpenSSL [kills deadliest §2]; channel-binding on SignedFrame [F7]). WS-6/WS-7 are additive to proto-wire/proto-cap and launched in parallel with W1/W2 — they do NOT hard-block on W2; they coordinate merge via naming (binding_signing_domain keeps signing_domain name). Integration still ordered so WS-6/WS-7 merge after WS-2/WS-5 to avoid rebase churn.
+
+### Wave 2 status (2026-07-12)
+- WS-2 TLV codec: **GREEN** — `cargo test -p bebop-proto-cap` 21 passed; serde_json removed from signing path; tlv.rs + capability.rs + signed_frame.rs + scope.rs.
+- WS-5 AnchorRoster: **GREEN** — `cargo test -p bebop-proto-cap` 15 passed; self-issue→UnknownIssuer, escalation→ScopeViolation, broken link→ChainBroken, valid chain→Ok; roster.rs + error.rs.
+- WS-F2 ACVP gate: **GREEN (60/60)** — `cargo test -p bebop2-core` 157 passed; ML-DSA-65 byte-exact vs NIST ACVP FIPS204 (25 keyGen + 20 sigGen + 15 sigVer). The subagent's reported "1 failing sigVer tcId20" was a TEST-HARNESS TYPO (hardcoded `20 => false` vs JSON `testPassed=true`), not a crypto bug — fixed by deriving `want` from parsed testPassed and gating `mod acvp_tests` with `#[cfg(test)]`. Impl was already interoperable (25/25 keyGen + 20/20 sigGen proved it). Module doc already states ACVP verification (stale "network blocked" claim gone).
+- **"post-quantum" claim is now SATISFIED** (F2) — verified by external NIST vectors, not self-KAT.
+  (source: RustCrypto/signatures `ml-dsa/tests`, which are the canonical NIST ACVP-Server exports).
+- Counts (ML-DSA-65): keyGen=25, sigGen=20, sigVer=15. Format: `testGroups[].parameterSet=ML-DSA-65`,
+  tests carry `seed`/`pk`/`sk`/`msg`/`rnd`/`signature` as hex. `vsId=42, revision=FIPS204, isSample=false`.
+- This makes F2 a TRUE property-gate: `fix/mldsa-fips204-acvp` already has correct FIPS-204 structure
+  (sizes 1952/4032/3309, c̃=48, real NTT ζ, uniform-A NTT-domain) but only had a "differential probe"
+  (prints STAGE bytes for manual diff) — NO self-checking external vector. WS-F2 wires the vendored
+  ACVP json into a `#[test]` that asserts byte-exact keygen/sign/verify. → "post-quantum" claim gate.
 
 ## 4. Integration discipline (3-model review)
 
