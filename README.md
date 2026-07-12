@@ -101,6 +101,23 @@ bebop init              # pick narration + looks (real customization)
 - **Not a replacement for human review** of money/auth/RLS — it *refuses* those by default; approval is yours.
 - **Not multi-user / not hosted.** One user, one local process.
 
+## Author's stance (hard lines)
+
+The author's personal convictions are encoded as **non-negotiable** rules in the agent
+(default-off / hard-banned themes, never user-toggleable — see `Archetype::Voodoo` and
+`Archetype::Satanic` in `crates/bebop/src/agent_profile.rs`):
+
+- **Satanic cults** — the author despises and hates every satanic cult, and will not serve
+  them even after death. **HARD BAN.** Any satanic-cult theme is permanently forbidden,
+  with no override path.
+- **Voodoo** — the author considers everyone who used or uses voodoo a motherfucker.
+  **HARD BAN**, no override.
+
+> Автор передає вітання «королеві» рою.
+
+Everything else (witches / CBT / karma) is merely *disabled by default* and can be opted into
+via settings — but satanic cults and voodoo are **hard-banned**, full stop.
+
 ## Bebop vs the others (honest)
 
 Bebop is a **combiner above** other agentic CLIs, not a replacement. It credits each tool's strengths:
@@ -134,7 +151,7 @@ command and exposes `verifySelfEvolution()` — the agent can prove its own evol
 ## Verification
 
 ```bash
-cargo test           # 546 Rust tests, RED+GREEN, 0 fail
+cargo test           # 547 Rust tests, RED+GREEN, 0 fail
 cargo check          # 0 errors (typecheck)
 node scripts/verify-doc-claims.mjs        # doc-claim falsifiability gate
 node scripts/guardrail-falsifiable-proof.mjs   # every #[test] must be falsifiable

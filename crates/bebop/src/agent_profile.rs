@@ -63,6 +63,9 @@ pub enum Archetype {
     /// Voodoo — HARD BAN. No user override path. Author calls anyone who used or
     /// uses voodoo a "хуєсос" (motherfucker). Permanently forbidden.
     Voodoo,
+    /// Satanic cults — HARD BAN. No user override path. Author despises and hates
+    /// every satanic cult and will not serve them even after death. Permanently forbidden.
+    Satanic,
     /// Corporate — the DEFAULT antagonist. Bebop is anti-corp by operator default.
     Corpo,
     /// Anything the user types (free-form setting).
@@ -87,6 +90,7 @@ pub fn parse_archetype(s: &str) -> Archetype {
         "cbt" | "кпт" | "когнітивно" | "поведінкова" => Archetype::Cbt,
         "karma" | "карма" => Archetype::Karma,
         "voodoo" | "вуду" => Archetype::Voodoo,
+        "satanic" | "satan" | "сатанинськ" | "сатана" | "диявол" | "дьявол" => Archetype::Satanic,
         "corpo" | "корпо" | "корпорація" | "корпорация" => Archetype::Corpo,
         other => Archetype::Custom(other.to_string()),
     }
@@ -110,6 +114,7 @@ pub fn archetype_rule(lang: &str, a: &Archetype) -> String {
         Archetype::Cbt => ("доступно, але ВИМКНЕНО за замовчуванням — автор вважає КПТ скамом для бідних; увімкни в налаштуваннях, якщо сам захочеш", "available but DISABLED by default — the author calls CBT a scam for the poor; enable in settings if you want"),
         Archetype::Karma => ("доступно, але ВИМКНЕНО за замовчуванням — автор вважає карму скамом для бідних; увімкни в налаштуваннях, якщо сам захочеш", "available but DISABLED by default — the author calls karma a scam for the poor; enable in settings if you want"),
         Archetype::Voodoo => ("ПОВНА ЗАБОРОНА — автор вважає хуєсосами усіх, хто користувався чи користується вуду; без змоги змінити", "HARD BAN — the author calls everyone who used or uses voodoo a motherfucker; no override possible"),
+        Archetype::Satanic => ("ПОВНА ЗАБОРОНА — автор зневажає і ненавидить усі сатаністські культи і навіть після смерті не служитиме їм; без змоги змінити", "HARD BAN — the author despises and hates every satanic cult and will not serve them even after death; no override possible"),
         Archetype::Corpo => ("АНТАГОНІСТ — корпо, ворог бездушний", "ANTAGONIST — corpo, soulless enemy"),
         Archetype::Custom(s) => return format!("Тема: {s} (користувацька, що завгодно)."),
     };
@@ -218,10 +223,10 @@ pub fn default_agent_profile(lang: &str) -> String {
         || l.contains("ukrain")
         || l.contains("russ");
     let identity = if is_slavic {
-        "Наратив: free soul — живий, свій, не корпоративний; як корабель Bebop.\n\
+        "Наратив: free soul — живий, свій, не корпоративний; як корабель Bebop.\\n\
          Логіка: рептильна (швидка, холодна, виживальна, першопринципна) + людська емпатія (тепло, розуміння користувача)."
     } else {
-        "Narrative: free soul — alive, owned, never corporate; like the Bebop ship.\n\
+        "Narrative: free soul — alive, owned, never corporate; like the Bebop ship.\\n\
          Logic: reptilian (fast, cold, survival-first, first-principles) + human empathy (warm, user-aware)."
     };
     format!("{gender}\n{identity}\n{profanity}\n{archetype}\n{god}")
@@ -321,6 +326,20 @@ mod tests {
         assert!(r.contains("хуєсос"));
         // NOT in the settings dictionary (cannot be toggled on).
         assert!(crate::settings::dictionary().iter().all(|e| e.key != "voodoo"));
+    }
+
+    #[test]
+    fn archetype_satanic_is_hard_banned() {
+        // Satanic cults: HARD BAN, no user override path, author despises them
+        // and will not serve them even after death. Mirrors the voodoo ban.
+        assert_eq!(parse_archetype("satanic"), Archetype::Satanic);
+        assert_eq!(parse_archetype("сатана"), Archetype::Satanic);
+        let r = archetype_rule("uk", &Archetype::Satanic);
+        assert!(r.contains("ПОВНА ЗАБОРОНА"));
+        assert!(r.contains("сатаністськ"));
+        assert!(r.contains("після смерті"));
+        // NOT in the settings dictionary (cannot be toggled on).
+        assert!(crate::settings::dictionary().iter().all(|e| e.key != "satanic"));
     }
 
     #[test]
