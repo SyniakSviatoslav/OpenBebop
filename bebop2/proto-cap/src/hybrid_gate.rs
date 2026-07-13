@@ -2,10 +2,12 @@
 //!
 //! Per the bebop Tier-5 earn-it rule ("hybrid-only until audit"), a frame is
 //! accepted only if it verifies under a classical scheme (Ed25519) AND under a
-//! post-quantum scheme (ML-DSA-65). The classical leg is REAL (wired to
-//! `bebop2-core::sign`). The PQ leg is a TODO pending the ML-DSA pack/unpack API
-//! (see `signed_frame::{sign_pq,verify_pq}`); until then the gate reports
-//! `HybridIncomplete` for the missing PQ proof rather than fabricating one.
+//! post-quantum scheme (ML-DSA-65). BOTH legs are REAL: the classical leg is
+//! wired to `bebop2-core::sign` (Ed25519) and the PQ leg is wired to
+//! `bebop2-core::pq_dsa` (ML-DSA-65, FIPS 204 / ACVP-verified) via
+//! `signed_frame::{sign_pq,verify_pq}`. `RequireBoth` enforces a real ML-DSA-65
+//! verification against the capability's `subject_key_pq`; a missing/invalid PQ
+//! proof yields `HybridIncomplete`/`PqVerifyFailed` — never a fabricated pass.
 //!
 //! CI GUARD: NO-COURIER-SCORING — gating on signature validity, never on score.
 
@@ -20,7 +22,8 @@ use crate::signed_frame::SignedFrame;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HybridPolicy {
     /// Require the classical signature to verify AND the PQ signature to verify.
-    /// (Current build: PQ is a TODO, so this always returns `HybridIncomplete`.)
+    /// Enforces a REAL ML-DSA-65 verification (`frame.verify_pq`) against the
+    /// capability's `subject_key_pq`; a missing/invalid PQ proof is rejected.
     RequireBoth,
     /// Accept as soon as the classical signature verifies; record that PQ is
     /// still pending. Used during the pre-audit ramp (does NOT lower the bar on
@@ -191,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn require_both_reports_pq_todo() {
+    fn require_both_rejects_missing_pq_proof() {
         let gate = HybridGate::new(HybridPolicy::RequireBoth);
         // `gated()` produces a hybrid cap (has subject_key_pq) but no pq_sig, so
         // RequireBoth must reject on the missing PQ proof (PqVerifyFailed), not

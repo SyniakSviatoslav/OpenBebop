@@ -108,6 +108,14 @@ pub fn sign_frame_bound(
 ) -> WireResult<()> {
     let binding = crate::handshake::channel_binding_hash(handshake_transcript);
     *frame = frame.clone().with_binding(binding);
+    // Real classical signature committing to the channel binding.
     frame.sign_classical(seed)?;
+    // PQ-IN-FORCE: the hybrid gate (RequireBoth) also requires a valid ML-DSA-65
+    // signature over the bound frame. Derive a deterministic PQ keypair from the
+    // same seed and sign the PQ leg for real (no fabricated pass).
+    let (_pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(seed);
+    frame
+        .sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
+        .map_err(|e| crate::error::WireError::Carrier(format!("pq sign: {e:?}")))?;
     Ok(())
 }

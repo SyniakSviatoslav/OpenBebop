@@ -107,10 +107,24 @@ impl Transport for WssTransport {
             .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
         Ok(WssTransport::from_stream(
             ws,
-            HybridGate::new(HybridPolicy::ClassicalUntilPqAudit),
+            // PQ-IN-FORCE: the hybrid gate requires BOTH the classical (Ed25519)
+            // and post-quantum (ML-DSA-65) signatures on the live wire. A
+            // classical-only frame is rejected (PqVerifyFailed) — this is what
+            // closes red-team H5 ("post-quantum not in force"). The transitional
+            // `ClassicalUntilPqAudit` policy is NOT used on the live carrier.
+            HybridGate::new(HybridPolicy::RequireBoth),
             AnchorRoster::new(),
         ))
     }
+
+    // innovate: H6 (red-team) — the WSS carrier runs over `MaybeTlsStream::Plain`
+    // (no TLS); confidentiality/integrity in transit rely on the PQ+classical
+    // signature envelope, NOT transport encryption. This is a DELIBERATE local-
+    // first dev default, NOT a production posture. Upgrade trigger: when a real
+    // deployment needs wire confidentiality, wrap the TcpStream in `TlsStream`
+    // (native rustls) before `accept_async`/`connect_async`, OR route the
+    // transport over a QUIC/Noise channel. Until then the wire is authenticated
+    // but readable by a passive on-path observer.
 
     async fn accept(endpoint: &Self::Endpoint) -> WireResult<Self> {
         let addr = match endpoint {
@@ -135,7 +149,8 @@ impl Transport for WssTransport {
             .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
         Ok(WssTransport::from_stream(
             ws,
-            HybridGate::new(HybridPolicy::ClassicalUntilPqAudit),
+            // PQ-IN-FORCE: see `connect()` above. RequireBoth on accept too.
+            HybridGate::new(HybridPolicy::RequireBoth),
             AnchorRoster::new(),
         ))
     }
@@ -209,7 +224,7 @@ mod tests {
     use super::*;
     use bebop_proto_cap::roster::{AnchorRoster, Delegation, Effect};
     use bebop_proto_cap::scope::{Action, Resource, Scope};
-    use bebop_proto_cap::{Capability, HybridGate, HybridPolicy};
+    use bebop_proto_cap::{Capability, HybridGate, HybridPolicy, SignedFrame};
     use tokio::sync::oneshot;
 
     /// (seed, pk) for a deterministic Ed25519 key.
@@ -221,7 +236,9 @@ mod tests {
 
     /// Build a frame signed by `leaf`, plus an anchor-rooted delegation chain
     /// (anchor -> leaf) carrying the same scope, and a roster enrolling anchor.
-    /// This is the ONLY way a frame passes the live gate now.
+    /// The capability is HYBRID: it carries a real ML-DSA-65 `subject_key_pq` and
+    /// the frame is signed under BOTH the classical (Ed25519) and PQ (ML-DSA-65)
+    /// legs, so it satisfies the live `RequireBoth` gate (closes red-team H5).
     fn anchored_frame(
         anchor_seed: &[u8; 32],
         anchor_pk: &[u8; 32],
@@ -232,9 +249,16 @@ mod tests {
         nonce: [u8; 8],
         expiry: u64,
     ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
-        let cap = Capability::new(*leaf_pk, resource, action, nonce, expiry);
+        // PQ half of the hybrid identity, derived from the SAME leaf seed as the
+        // classical key. IMPORTANT: pq_pk (public, 1952B) goes into the cap's
+        // `subject_key_pq`; pq_sk (secret, 4032B) signs — never swap them.
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(leaf_seed);
+        let cap = Capability::new_hybrid(*leaf_pk, pq_pk.bytes.clone(), resource, action, nonce, expiry);
         let mut f = SignedFrame::new(cap, b"wire-payload".to_vec());
         f.sign_classical(leaf_seed).unwrap();
+        // Real PQ signature over the frame's binding-signing domain.
+        f.sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
+            .unwrap();
         let link = Delegation::sign(
             *anchor_pk,
             *leaf_pk,
@@ -519,8 +543,19 @@ mod tests {
 
         // Simulate a completed handshake; the transcript hash binds the channel.
         // The frame subject MUST be the chain's leaf (leaf_pk) so the tail binds.
+        // Hybrid capability (RequireBoth in force on the wire): derive the PQ
+        // public key from the SAME leaf seed so sign_frame_bound's PQ signature
+        // verifies against this cap's subject_key_pq.
         let transcript = b"channel-A-handshake-transcript";
-        let cap = Capability::new(l_pk, Resource::Route, Action::Send, [7u8; 8], 9_999_999_999);
+        let (bound_pq_pk, _bound_pq_sk) = bebop2_core::pq_dsa::keygen(&l_seed);
+        let cap = Capability::new_hybrid(
+            l_pk,
+            bound_pq_pk.bytes.clone(),
+            Resource::Route,
+            Action::Send,
+            [7u8; 8],
+            9_999_999_999,
+        );
         let mut frame = SignedFrame::new(cap, b"bound-wire-payload".to_vec());
         crate::sign_frame_bound(&mut frame, &l_seed, transcript).unwrap();
         frame.delegation_chain = chain;
@@ -596,6 +631,63 @@ mod tests {
         assert_ne!(binding_a, binding_b);
 
         client.send(replayed).await.unwrap();
+        server.await.unwrap();
+    }
+
+    /// RED→GREEN over the REAL wss carrier: a classical-only frame (no PQ leg)
+    /// MUST be rejected now that the live transport enforces `RequireBoth`
+    /// (closes red-team H5: "post-quantum not in force"). If this passes, a
+    /// revert to `ClassicalUntilPqAudit` would make it fail — catching the
+    /// regression at the wire boundary, not just in the unit gate.
+    #[tokio::test]
+    async fn wss_rejects_classical_only_frame_on_require_both_wire() {
+        let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+
+        let (a_seed, a_pk) = key(2);
+        let (l_seed, l_pk) = key(3);
+        let (_f, roster, chain) = anchored_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [9u8; 8],
+            9_999_999_999,
+        );
+
+        let (tx, rx) = oneshot::channel();
+        let server_addr = addr.to_string();
+        let server_roster = roster.clone();
+        let server = tokio::spawn(async move {
+            run_server(server_addr, server_roster, tx, |mut t| async move {
+                let res = t.recv().await;
+                assert!(
+                    res.is_err(),
+                    "classical-only frame MUST be rejected when RequireBoth is in force"
+                );
+            })
+            .await;
+        });
+
+        rx.await.unwrap();
+
+        let client_ep = WssEndpoint::Url(format!("ws://{addr}"));
+        let mut client = WssTransport::connect(&client_ep)
+            .await
+            .unwrap()
+            .with_roster(roster.clone());
+
+        // Build a CLASSICAL-ONLY capability (no subject_key_pq) and sign it
+        // classically only — exactly the pre-fix acceptance path.
+        let cap = Capability::new(l_pk, Resource::Route, Action::Send, [9u8; 8], 9_999_999_999);
+        let mut frame = SignedFrame::new(cap, b"classical-only-payload".to_vec());
+        frame.sign_classical(&l_seed).unwrap();
+        frame.delegation_chain = chain;
+
+        client.send(frame).await.unwrap();
         server.await.unwrap();
     }
 }
