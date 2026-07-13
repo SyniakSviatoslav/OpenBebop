@@ -264,7 +264,7 @@ mod tests {
     {
         let _ = tx.send(());
         let ep = WssEndpoint::Listen(addr);
-        let mut t = WssTransport::accept(&ep).await.unwrap().with_roster(roster);
+        let t = WssTransport::accept(&ep).await.unwrap().with_roster(roster);
         body(t).await;
     }
 
@@ -423,7 +423,7 @@ mod tests {
         drop(probe);
 
         // Server enrolls a REAL anchor the attacker does not control.
-        let (a_seed, a_pk) = key(2);
+        let (_a_seed, a_pk) = key(2);
         let mut roster = AnchorRoster::new();
         roster.enroll(&a_pk);
 

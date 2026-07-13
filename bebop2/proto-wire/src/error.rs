@@ -14,6 +14,8 @@ use core::fmt;
 pub enum WireError {
     /// A frame exceeded the maximum allowed size.
     FrameTooLarge(usize),
+    /// Envelope protocol version is unsupported / tampered on the wire.
+    VersionMismatch(u8),
     /// Failed to (de)serialize the envelope / inner frame.
     Encode(String),
     /// The WebSocket carrier errored or disconnected.
@@ -35,6 +37,7 @@ impl fmt::Display for WireError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             WireError::FrameTooLarge(n) => write!(f, "frame too large ({n} bytes)"),
+            WireError::VersionMismatch(v) => write!(f, "unsupported envelope version {v}"),
             WireError::Encode(s) => write!(f, "frame encode/decode error: {s}"),
             WireError::Carrier(s) => write!(f, "websocket carrier error: {s}"),
             WireError::HandshakeRejected(s) => write!(f, "handshake rejected: {s}"),

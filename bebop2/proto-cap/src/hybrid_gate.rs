@@ -40,6 +40,14 @@ pub enum HybridPolicy {
 /// frame (no anchor-rooted chain) is rejected as `UnknownIssuer`. This closes the
 /// red-team §3A self-issued-capability auth bypass: the chain is checked BEFORE
 /// the frame is returned, not merely asserted in isolated unit tests.
+///
+/// The replay ledger (`seen`) is bounded to [`MAX_SEEN_NONCES`] and pruned so a
+/// long-lived authorized peer cannot OOM the connection (red-team B2/B3 DoS).
+/// A poisoned lock returns [`CapError::LockPoisoned`] instead of panicking.
+/// Nonces are checked AFTER expiry but the set is only mutated once acceptance
+/// is committed — verify-then-record, never record-then-verify.
+const MAX_SEEN_NONCES: usize = 1 << 20; // ~1M; ~8 MiB worst case, then pruned.
+
 #[derive(Debug)]
 pub struct HybridGate {
     pub policy: HybridPolicy,
@@ -79,9 +87,17 @@ impl HybridGate {
         }
         let nonce = frame.capability.nonce;
         {
-            let mut seen = self.seen.lock().expect("nonce set poisoned");
+            let mut seen = self.seen.lock().map_err(|_| CapError::LockPoisoned)?;
             if !seen.insert(nonce) {
                 return Err(CapError::NonceRejected);
+            }
+            // Bound the set: once over capacity, drop half the entries so a
+            // long-lived connection cannot OOM on distinct nonces. Order is
+            // irrelevant for replay defense — any half is fine.
+            if seen.len() > MAX_SEEN_NONCES {
+                let keep: HashSet<[u8; 8]> =
+                    seen.iter().take(MAX_SEEN_NONCES / 2).copied().collect();
+                *seen = keep;
             }
         }
 

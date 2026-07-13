@@ -12,7 +12,7 @@
 //!
 //! CI GUARD: NO-COURIER-SCORING — framing is pure layout; no scoring surface.
 
-use crate::envelope::Envelope;
+use crate::envelope::{Envelope, ENVELOPE_VERSION};
 use crate::error::{WireError, WireResult};
 
 /// Maximum envelope size we will accept/emit (8 MiB). Fail-closed above this.
@@ -48,6 +48,14 @@ pub fn decode(buf: &mut Vec<u8>) -> WireResult<Option<Envelope>> {
     }
     let body = &buf[4..4 + len];
     let envelope = Envelope::from_bytes(body)?;
+    // Gate the protocol version at the framing boundary (fail-closed). The
+    // outer envelope is unsigned, so this stops an on-path attacker from
+    // downgrading to a future/unknown framing — but it does NOT yet bind
+    // version to the signature. innovate: carry version inside the signed
+    // SignedFrame domain so a MITM cannot flip it (true downgrade protection).
+    if envelope.version != ENVELOPE_VERSION {
+        return Err(WireError::VersionMismatch(envelope.version));
+    }
     // Advance the cursor.
     buf.drain(0..4 + len);
     Ok(Some(envelope))
@@ -85,5 +93,20 @@ mod tests {
     fn oversize_is_rejected() {
         let huge = Envelope::new([0; 16], vec![0u8; MAX_ENVELOPE_BYTES + 1]);
         assert!(matches!(encode(&huge), Err(WireError::FrameTooLarge(_))));
+    }
+
+    #[test]
+    fn unknown_version_is_rejected_on_decode() {
+        // Closes red-team B3 F4: an envelope with a stray version must not
+        // decode. We build a valid envelope, then hand-edit its version byte
+        // by re-serializing with a tampered version field.
+        let mut env = Envelope::new([7u8; 16], b"payload-bytes".to_vec());
+        env.version = 99;
+        let body = env.to_bytes().unwrap();
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&body);
+        let got = decode(&mut buf);
+        assert!(matches!(got, Err(WireError::VersionMismatch(99))), "got: {got:?}");
     }
 }
