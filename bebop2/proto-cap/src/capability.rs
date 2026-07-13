@@ -46,6 +46,10 @@ pub struct Capability {
     /// Ed25519 public key (32 bytes) of the subject the capability is issued to.
     /// Verbatim bytes, never interpreted as a reputation/score.
     pub subject_key: [u8; 32],
+    /// Post-quantum subject public key (ML-DSA-65, 1952 bytes) — the PQ half of
+    /// the hybrid identity. `None` until the issuer provisions a PQ keypair
+    /// (the hybrid gate only requires it under `RequireBoth`).
+    pub subject_key_pq: Option<Vec<u8>>,
     /// What the capability authorizes (resource + action). No rating fields.
     pub scope: Scope,
     /// Single-use nonce (8 bytes). Replay-protected by the verifier's nonce set.
@@ -67,6 +71,26 @@ impl Capability {
     ) -> Self {
         Capability {
             subject_key,
+            subject_key_pq: None,
+            scope: Scope::new(resource, action),
+            nonce,
+            expiry,
+        }
+    }
+
+    /// Build a capability with both classical and post-quantum subject keys
+    /// (hybrid identity). `subject_key_pq` is the ML-DSA-65 public key (1952 bytes).
+    pub fn new_hybrid(
+        subject_key: [u8; 32],
+        subject_key_pq: Vec<u8>,
+        resource: Resource,
+        action: Action,
+        nonce: [u8; 8],
+        expiry: u64,
+    ) -> Self {
+        Capability {
+            subject_key,
+            subject_key_pq: Some(subject_key_pq),
             scope: Scope::new(resource, action),
             nonce,
             expiry,

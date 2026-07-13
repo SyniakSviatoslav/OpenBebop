@@ -31,13 +31,15 @@
 //! This satisfies `ARCHITECTURE.md:75` (no serde on the signed path) and closes
 //! red-team finding §4A (signatures were previously over non-canonical JSON).
 //!
-//! The **post-quantum leg** is ML-DSA-65 in `bebop2-core::pq_dsa`. It is NOT yet
-//! wired here because that module exposes its keys/signature as private structs
-//! with no `pack`/`unpack` byte API yet (see the `TODO-PQ` marker in `sign_pq` /
-//! `verify_pq`). Until then the hybrid gate still requires the classical leg to
-//! verify, and the PQ todo is surfaced explicitly — we do NOT invent a fake PQ
-//! signature. This is the honest "TODO with exact call shape" the protocol review
-//! gate requires.
+//! The **post-quantum leg** is ML-DSA-65 in `bebop2-core::pq_dsa` (FIPS 204,
+//! ACVP-verified, from scratch, zero-dep). `sign_pq` / `verify_pq` are now
+//! WIRED: `sign_pq` computes a real ML-DSA-65 signature over `binding_signing_domain()`
+//! and stores the 3309-byte sig in `pq_sig`; `verify_pq` verifies it against the
+//! capability's `subject_key_pq` (ML-DSA-65 public key, 1952 bytes). The hybrid
+//! gate enforces the PQ leg under `HybridPolicy::RequireBoth`; `ClassicalUntilPqAudit`
+//! is the transitional policy that still accepts classical-only but reports the
+//! PQ leg as `HybridIncomplete` rather than faking it. No fake PQ signature is
+//! ever produced.
 //!
 //! # Channel binding (F7)
 //! An optional `channel_binding: Option<[u8;32]>` carries the SHA3-256 handshake
@@ -52,9 +54,12 @@
 
 use serde::{Deserialize, Serialize};
 
+use bebop2_core::pq_dsa;
+
 use crate::capability::Capability;
 use crate::error::{CapError, CapResult};
 use crate::hybrid_gate::HybridGate;
+use crate::roster::{AnchorRoster, Delegation};
 use crate::tlv::{tlv_signing_input, DOMAIN_SIGNED_FRAME, FIELD_CHANNEL_BINDING};
 
 /// Field ids for the `SignedFrame` TLV. Ascending; pinned (part of the contract).
@@ -86,6 +91,12 @@ pub struct SignedFrame {
     /// TODO-PQ: 32-byte-encoded ML-DSA-65 signature over `signing_domain()`.
     /// `None` until the PQ pack/unpack API lands. Not faked.
     pub pq_sig: Option<Vec<u8>>,
+    /// The UCAN-subset delegation chain rooting this frame's authority in an
+    /// enrolled trust anchor. Carried on the wire (serde) for the verifier's
+    /// `AnchorRoster` to check — it is NOT part of the signed domain (the chain
+    /// is self-validating via its own per-link signatures). A self-signed frame
+    /// (no real anchor-rooted chain) is rejected by `HybridGate::check`.
+    pub delegation_chain: Vec<Delegation>,
 }
 
 impl SignedFrame {
@@ -97,6 +108,7 @@ impl SignedFrame {
             channel_binding: None,
             classical_sig: None,
             pq_sig: None,
+            delegation_chain: Vec::new(),
         }
     }
 
@@ -172,21 +184,20 @@ impl SignedFrame {
         Ok(())
     }
 
-    /// TODO-PQ: sign with the post-quantum (ML-DSA-65) key. NOT YET WIRED — the
-    /// `bebop2-core::pq_dsa` keys/sigs are private structs without a pack/unpack
-    /// byte API, so there is no way to serialize the signature into `pq_sig`
-    /// honestly. The exact intended call shape (once the API exists) is:
-    ///
-    /// ```ignore
-    /// let (pk, sk) = bebop2_core::pq_dsa::keygen(&seed32);
-    /// let rnd = [0u8; 32]; // caller-supplied, never OS RNG
-    /// let sig = bebop2_core::pq_dsa::sign(&sk, &msg, &rnd);
-    /// self.pq_sig = Some(pack_mldsa_sig(&sig)); // pack API TBD
-    /// ```
-    ///
-    /// We leave this as a todo and DO NOT fabricate a signature.
-    pub fn sign_pq(&mut self, _seed: &[u8; 32]) -> CapResult<()> {
-        Err(CapError::HybridIncomplete)
+    /// Sign the post-quantum (ML-DSA-65) leg over `binding_signing_domain()`
+    /// using the real, ACVP-verified `bebop2-core::pq_dsa` implementation. The
+    /// resulting signature (3309 bytes) is stored in `pq_sig`. `sk_pq` is the
+    /// ML-DSA-65 secret key (4032 bytes); `rnd` is the caller-supplied 32-byte
+    /// randomness (FIPS deterministic mode when zero). Never fakes a signature.
+    pub fn sign_pq(&mut self, sk_pq: &[u8; 4032], rnd: &[u8; 32]) -> CapResult<()> {
+        let msg = self.binding_signing_domain()?;
+        // `pq_dsa::MlDsa65Sk` wraps a `Vec<u8>`; rebuild it from the raw sk bytes.
+        let sk = pq_dsa::MlDsa65Sk {
+            bytes: sk_pq.to_vec(),
+        };
+        let sig = pq_dsa::sign(&sk, &msg, rnd);
+        self.pq_sig = Some(sig.bytes);
+        Ok(())
     }
 
     /// Verify the classical signature against the capability's `subject_key`.
@@ -208,28 +219,34 @@ impl SignedFrame {
         }
     }
 
-    /// TODO-PQ: verify the ML-DSA-65 signature. NOT YET WIRED (same API gap as
-    /// `sign_pq`). Intended call shape:
-    ///
-    /// ```ignore
-    /// let pk = unpack_mldsa_pk(&self.capability.subject_key_pq); // TBD
-    /// let sig = unpack_mldsa_sig(self.pq_sig.as_deref()?);       // TBD
-    /// if !bebop2_core::pq_dsa::verify(&pk, &msg, &sig) {
-    ///     return Err(CapError::PqVerifyFailed);
-    /// }
-    /// ```
+    /// Verify the post-quantum (ML-DSA-65) leg against the capability's
+    /// `subject_key_pq`. Returns `HybridIncomplete` if the capability carries no
+    /// PQ public key, `PqVerifyFailed` if the signature is absent or invalid.
     pub fn verify_pq(&self) -> CapResult<()> {
-        match &self.pq_sig {
-            Some(_) => Err(CapError::PqVerifyFailed),
-            None => Err(CapError::HybridIncomplete),
+        let pk_pq = self
+            .capability
+            .subject_key_pq
+            .as_ref()
+            .ok_or(CapError::HybridIncomplete)?;
+        let sig = self.pq_sig.as_ref().ok_or(CapError::PqVerifyFailed)?;
+        let msg = self.binding_signing_domain()?;
+        let pk = pq_dsa::MlDsa65Pk {
+            bytes: pk_pq.to_vec(),
+        };
+        let sig = pq_dsa::MlDsa65Sig { bytes: sig.clone() };
+        if pq_dsa::verify(&pk, &msg, &sig) {
+            Ok(())
+        } else {
+            Err(CapError::PqVerifyFailed)
         }
     }
 
     /// Run the hybrid gate: classical MUST verify; PQ is required by policy but
     /// currently reports `HybridIncomplete` (todo) rather than failing the frame
-    /// outright. See [`crate::hybrid_gate`].
-    pub fn verify(&self, gate: &HybridGate, now: u64) -> CapResult<()> {
-        gate.check(self, now)
+    /// outright. See [`crate::hybrid_gate`]. The anchor-rooted `delegation_chain`
+    /// is passed through so the gate enforces the root-of-trust live.
+    pub fn verify(&self, gate: &HybridGate, roster: &AnchorRoster, now: u64) -> CapResult<()> {
+        gate.check(self, roster, &self.delegation_chain, now)
     }
 }
 
@@ -278,17 +295,39 @@ mod tests {
     }
 
     #[test]
-    fn pq_leg_is_honest_todo_not_faked() {
+    fn pq_leg_real_mldsa_sign_verify_roundtrip() {
+        // Real ML-DSA-65 (FIPS 204, ACVP-verified) PQ leg: sign the binding
+        // signing domain, then verify it. No fake signature.
         let seed = [1u8; 32];
         let (pk, _) = bebop2_core::sign::keygen(&seed);
-        let cap = Capability::new(pk, Resource::Presence, Action::Send, [2u8; 8], 1);
+        // Provision a real ML-DSA-65 keypair for the subject.
+        let pq_seed = [7u8; 32];
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let cap = Capability::new_hybrid(
+            pk,
+            pq_pk.bytes.clone(),
+            Resource::Presence,
+            Action::Send,
+            [2u8; 8],
+            1,
+        );
         let mut frame = SignedFrame::new(cap, b"ping".to_vec());
-        // sign_pq must NOT silently produce a fake signature.
-        assert!(matches!(
-            frame.sign_pq(&seed),
-            Err(CapError::HybridIncomplete)
-        ));
-        assert!(frame.pq_sig.is_none(), "pq_sig must stay None (not faked)");
+        frame.sign_classical(&seed).unwrap();
+        // Sign the PQ leg with the real secret key.
+        let rnd = [0u8; 32];
+        frame
+            .sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &rnd)
+            .unwrap();
+        assert!(frame.pq_sig.is_some(), "real ML-DSA-65 sig must be stored");
+        // verify_pq over the same domain must succeed.
+        assert!(frame.verify_pq().is_ok(), "real PQ signature must verify");
+        // A tampered domain must break PQ verification.
+        let mut tampered = frame.clone();
+        tampered.payload = b"pong".to_vec();
+        assert!(
+            tampered.verify_pq().is_err(),
+            "PQ sig must fail after tamper"
+        );
     }
 
     #[test]
@@ -355,7 +394,10 @@ mod tests {
         let mut frame = SignedFrame::new(cap, b"bound-payload".to_vec()).with_binding(binding);
         frame.sign_classical(&seed).unwrap();
         // Same binding => signature still covers it => verifies.
-        assert!(frame.verify_classical().is_ok(), "same-channel binding must verify");
+        assert!(
+            frame.verify_classical().is_ok(),
+            "same-channel binding must verify"
+        );
     }
 
     /// RED→GREEN: a frame signed with binding=B, then verified on a DIFFERENT
@@ -370,9 +412,13 @@ mod tests {
 
         // Attacker captures a frame legitimately signed on channel A (binding=B).
         let binding_b = [0x11u8; 32]; // channel A transcript hash
-        let mut captured = SignedFrame::new(cap.clone(), b"replay-me".to_vec()).with_binding(binding_b);
+        let mut captured =
+            SignedFrame::new(cap.clone(), b"replay-me".to_vec()).with_binding(binding_b);
         captured.sign_classical(&seed).unwrap();
-        assert!(captured.verify_classical().is_ok(), "sanity: signed on A verifies on A");
+        assert!(
+            captured.verify_classical().is_ok(),
+            "sanity: signed on A verifies on A"
+        );
 
         // Attacker replays it on channel B', claiming binding=B' (≠ B).
         let binding_b_prime = [0x22u8; 32]; // channel B' transcript hash
@@ -381,7 +427,8 @@ mod tests {
             payload: b"replay-me".to_vec(),
             classical_sig: captured.classical_sig.clone(), // OLD signature (covers binding_b)
             pq_sig: None,
-            channel_binding: Some(binding_b_prime),        // attacker swaps binding field
+            channel_binding: Some(binding_b_prime), // attacker swaps binding field
+            delegation_chain: vec![],
         };
         // Signature covers binding_b, not binding_b_prime => MUST FAIL.
         assert!(

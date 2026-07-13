@@ -15,6 +15,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, connect_async, MaybeTlsStream, WebSocketStream};
 
+use bebop_proto_cap::roster::AnchorRoster;
 use bebop_proto_cap::{HybridGate, HybridPolicy, SignedFrame};
 
 use crate::error::{WireError, WireResult};
@@ -43,22 +44,35 @@ pub struct WssTransport {
     /// Reassembly buffer for the length-prefixed framing.
     buf: Vec<u8>,
     /// Hybrid gate used to verify every received frame (classical live; PQ todo).
+    /// Now also enforces the anchor-rooted delegation chain (root-of-trust).
     gate: HybridGate,
+    /// Enrolled trust-anchor roster consulted by the gate on every `recv`.
+    roster: AnchorRoster,
 }
 
 impl WssTransport {
     /// Build a transport from an already-upgraded WebSocket stream.
-    fn from_stream(ws: WebSocketStream<MaybeTlsStream<TcpStream>>, gate: HybridGate) -> Self {
+    fn from_stream(
+        ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        gate: HybridGate,
+        roster: AnchorRoster,
+    ) -> Self {
         WssTransport {
             ws,
             buf: Vec::new(),
             gate,
+            roster,
         }
     }
 
     /// Set the hybrid gate (defaults to `ClassicalUntilPqAudit`).
     pub fn with_gate(self, gate: HybridGate) -> Self {
         WssTransport { gate, ..self }
+    }
+
+    /// Set the enrolled trust-anchor roster used to verify delegation chains.
+    pub fn with_roster(self, roster: AnchorRoster) -> Self {
+        WssTransport { roster, ..self }
     }
 
     /// Graceful close: send a WebSocket Close frame so the peer sees a clean
@@ -94,6 +108,7 @@ impl Transport for WssTransport {
         Ok(WssTransport::from_stream(
             ws,
             HybridGate::new(HybridPolicy::ClassicalUntilPqAudit),
+            AnchorRoster::new(),
         ))
     }
 
@@ -121,6 +136,7 @@ impl Transport for WssTransport {
         Ok(WssTransport::from_stream(
             ws,
             HybridGate::new(HybridPolicy::ClassicalUntilPqAudit),
+            AnchorRoster::new(),
         ))
     }
 
@@ -142,15 +158,19 @@ impl Transport for WssTransport {
             // Try to decode a complete envelope from the buffer first.
             if let Some(env) = framing::decode(&mut self.buf)? {
                 let frame: SignedFrame = serde_json::from_slice(&env.payload)?;
-                // Verify the capability through the hybrid gate (real classical sig).
-                // `now = 0` => transport enforces REPLAY (nonce set) only;
-                // EXPIRY is delegated to the clock-holding verifier (the
-                // server checks `gate.check(&frame, real_now)` with its own
-                // clock). ponytail: if transport-level expiry is required,
-                // thread a `now` source into recv (e.g. gate carries a
-                // clock) — the gate already supports it; see
-                // `HybridGate::check` + `Capability::is_fresh`.
-                self.gate.check(&frame, 0)?;
+                // Verify the capability through the hybrid gate: anchor-rooted
+                // delegation chain (root-of-trust) + real classical sig + replay
+                // + expiry. `now` is the REAL wall-clock tick (not hardcoded 0),
+                // so capability expiry is actually enforced. The chain is taken
+                // from the frame's own `delegation_chain` field. A self-signed
+                // frame (no anchor-rooted chain) is rejected by the gate before
+                // the frame is returned — closing red-team §3A on the live path.
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                self.gate
+                    .check(&frame, &self.roster, &frame.delegation_chain, now)?;
                 return Ok(frame);
             }
             // Need more bytes: read a WS message.
@@ -171,66 +191,127 @@ impl Transport for WssTransport {
     }
 }
 
+/// Inherent impl: helpers not part of the `Transport` trait contract.
+impl WssTransport {
+    /// Real wall-clock tick for capability expiry (unix seconds). Replaces the
+    /// hardcoded `now = 0` that previously let every capability bypass expiry.
+    pub(crate) fn now() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bebop_proto_cap::scope::{Action, Resource};
+    use bebop_proto_cap::roster::{AnchorRoster, Delegation, Effect};
+    use bebop_proto_cap::scope::{Action, Resource, Scope};
     use bebop_proto_cap::{Capability, HybridGate, HybridPolicy};
     use tokio::sync::oneshot;
 
+    /// (seed, pk) for a deterministic Ed25519 key.
+    fn key(seed_byte: u8) -> ([u8; 32], [u8; 32]) {
+        let seed = [seed_byte; 32];
+        let (pk, _) = bebop2_core::sign::keygen(&seed);
+        (seed, pk)
+    }
+
+    /// Build a frame signed by `leaf`, plus an anchor-rooted delegation chain
+    /// (anchor -> leaf) carrying the same scope, and a roster enrolling anchor.
+    /// This is the ONLY way a frame passes the live gate now.
+    fn anchored_frame(
+        anchor_seed: &[u8; 32],
+        anchor_pk: &[u8; 32],
+        leaf_seed: &[u8; 32],
+        leaf_pk: &[u8; 32],
+        resource: Resource,
+        action: Action,
+        nonce: [u8; 8],
+        expiry: u64,
+    ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
+        let cap = Capability::new(*leaf_pk, resource, action, nonce, expiry);
+        let mut f = SignedFrame::new(cap, b"wire-payload".to_vec());
+        f.sign_classical(leaf_seed).unwrap();
+        let link = Delegation::sign(
+            *anchor_pk,
+            *leaf_pk,
+            Scope::new(resource, action),
+            Effect::new(resource, action),
+            expiry,
+            nonce,
+            anchor_seed,
+        )
+        .unwrap();
+        let mut roster = AnchorRoster::new();
+        roster.enroll(anchor_pk);
+        (f, roster, vec![link])
+    }
+
     /// Drive a server task that accepts one connection on `addr`, then runs
-    /// `body` with the connected transport. Signals readiness via `tx` *before*
-    /// blocking in accept, so the client can dial without racing the listener
-    /// (and without the connect-before-accept deadlock).
-    async fn run_server<F, Fut>(addr: String, tx: oneshot::Sender<()>, body: F)
-    where
+    /// `body` with the connected transport (carrying `roster`). Signals readiness
+    /// via `tx` *before* blocking in accept, so the client can dial without racing.
+    async fn run_server<F, Fut>(
+        addr: String,
+        roster: AnchorRoster,
+        tx: oneshot::Sender<()>,
+        body: F,
+    ) where
         F: FnOnce(WssTransport) -> Fut,
         Fut: core::future::Future<Output = ()>,
     {
-        // Signal the listener is about to bind/accept BEFORE we block on accept,
-        // so the client (waiting on `rx`) can connect.
         let _ = tx.send(());
         let ep = WssEndpoint::Listen(addr);
-        let mut t = WssTransport::accept(&ep).await.unwrap();
+        let mut t = WssTransport::accept(&ep).await.unwrap().with_roster(roster);
         body(t).await;
     }
 
     /// Two in-memory WSS endpoints over a loopback `ws://` connection that sign +
-    /// verify a frame end to end.
+    /// verify a frame end to end. The client carries a real anchor chain.
     #[tokio::test]
     async fn wss_roundtrip_signs_and_verifies() {
         let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = probe.local_addr().unwrap();
         drop(probe);
 
+        let (a_seed, a_pk) = key(2);
+        let (l_seed, l_pk) = key(3);
+        let (frame, roster, chain) = anchored_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [7u8; 8],
+            9_999_999_999,
+        );
+
         let (tx, rx) = oneshot::channel();
         let server_addr = addr.to_string();
+        let server_roster = roster.clone();
         let server = tokio::spawn(async move {
-            run_server(server_addr, tx, |mut t| async move {
+            run_server(server_addr, server_roster, tx, |mut t| async move {
                 let frame = t.recv().await.unwrap();
                 t.send(frame).await.unwrap();
-                // Graceful close so the echoed frame is flushed before the TCP
-                // drops (otherwise the client sees "reset without close").
                 let _ = t.close().await;
             })
             .await;
         });
 
-        // Wait until the server is actually listening before dialing.
         rx.await.unwrap();
 
         let client_ep = WssEndpoint::Url(format!("ws://{addr}"));
-        let mut client = WssTransport::connect(&client_ep).await.unwrap();
+        let mut client = WssTransport::connect(&client_ep)
+            .await
+            .unwrap()
+            .with_roster(roster.clone());
+        let mut signed = frame;
+        signed.delegation_chain = chain;
+        client.send(signed).await.unwrap();
 
-        // Build + sign a real frame.
-        let seed = [123u8; 32];
-        let (pk, _sk) = bebop2_core::sign::keygen(&seed);
-        let cap = Capability::new(pk, Resource::Route, Action::Send, [7u8; 8], 4242);
-        let mut frame = SignedFrame::new(cap, b"wire-payload".to_vec());
-        frame.sign_classical(&seed).unwrap();
-
-        client.send(frame).await.unwrap();
-        // Server echoes it back; client receives + verifies the real signature.
         let echoed = client.recv().await.unwrap();
         assert_eq!(echoed.payload, b"wire-payload");
         assert!(echoed.verify_classical().is_ok());
@@ -244,10 +325,23 @@ mod tests {
         let addr = probe.local_addr().unwrap();
         drop(probe);
 
+        let (a_seed, a_pk) = key(2);
+        let (l_seed, l_pk) = key(3);
+        let (_f, roster, _c) = anchored_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [7u8; 8],
+            9_999_999_999,
+        );
+
         let (tx, rx) = oneshot::channel();
         let server_addr = addr.to_string();
         let server = tokio::spawn(async move {
-            run_server(server_addr, tx, |mut t| async move {
+            run_server(server_addr, roster, tx, |mut t| async move {
                 let res = t.recv().await;
                 assert!(res.is_err(), "unsigned frame must be rejected");
             })
@@ -271,20 +365,30 @@ mod tests {
 
     /// RED over the REAL wss carrier: sign a frame, then TAMPER with the
     /// payload AFTER signing, send it over the socket, and assert the server's
-    /// `recv` (which runs the hybrid gate) REJECTS it. This is the
-    /// green-wash gap the review caught — the unit tests prove tamper fails
-    /// at the crypto layer, but only this proves the *transport* enforces it.
+    /// `recv` (which runs the hybrid gate) REJECTS it.
     #[tokio::test]
     async fn wss_rejects_tampered_frame() {
         let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = probe.local_addr().unwrap();
         drop(probe);
 
+        let (a_seed, a_pk) = key(2);
+        let (l_seed, l_pk) = key(3);
+        let (frame, roster, chain) = anchored_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Ledger,
+            Action::Append,
+            [2u8; 8],
+            9_999_999_999,
+        );
+
         let (tx, rx) = oneshot::channel();
         let server_addr = addr.to_string();
         let server = tokio::spawn(async move {
-            run_server(server_addr, tx, |mut t| async move {
-                // Server must REJECT the tampered frame (sig no longer valid).
+            run_server(server_addr, roster, tx, |mut t| async move {
                 let res = t.recv().await;
                 assert!(res.is_err(), "tampered frame must be rejected over wss");
             })
@@ -296,15 +400,60 @@ mod tests {
         let client_ep = WssEndpoint::Url(format!("ws://{addr}"));
         let mut client = WssTransport::connect(&client_ep).await.unwrap();
 
-        // Build + sign a REAL frame.
-        let seed = [55u8; 32];
-        let (pk, _sk) = bebop2_core::sign::keygen(&seed);
-        let cap = Capability::new(pk, Resource::Ledger, Action::Append, [2u8; 8], 4242);
-        let mut frame = SignedFrame::new(cap, b"legit-payload".to_vec());
-        frame.sign_classical(&seed).unwrap();
-
+        let mut frame = frame;
+        frame.delegation_chain = chain;
+        frame.sign_classical(&l_seed).unwrap();
         // Tamper AFTER signing — signature now invalid.
         frame.payload = b"tampered-by-mitm".to_vec();
+
+        client.send(frame).await.unwrap();
+
+        server.await.unwrap();
+    }
+
+    /// RED→GREEN over the REAL wss carrier: the weaponized self-issue takeover.
+    /// An attacker mints its OWN key, signs a capability naming itself as
+    /// subject, sends it with NO anchor-rooted delegation chain (or a chain it
+    /// forged). The server's `recv` (hybrid gate + roster) MUST reject it as
+    /// `UnknownIssuer`. This is the live-path proof that red-team §3A is closed.
+    #[tokio::test]
+    async fn wss_rejects_self_signed_frame_over_real_carrier() {
+        let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+
+        // Server enrolls a REAL anchor the attacker does not control.
+        let (a_seed, a_pk) = key(2);
+        let mut roster = AnchorRoster::new();
+        roster.enroll(&a_pk);
+
+        let (tx, rx) = oneshot::channel();
+        let server_addr = addr.to_string();
+        let server = tokio::spawn(async move {
+            run_server(server_addr, roster, tx, |mut t| async move {
+                let res = t.recv().await;
+                assert!(res.is_err(), "self-signed frame MUST be rejected over wss");
+            })
+            .await;
+        });
+
+        rx.await.unwrap();
+
+        let client_ep = WssEndpoint::Url(format!("ws://{addr}"));
+        let mut client = WssTransport::connect(&client_ep).await.unwrap();
+
+        // Attacker: own key, self-attested capability, NO anchor chain.
+        let (atk_seed, atk_pk) = key(99);
+        let cap = Capability::new(
+            atk_pk,
+            Resource::Ledger,
+            Action::Append,
+            [1u8; 8],
+            9_999_999_999,
+        );
+        let mut frame = SignedFrame::new(cap, b"takeover".to_vec());
+        frame.sign_classical(&atk_seed).unwrap(); // real sig over self-attested auth
+                                                  // delegation_chain is empty -> verify_chain -> UnknownIssuer.
 
         client.send(frame).await.unwrap();
 
@@ -327,14 +476,33 @@ mod tests {
         let addr = probe.local_addr().unwrap();
         drop(probe);
 
+        let (a_seed, a_pk) = key(2);
+        let (l_seed, l_pk) = key(3);
+        let (frame, roster, chain) = anchored_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [7u8; 8],
+            9_999_999_999,
+        );
+
         let (tx, rx) = oneshot::channel();
         let server_addr = addr.to_string();
+        let server_roster = roster.clone();
         let server = tokio::spawn(async move {
-            run_server(server_addr, tx, |mut t| async move {
+            run_server(server_addr, server_roster, tx, |mut t| async move {
                 let frame = t.recv().await.unwrap();
-                // Server verifies the bound frame through the hybrid gate.
-                assert!(frame.verify_classical().is_ok(), "bound frame must verify on same channel");
-                assert!(frame.channel_binding.is_some(), "frame must carry a channel binding");
+                assert!(
+                    frame.verify_classical().is_ok(),
+                    "bound frame must verify on same channel"
+                );
+                assert!(
+                    frame.channel_binding.is_some(),
+                    "frame must carry a channel binding"
+                );
                 t.send(frame).await.unwrap();
                 let _ = t.close().await;
             })
@@ -344,15 +512,18 @@ mod tests {
         rx.await.unwrap();
 
         let client_ep = WssEndpoint::Url(format!("ws://{addr}"));
-        let mut client = WssTransport::connect(&client_ep).await.unwrap();
+        let mut client = WssTransport::connect(&client_ep)
+            .await
+            .unwrap()
+            .with_roster(roster.clone());
 
         // Simulate a completed handshake; the transcript hash binds the channel.
+        // The frame subject MUST be the chain's leaf (leaf_pk) so the tail binds.
         let transcript = b"channel-A-handshake-transcript";
-        let seed = [123u8; 32];
-        let (pk, _sk) = bebop2_core::sign::keygen(&seed);
-        let cap = Capability::new(pk, Resource::Route, Action::Send, [7u8; 8], 4242);
+        let cap = Capability::new(l_pk, Resource::Route, Action::Send, [7u8; 8], 9_999_999_999);
         let mut frame = SignedFrame::new(cap, b"bound-wire-payload".to_vec());
-        crate::sign_frame_bound(&mut frame, &seed, transcript).unwrap();
+        crate::sign_frame_bound(&mut frame, &l_seed, transcript).unwrap();
+        frame.delegation_chain = chain;
 
         client.send(frame).await.unwrap();
         let echoed = client.recv().await.unwrap();
@@ -362,22 +533,35 @@ mod tests {
 
     /// RED→GREEN over the REAL wss carrier: a frame bound to channel A's handshake
     /// transcript is captured and replayed on channel B' (different transcript
-    /// hash). The server's `recv` (hybrid gate) MUST reject it. Proves the
-    /// cross-channel replay defense is enforced at the transport layer, not just
-    /// in the crypto unit test.
+    /// hash). The server's `recv` (hybrid gate) MUST reject it.
     #[tokio::test]
     async fn wss_rejects_cross_channel_replay() {
         let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = probe.local_addr().unwrap();
         drop(probe);
 
+        let (a_seed, a_pk) = key(2);
+        let (l_seed, l_pk) = key(3);
+        let (_f, roster, chain) = anchored_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Ledger,
+            Action::Append,
+            [2u8; 8],
+            9_999_999_999,
+        );
+
         let (tx, rx) = oneshot::channel();
         let server_addr = addr.to_string();
         let server = tokio::spawn(async move {
-            run_server(server_addr, tx, |mut t| async move {
-                // A frame bound to a DIFFERENT channel (B') must be rejected.
+            run_server(server_addr, roster, tx, |mut t| async move {
                 let res = t.recv().await;
-                assert!(res.is_err(), "cross-channel replay must be rejected over wss");
+                assert!(
+                    res.is_err(),
+                    "cross-channel replay must be rejected over wss"
+                );
             })
             .await;
         });
@@ -392,9 +576,16 @@ mod tests {
         let binding_a = crate::handshake::channel_binding_hash(transcript_a);
         let seed = [55u8; 32];
         let (pk, _sk) = bebop2_core::sign::keygen(&seed);
-        let cap = Capability::new(pk, Resource::Ledger, Action::Append, [2u8; 8], 4242);
+        let cap = Capability::new(
+            pk,
+            Resource::Ledger,
+            Action::Append,
+            [2u8; 8],
+            9_999_999_999,
+        );
         let mut frame = SignedFrame::new(cap, b"replay-target".to_vec()).with_binding(binding_a);
         frame.sign_classical(&seed).unwrap();
+        frame.delegation_chain = chain;
 
         // Attacker swaps the binding field to channel B''s binding but keeps the
         // old signature (which covers binding_a), then sends over channel B'.
