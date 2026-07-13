@@ -32,6 +32,10 @@ pub enum Resource {
     Backup,
     /// A loyalty / rewards program record.
     Loyalty,
+    /// A courier claim on an order (offered → accepted → released/picked-up).
+    /// Added for the MESH delivery choreography; pinned discriminant so the byte
+    /// mapping is wire-stable (do NOT renumber existing variants).
+    Claim,
 }
 
 /// An action permitted on a [`Resource`]. Closed set.
@@ -59,6 +63,22 @@ pub enum Action {
     Export,
     /// Take / restore a backup (write).
     Backup,
+    /// Order placed (create intent fired). MESH delivery choreography.
+    OrderPlaced,
+    /// Order status changed (lifecycle event). MESH delivery choreography.
+    OrderStatusChanged,
+    /// A courier claim offered for an order. MESH delivery choreography.
+    ClaimOffered,
+    /// A courier claim accepted. MESH delivery choreography.
+    ClaimAccepted,
+    /// A courier claim released (no longer bound). MESH delivery choreography.
+    ClaimReleased,
+    /// Courier pickup of the order. MESH delivery choreography.
+    Pickup,
+    /// Delivery confirmed by customer. MESH delivery choreography.
+    DeliveryConfirmed,
+    /// Settlement recorded (ledger i64). MESH delivery choreography.
+    SettlementRecorded,
 }
 
 /// `(resource, action)` pair a capability authorizes. No score, no subject rating.
@@ -102,6 +122,7 @@ impl Resource {
             Resource::Corpus => 0x09,
             Resource::Backup => 0x0A,
             Resource::Loyalty => 0x0B,
+            Resource::Claim => 0x0C,
         }
     }
 
@@ -120,6 +141,7 @@ impl Resource {
             0x09 => Some(Resource::Corpus),
             0x0A => Some(Resource::Backup),
             0x0B => Some(Resource::Loyalty),
+            0x0C => Some(Resource::Claim),
             _ => None,
         }
     }
@@ -140,6 +162,14 @@ impl Action {
             Action::SyncCatalog => 0x09,
             Action::Export => 0x0A,
             Action::Backup => 0x0B,
+            Action::OrderPlaced => 0x0C,
+            Action::OrderStatusChanged => 0x0D,
+            Action::ClaimOffered => 0x0E,
+            Action::ClaimAccepted => 0x0F,
+            Action::ClaimReleased => 0x10,
+            Action::Pickup => 0x11,
+            Action::DeliveryConfirmed => 0x12,
+            Action::SettlementRecorded => 0x13,
         }
     }
 
@@ -158,6 +188,14 @@ impl Action {
             0x09 => Some(Action::SyncCatalog),
             0x0A => Some(Action::Export),
             0x0B => Some(Action::Backup),
+            0x0C => Some(Action::OrderPlaced),
+            0x0D => Some(Action::OrderStatusChanged),
+            0x0E => Some(Action::ClaimOffered),
+            0x0F => Some(Action::ClaimAccepted),
+            0x10 => Some(Action::ClaimReleased),
+            0x11 => Some(Action::Pickup),
+            0x12 => Some(Action::DeliveryConfirmed),
+            0x13 => Some(Action::SettlementRecorded),
             _ => None,
         }
     }
@@ -190,6 +228,7 @@ mod tests {
             Resource::Corpus,
             Resource::Backup,
             Resource::Loyalty,
+            Resource::Claim,
         ] {
             for a in [
                 Action::Send,
@@ -203,6 +242,14 @@ mod tests {
                 Action::SyncCatalog,
                 Action::Export,
                 Action::Backup,
+                Action::OrderPlaced,
+                Action::OrderStatusChanged,
+                Action::ClaimOffered,
+                Action::ClaimAccepted,
+                Action::ClaimReleased,
+                Action::Pickup,
+                Action::DeliveryConfirmed,
+                Action::SettlementRecorded,
             ] {
                 let s = Scope::new(r, a);
                 let bytes = s.to_tlv_bytes();
@@ -240,6 +287,15 @@ mod tests {
         assert_eq!(Action::SyncCatalog.discriminant(), 0x09);
         assert_eq!(Action::Export.discriminant(), 0x0A);
         assert_eq!(Action::Backup.discriminant(), 0x0B);
+        assert_eq!(Resource::Claim.discriminant(), 0x0C);
+        assert_eq!(Action::OrderPlaced.discriminant(), 0x0C);
+        assert_eq!(Action::OrderStatusChanged.discriminant(), 0x0D);
+        assert_eq!(Action::ClaimOffered.discriminant(), 0x0E);
+        assert_eq!(Action::ClaimAccepted.discriminant(), 0x0F);
+        assert_eq!(Action::ClaimReleased.discriminant(), 0x10);
+        assert_eq!(Action::Pickup.discriminant(), 0x11);
+        assert_eq!(Action::DeliveryConfirmed.discriminant(), 0x12);
+        assert_eq!(Action::SettlementRecorded.discriminant(), 0x13);
     }
 
     // ── R4 (IP-02): an attenuated capability requesting a Resource/Action

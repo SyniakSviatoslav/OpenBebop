@@ -14,6 +14,11 @@ use core::fmt;
 pub enum WireError {
     /// A frame exceeded the maximum allowed size.
     FrameTooLarge(usize),
+    /// A frame payload exceeded the transport policy limit (MESH-10 DoS gate).
+    PayloadTooLarge(usize),
+    /// The transport requires a TLS/QUIC channel binding but the frame has none
+    /// (MESH-10: plaintext rejected when TLS required).
+    InsecureTransport(&'static str),
     /// Envelope protocol version is unsupported / tampered on the wire.
     VersionMismatch(u8),
     /// Failed to (de)serialize the envelope / inner frame.
@@ -37,6 +42,8 @@ impl fmt::Display for WireError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             WireError::FrameTooLarge(n) => write!(f, "frame too large ({n} bytes)"),
+            WireError::PayloadTooLarge(n) => write!(f, "payload too large ({n} bytes)"),
+            WireError::InsecureTransport(s) => write!(f, "insecure transport: {s}"),
             WireError::VersionMismatch(v) => write!(f, "unsupported envelope version {v}"),
             WireError::Encode(s) => write!(f, "frame encode/decode error: {s}"),
             WireError::Carrier(s) => write!(f, "websocket carrier error: {s}"),

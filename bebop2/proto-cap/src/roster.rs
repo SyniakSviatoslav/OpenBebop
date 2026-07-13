@@ -196,6 +196,19 @@ impl AnchorRoster {
     pub fn contains(&self, key: &[u8; 32]) -> bool {
         self.anchors.contains(key)
     }
+
+    /// Whether the roster enrolls zero anchors (fail-closed default).
+    pub fn is_empty(&self) -> bool {
+        self.anchors.is_empty()
+    }
+
+    /// Drop an anchor from the enrolled set (MESH-11 drop-anchor). Fail-closed:
+    /// dropping a key that was never enrolled is a silent no-op. Dropping an
+    /// anchor does NOT retroactively un-revoke — revocation is irreversible; this
+    /// only prevents the anchor from *vouching* going forward.
+    pub fn remove(&mut self, root_pubkey: &[u8; 32]) {
+        self.anchors.remove(root_pubkey);
+    }
 }
 
 impl Capability {

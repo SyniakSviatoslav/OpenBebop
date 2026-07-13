@@ -21,6 +21,7 @@ members = [
     "bebop2/proto-wire",    # W — wire transport (iroh + WSS; replaces zenoh stub)
     "bebop2/proto-cap",     # A — per-frame signed capability (replaces JWT)
     "bebop2/proto-crypto",  # H — crypto ladder stub (Wycheproof→FIPS, ct marker)
+    "bebop2/delivery-domain", # Layer-B decider-core adapter (default: no kernel dep; kernel-rlib feature opt-in)
     # ── DK toolchain crates (WASM-component ports + host mapping) ─────────────
     "bebop2/wasm-host",     # DK-03 — wasmtime host, feature-gated (default OFF)
     # DK-02 — first Port-as-WASM-component (wasip2, zero-ambient-auth).

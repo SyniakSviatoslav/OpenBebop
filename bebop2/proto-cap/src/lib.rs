@@ -28,10 +28,13 @@
 //! ─────────────────────────────────────────────────────────────────────────────
 
 pub mod capability;
+pub mod claim_machine;
 pub mod entropy;
 pub mod error;
+pub mod event_dict;
 pub mod facade;
 pub mod hybrid_gate;
+pub mod matcher;
 pub mod port;
 pub mod revocation;
 pub mod roster;

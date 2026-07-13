@@ -30,6 +30,7 @@ use std::collections::HashSet;
 use bebop2_core::hash::sha3_256;
 
 use crate::capability::Capability;
+use crate::roster::AnchorRoster;
 
 /// An append-only set of revoked identities.
 ///
@@ -95,6 +96,28 @@ impl RevocationSet {
         self.revoked_cap_hash
             .extend(other.revoked_cap_hash.iter().copied());
     }
+
+    /// Remove an anchor from the *enrolling roster* (drop-anchor, MESH-11).
+    /// Revocation is **irreversible** for the revoked *set*, but an anchor that
+    /// was merely enrolled (not yet revoked) can be dropped from the roster so
+    /// it can no longer vouch. This is trivially local + fail-closed: dropping a
+    /// key that was never enrolled is a no-op, not an error.
+    pub fn drop_anchor(roster: &mut AnchorRoster, key: &[u8; 32]) {
+        roster.remove(key);
+    }
+
+    /// Gossip this revocation set to a peer: serialize the two namespaces as
+    /// sorted 32-byte id lists. The peer calls [`RevocationSet::merge`] to fold.
+    /// innovate: consensus-grade propagation (Vouchsafe / Lingering-Authority,
+    /// 2026 research-open) is a future upgrade; this is the anti-entropy
+    /// primitive every node can run today.
+    pub fn gossip_payload(&self) -> (Vec<[u8; 32]>, Vec<[u8; 32]>) {
+        let mut keys: Vec<[u8; 32]> = self.revoked_keys.iter().copied().collect();
+        let mut caps: Vec<[u8; 32]> = self.revoked_cap_hash.iter().copied().collect();
+        keys.sort_unstable();
+        caps.sort_unstable();
+        (keys, caps)
+    }
 }
 
 /// Compute the revocation hash of a capability: SHA3-256 over its canonical TLV
@@ -157,5 +180,65 @@ mod tests {
         rs.revoke_capability(cap_hash);
         assert!(rs.is_revoked_key(&key));
         assert!(rs.is_revoked_capability(&cap_hash));
+    }
+
+    // RED — MESH-11 drop-anchor: removing an enrolled anchor from the roster
+    // makes it unable to vouch (a delegation chain rooted at it is now rejected
+    // as UnknownIssuer), while an un-enrolled key is a silent no-op.
+    #[test]
+    fn drop_anchor_removes_vouch_power() {
+        let (a_seed, a_pk) = bebop2_core::sign::keygen(&[0x11u8; 32]);
+        let _ = a_seed;
+        let mut roster = AnchorRoster::new();
+        roster.enroll(&a_pk);
+        assert!(roster.contains(&a_pk), "anchor enrolled");
+        RevocationSet::drop_anchor(&mut roster, &a_pk);
+        assert!(
+            !roster.contains(&a_pk),
+            "dropped anchor can no longer vouch"
+        );
+        let (_, other) = bebop2_core::sign::keygen(&[0x22u8; 32]);
+        RevocationSet::drop_anchor(&mut roster, &other);
+        assert!(!roster.contains(&other));
+    }
+
+    // RED — MESH-11 gossip anti-entropy: two nodes' revocation sets converge
+    // after a gossip_payload -> merge round (idempotent, no duplication).
+    #[test]
+    fn gossip_payload_merge_converges_idempotent() {
+        let mut a = RevocationSet::new();
+        a.revoke_key([1u8; 32]);
+        a.revoke_capability([9u8; 32]);
+        let mut b = RevocationSet::new();
+        b.revoke_key([2u8; 32]);
+
+        let (ak, ac) = a.gossip_payload();
+        let mut wire = RevocationSet::new();
+        for k in &ak {
+            wire.revoke_key(*k);
+        }
+        for c in &ac {
+            wire.revoke_capability(*c);
+        }
+        b.merge(&wire);
+
+        assert!(b.is_revoked_key(&[1u8; 32]));
+        assert!(b.is_revoked_key(&[2u8; 32]));
+        assert!(b.is_revoked_capability(&[9u8; 32]));
+        // Second gossip round is a no-op (idempotent union).
+        let (ak2, ac2) = a.gossip_payload();
+        let mut wire2 = RevocationSet::new();
+        for k in &ak2 {
+            wire2.revoke_key(*k);
+        }
+        for c in &ac2 {
+            wire2.revoke_capability(*c);
+        }
+        b.merge(&wire2);
+        assert_eq!(
+            b.gossip_payload().0.len(),
+            2,
+            "no duplicate keys after re-merge"
+        );
     }
 }

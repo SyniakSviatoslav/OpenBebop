@@ -34,6 +34,9 @@ pub mod error;
 pub mod framing;
 pub mod handshake;
 pub mod iroh_transport;
+/// MESH-07 — pull anti-entropy + Merkle digest of the event-log.
+pub mod sync_pull;
+pub mod transport_policy;
 pub mod wss_transport;
 
 pub use error::{WireError, WireResult};

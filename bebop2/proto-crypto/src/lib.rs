@@ -36,9 +36,13 @@ pub mod constant_time;
 pub mod error;
 pub mod fips_regen;
 pub mod ladder;
+/// ML-KEM-768 (FIPS 203) — real, from-scratch, dependency-free KEM.
+/// See [`pq_kem`] for the bit-exact KAT / constant-time / zeroize contract.
+pub mod pq_kem;
 pub mod wycheproof;
 
 pub use error::{LadderError, LadderResult};
+pub use pq_kem::{decaps_internal, encaps_internal, keygen_internal};
 
 /// A rung on the crypto ladder: a primitive + the evidence tier it currently
 /// satisfies (none → wycheproof → fips-re-derived → audited).
