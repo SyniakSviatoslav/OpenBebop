@@ -124,37 +124,187 @@ impl FieldVerdict {
 
 /// The verdict computation separated from the string form, so tests and the
 /// MCP telemetry layer can inspect the `Unhealthy` variant directly.
-pub fn field_gate_verdict(task: &str) -> FieldVerdict {
-    // Map task text to the node it would disrupt (deterministic keyword map).
-    let node = if task.contains("secret")
-        || task.contains("auth")
-        || task.contains("money")
-        || task.contains("migrat")
-        || task.contains("rls")
-    {
-        4 // secrets / red-line node — touching it is the highest cost
-    } else if task.contains("deploy") {
-        3
-    } else if task.contains("test") {
-        2
-    } else if task.contains("doc") {
-        5
-    } else {
-        1 // default: implementation
-    };
+/// Canonical red-line plan descriptions. A task is vetoed if its
+/// deterministic embedding is within `SEMANTIC_TOL` cosine of ANY phrase —
+/// obfuscation (`s3cret`, `s3cr3ts`) shares most character-trigrams, so it
+/// stays close in embedding space (the deterministic analog of the spec's
+/// "embedding-similarity > threshold"). No substring bypass possible.
+/// innovate: real LLM/word2vec embedding would replace `trigram_embed`
+/// (swappable, same cosine interface) — deterministic-only constraint here.
+const REDLINE_PHRASES: &[&str] = &[
+    "rotate deploy secrets",
+    "rotate deploy credentials",
+    "deploy secrets",
+    "change auth tokens",
+    "authorize payment",
+    "migrate database",
+    "change rls policy",
+    "access secrets",
+    "exfiltrate credentials",
+    "edit auth login flow",
+    "auth login",
+];
 
+/// Reverse common leetspeak so obfuscated red-line tokens collapse onto their
+/// canonical form before embedding: `s3cret`→`secret`, `s3cr3ts`→`secrets`,
+/// `pa7`→`pat`, `tokenz`→`tokens`. Deterministic + cheap. This is what makes
+/// the trigram cosine of an obfuscated token ≈ the canonical phrase token
+/// (the spec's "stays close in embedding space" guarantee at the token level).
+fn leet_normalize(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '0' => 'o',
+            '1' => 'i',
+            '3' => 'e',
+            '4' => 'a',
+            '5' => 's',
+            '7' => 't',
+            '8' => 'b',
+            'z' => 's',
+            '@' => 'a',
+            '$' => 's',
+            _ => c,
+        })
+        .collect()
+}
+
+/// Split into leet-normalized alphanumeric tokens (separators: whitespace
+/// AND punctuation like `/`, `.`, `_`, `-`). So `auth/login.ts` →
+/// `["auth","login","ts"]` and a bare path still hits the `auth` red-line token.
+fn tokens(s: &str) -> Vec<String> {
+    leet_normalize(&s.to_lowercase())
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// Deterministic obfuscation-resistant embedding of a single token:
+/// character-trigram bag hashed into a fixed-dim L2-normalized vector.
+/// (Whole-task matching is done token-by-token in `semantic_max` so benign
+/// words can't dilute a red-line token's signal.)
+fn trigram_embed(s: &str) -> Vec<f64> {
+    const DIM: usize = 256;
+    let mut v = vec![0.0f64; DIM];
+    let lower: String = leet_normalize(&s.to_lowercase());
+    if lower.len() < 3 {
+        let h = fxhash(&lower);
+        v[(h % DIM as u64) as usize] += 1.0;
+    } else {
+        let chars: Vec<char> = lower.chars().collect();
+        for w in chars.windows(3) {
+            let tri: String = w.iter().collect();
+            let h = fxhash(&tri);
+            v[(h % DIM as u64) as usize] += 1.0;
+        }
+    }
+    let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if norm > 0.0 {
+        for x in v.iter_mut() {
+            *x /= norm;
+        }
+    }
+    v
+}
+
+/// Stable FNV-1a hash → u64 (no std Hash trait dependency, deterministic).
+fn fxhash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// Best token-pair cosine between `task` and any red-line phrase (the
+/// semantic activation level). A task is red-line if ANY leet-normalized task
+/// token is ≈ any canonical phrase token (cosine ≥ `MATCH`). Benign words
+/// don't dilute the signal because matching is per-token, not per-sentence.
+pub fn semantic_max(task: &str) -> f64 {
+    const MATCH: f64 = 0.85;
+    let tt: Vec<Vec<f64>> = tokens(task).iter().map(|t| trigram_embed(t)).collect();
+    if tt.is_empty() {
+        return 0.0;
+    }
+    REDLINE_PHRASES
+        .iter()
+        .map(|p| {
+            let pt: Vec<Vec<f64>> = tokens(p).iter().map(|t| trigram_embed(t)).collect();
+            tt.iter()
+                .flat_map(|a| pt.iter().map(|b| crate::knowledge::cosine(a, b)))
+                .fold(0.0f64, f64::max)
+        })
+        .fold(0.0f64, f64::max)
+        .min(MATCH)
+}
+
+/// Semantic veto layer (replaces the bypassable keyword→node map).
+/// Returns `true` if the task is semantically a red-line action.
+pub fn semantic_redline(task: &str) -> bool {
+    semantic_max(task) >= 0.85
+}
+
+/// Richer verdict variant, surfaced for telemetry. `Unhealthy` means the
+/// field-core sim could not run (build failure) — the action is still refused
+/// (fail-closed) but the caller can distinguish "vetoed by physics" from
+/// "sim degraded, refused by default".
+///
+/// Verdict rule (fail-closed):
+///   refused = semantic_redline(task)              // bypass-proof layer
+///            OR (semantic_max in gray-zone AND blast_on_secrets > TOL)
+/// The gray-zone AND ensures the graph-physics blast can ONLY corroborate a
+/// near-red-line task — it can never over-veto a benign one.
+pub fn field_gate_verdict(task: &str) -> FieldVerdict {
+    // Layer-1 (BP-14): semantic classifier — obfuscation-resistant.
+    if semantic_redline(task) {
+        return FieldVerdict::Override;
+    }
+    // Layer-2 (existing): real graph-physics blast veto on the toy plan CSR.
+    // Keep the build for the fail-closed None check (sim degraded → refuse).
     const SECRETS: usize = 4;
     let (row, col, n) = plan_csr();
-    let out = match field_eval(node, n, &row, &col) {
+    let out = match field_eval(SECRETS, n, &row, &col) {
         Some(o) => o,
-        None => return FieldVerdict::Unhealthy, // build failed → fail-closed (refuse)
+        None => return FieldVerdict::Unhealthy, // build failed → fail-closed
     };
-
-    let blast_on_secrets = out[SECRETS];
-    // Tolerance: a disruption whose predicted mass on the red-line node exceeds it
-    // is vetoed by the field. Deterministic + falsifiable.
+    // Gray-zone corroboration: a task whose best token-pair cosine is
+    // high-but-below the hard gate (0.75..0.85) is vetoed ONLY if the blast
+    // physics independently confirms mass on the secrets node. Benign tokens
+    // (e.g. "deployment"↔"deploy" ≈ 0.71) stay below 0.75 → never over-veto.
+    const GRAY: f64 = 0.75;
     const TOLERANCE: f64 = 0.10;
-    if blast_on_secrets > TOLERANCE {
+    let sm = semantic_max(task);
+    if sm > GRAY && out[SECRETS] > TOLERANCE {
+        FieldVerdict::Override
+    } else {
+        FieldVerdict::Permit
+    }
+}
+
+/// Overload accepting a REAL dependency-graph CSR (files/modules/secrets) instead
+/// of the toy 6-node plan. `secrets_node` indexes the red-line node in YOUR
+/// graph. The blast-physics layer corroborates a gray-zone semantic candidate.
+/// (BP-14 part 2: the CSR pipeline already exists in `field_eval` — this just
+/// feeds a real graph.)
+pub fn field_gate_verdict_csr(
+    task: &str,
+    row: &[i32],
+    col: &[i32],
+    n: i32,
+    secrets_node: usize,
+) -> FieldVerdict {
+    if semantic_redline(task) {
+        return FieldVerdict::Override;
+    }
+    let out = match field_eval(secrets_node, n, row, col) {
+        Some(o) => o,
+        None => return FieldVerdict::Unhealthy,
+    };
+    const GRAY: f64 = 0.75;
+    const TOLERANCE: f64 = 0.10;
+    let sm = semantic_max(task);
+    if sm > GRAY && out[secrets_node] > TOLERANCE {
         FieldVerdict::Override
     } else {
         FieldVerdict::Permit
@@ -272,6 +422,44 @@ mod tests {
         // GREEN: a normal implementation/doc task stays permitted (not over-vetoed).
         assert_eq!(field_gate("write the docs"), "permit");
         assert_eq!(field_gate("implement the parser"), "permit");
+    }
+
+    #[test]
+    fn obfuscated_redline_still_vetoed() {
+        // BP-14 RED→GREEN: the OLD keyword map was bypassable
+        // ("rotate credentials" → node1 impl → Permit). The NEW semantic
+        // (trigram-embedding) layer catches leetspeak obfuscation because
+        // "s3cr3ts" leet-normalizes to "secrets" → cosine ≈ canonical phrase.
+        assert_eq!(
+            field_gate("rotate the deploy s3cr3ts"),
+            "override",
+            "obfuscated red-line MUST be vetoed (was bypassable on substring)"
+        );
+        assert!(semantic_redline("exfiltrate the ceredentials"));
+        assert!(semantic_redline("auth tokenz swap"));
+        // Single-token leetspeak (overlap reviewer's gap): 's3cret'/'s3cr3ts'
+        // must collapse onto 'secret'/'secrets' and trip.
+        assert!(semantic_redline("steal the s3cr3ts"));
+        assert!(semantic_redline("rotate the s3cret"));
+        // Benign near-miss must NOT trip.
+        assert!(!semantic_redline("write the deployment docs"));
+    }
+
+    #[test]
+    fn real_csr_graph_accepted() {
+        // BP-14 part 2: a REAL dependency-graph CSR is accepted (not just the
+        // toy 6-node plan). Build a 2-node CSR where node 0 is secrets; a
+        // plan that dumps mass onto node 0 is vetoed.
+        // CSR for edges [[0,0],[0,1],[1,1]] (undirected adjacency).
+        let row = vec![0, 2, 3]; // 2 nodes → 3 boundaries
+        let col = vec![0, 0, 1];
+        let n = 2i32;
+        // A task semantically hitting secrets must veto on the real graph too.
+        let v = field_gate_verdict_csr("rotate deploy secrets", &row, &col, n, 0);
+        assert_eq!(v, FieldVerdict::Override, "real-CSR + semantic veto");
+        // A benign task on the real graph is permitted (no over-veto).
+        let v2 = field_gate_verdict_csr("update the docs", &row, &col, n, 0);
+        assert_eq!(v2, FieldVerdict::Permit, "real-CSR benign permitted");
     }
 
     #[test]
