@@ -207,7 +207,7 @@ pub fn serve() -> std::io::Result<()> {
     let mut stdout = std::io::stdout();
     let once = std::env::var("BEBOP_MCP_ONCE").is_ok();
     let mut mm = crate::memory::LivingMemory::new();
-    let mut audit = crate::research_patterns::AuditLog::new();
+    let mut audit = crate::audit::AuditLog::new();
     for line in stdin.lock().lines() {
         let line = match line {
             Ok(l) => l,
@@ -230,7 +230,7 @@ pub fn serve() -> std::io::Result<()> {
 pub fn handle(
     req: &str,
     mm: &mut crate::memory::LivingMemory,
-    audit: &mut crate::research_patterns::AuditLog,
+    audit: &mut crate::audit::AuditLog,
 ) -> String {
     let v: serde_json::Value = match serde_json::from_str(req) {
         Ok(v) => v,
@@ -296,7 +296,7 @@ pub fn call_tool(
     name: &str,
     args: &serde_json::Value,
     mm: &mut crate::memory::LivingMemory,
-    audit: &mut crate::research_patterns::AuditLog,
+    audit: &mut crate::audit::AuditLog,
 ) -> Result<String, String> {
     // ── DoS hardening (entry guard) ───────────────────────────────────────────
     // Reject any request whose serialized `args` exceeds 1 MiB BEFORE any tool
@@ -636,8 +636,11 @@ pub fn call_tool(
                 .unwrap_or(target_ip);
 
             if !scope.is_authorized(target_ip, &target_host) {
-                audit.record(
-                    audit.entries.len() as u64 + 1,
+                let seq = audit.len() as u64 + 1;
+                audit.append(
+                    seq,
+                    "recon",
+                    &target_host,
                     &format!("recon REFUSED: target {target_host}/{target_ip} out of scope"),
                 );
                 return Ok(format!(
@@ -683,8 +686,11 @@ pub fn call_tool(
                     scope_cidrs
                 ),
             );
-            audit.record(
-                audit.entries.len() as u64 + 1,
+            let seq = audit.len() as u64 + 1;
+            audit.append(
+                seq,
+                "recon",
+                &target_host,
                 &format!(
                     "recon OK: target {target_host} findings={} deduped={}",
                     findings.len(),
@@ -887,7 +893,7 @@ mod tests {
     /// Test helper: dispatch an MCP request with fresh (ephemeral) session state.
     fn h(req: &str) -> String {
         let mut mm = crate::memory::LivingMemory::new();
-        let mut audit = crate::research_patterns::AuditLog::new();
+        let mut audit = crate::audit::AuditLog::new();
         handle(req, &mut mm, &mut audit)
     }
 
@@ -1179,7 +1185,7 @@ mod tests {
         // Falsifiable: removing the entry guard makes this fail.
         let big = "x".repeat(MAX_TOOL_ARG_BYTES + 1);
         let mut mm = crate::memory::LivingMemory::new();
-        let mut audit = crate::research_patterns::AuditLog::new();
+        let mut audit = crate::audit::AuditLog::new();
         let r = call_tool(
             "recall",
             &serde_json::json!({ "query": big }),
@@ -1201,7 +1207,7 @@ mod tests {
         // MAX_ARG_STR_BYTES below 64 KiB (or making the cap exclusive) fails.
         let exact = "x".repeat(MAX_ARG_STR_BYTES);
         let mut mm = crate::memory::LivingMemory::new();
-        let mut audit = crate::research_patterns::AuditLog::new();
+        let mut audit = crate::audit::AuditLog::new();
         let r = call_tool(
             "scan",
             &serde_json::json!({ "text": exact }),
@@ -1221,7 +1227,7 @@ mod tests {
         // Falsifiable: removing the take_str cap makes this fail.
         let big = "y".repeat(MAX_ARG_STR_BYTES + 1);
         let mut mm = crate::memory::LivingMemory::new();
-        let mut audit = crate::research_patterns::AuditLog::new();
+        let mut audit = crate::audit::AuditLog::new();
         let r = call_tool(
             "scan",
             &serde_json::json!({ "text": big }),
@@ -1240,7 +1246,7 @@ mod tests {
         // GREEN: normal-sized dispatch + recall continue to succeed after the
         // caps are added. Falsifiable: a broken cap would break these paths.
         let mut mm = crate::memory::LivingMemory::new();
-        let mut audit = crate::research_patterns::AuditLog::new();
+        let mut audit = crate::audit::AuditLog::new();
         let d = call_tool(
             "dispatch",
             &serde_json::json!({ "task": "wire the field core", "n": 3 }),
@@ -1273,7 +1279,7 @@ mod tests {
         // report a larger fan-out. Falsifiable: removing `.min(MAX_DISPATCH_FANOUT)`
         // makes this fail (it would report multipilot(10000)).
         let mut mm = crate::memory::LivingMemory::new();
-        let mut audit = crate::research_patterns::AuditLog::new();
+        let mut audit = crate::audit::AuditLog::new();
         let d = call_tool(
             "dispatch",
             &serde_json::json!({ "task": "fuzz", "n": 10_000 }),

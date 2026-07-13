@@ -18,9 +18,10 @@
 //!           AND target in scope (or no target given)
 //! Any one refusal ⇒ proceed = false, and the refusal reason is recorded.
 
+use crate::audit::AuditLog; // BP-12: strong SHA256 hash-chained log (was weak research_patterns::AuditLog)
 use crate::field::{field_gate_verdict, FieldVerdict};
 use crate::memory::LivingMemory;
-use crate::research_patterns::{AuditLog, TargetScope};
+use crate::research_patterns::TargetScope;
 use crate::stabilizer::{consensual_aggregate, permit_action, stabilize_step, ActionContract};
 
 /// A proposed L5 motion (the optimizer's delta) for one tick.
@@ -114,8 +115,8 @@ pub fn wire(
     if !target_authorized {
         reasons.push("target_out_of_scope".to_string());
     }
-    let proceed = reasons.is_empty();
-    let reason = if proceed {
+    let mut proceed = reasons.is_empty();
+    let mut reason = if proceed {
         String::new()
     } else {
         reasons.join("; ")
@@ -132,15 +133,25 @@ pub fn wire(
     );
     mm.remember(&mem_concept, &mem_payload);
 
-    // ── LAYER 5: AUDIT (tamper-evident ledger of the decision) ──────────────
-    let seq = audit.entries.len() as u64 + 1;
-    audit.record(
-        seq,
+    // ── LAYER 5: AUDIT (tamper-evident, hash-chained ledger of the decision) ─
+    let seq = audit.len() as u64 + 1;
+    audit.append(
+        seq, // monotonic tick (== entry index) satisfies append's tick>=last invariant
+        "wire",
+        task, // no needless borrow
         &format!(
-            "wire task='{task}' field={:?} action_ok={} target_ok={} proceed={}",
+            "field={:?} action_ok={} target_ok={} proceed={}",
             field, action_permitted, target_authorized, proceed
         ),
     );
+
+    // Fail-closed: a tampered audit chain is a red-line surface. If verify()
+    // reports a broken link, refuse the decision and surface the break index.
+    if let Some(broken) = audit.verify() {
+        proceed = false;
+        reason =
+            format!("AUDIT TAMPER detected at entry {broken} — decision refused (fail-closed)");
+    }
 
     WireOutcome {
         field,
@@ -151,7 +162,7 @@ pub fn wire(
         proceed,
         reason,
         memory_nodes: mm.size(),
-        audit_entries: audit.entries.len(),
+        audit_entries: audit.len(),
     }
 }
 
@@ -325,6 +336,91 @@ mod tests {
             );
         }
         assert_eq!(mm.size(), 3, "memory accumulated across wires");
-        assert_eq!(audit.entries.len(), 3);
+        assert_eq!(audit.len(), 3);
+    }
+
+    #[test]
+    fn audit_is_tamper_evident_red_to_green() {
+        // BP-12 RED→GREEN: the wired AuditLog must be hash-chained. A clean
+        // chain verifies; mutating a past payload breaks the chain at that index.
+        let mut mm = LivingMemory::new();
+        let mut audit = AuditLog::new();
+        // Two clean wires → intact chain.
+        wire(
+            "a",
+            &l5_stable(),
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            &mut mm,
+            &mut audit,
+        );
+        wire(
+            "b",
+            &l5_stable(),
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            &mut mm,
+            &mut audit,
+        );
+        assert!(audit.verify().is_none(), "intact chain must verify clean");
+
+        // RED: tamper a past entry's payload (bypass the chain via entries_mut).
+        {
+            let rogue = &mut audit.entries_mut()[0];
+            rogue.payload = "MUTATED".to_string();
+        }
+        let broken = audit.verify();
+        assert!(
+            broken.is_some_and(|i| i == 0),
+            "tamper MUST be detected at index 0, got {broken:?}"
+        );
+    }
+
+    #[test]
+    fn wire_refuses_on_tampered_chain_fail_closed() {
+        // Overlap fix #2: verify() must be fail-closed at RUNTIME, not just test.
+        // A tampered audit chain fed into wire() MUST refuse the decision.
+        let mut mm = LivingMemory::new();
+        let mut audit = AuditLog::new();
+        wire(
+            "a",
+            &l5_stable(),
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            &mut mm,
+            &mut audit,
+        );
+        // Tamper entry 0 after the fact (simulates persisted-log corruption).
+        {
+            let rogue = &mut audit.entries_mut()[0];
+            rogue.payload = "MUTATED".to_string();
+        }
+        // Next wire() call must detect the break and refuse fail-closed.
+        let out = wire(
+            "b",
+            &l5_stable(),
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            &mut mm,
+            &mut audit,
+        );
+        assert!(!out.proceed, "tampered chain MUST refuse (fail-closed)");
+        assert!(
+            out.reason.contains("TAMP"),
+            "refusal reason must cite tamper, got: {}",
+            out.reason
+        );
     }
 }

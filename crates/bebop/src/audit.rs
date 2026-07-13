@@ -43,8 +43,12 @@ impl AuditLog {
         }
     }
 
-    /// Append an entry, chaining off the previous hash. `tick` must be >= last.
+    /// Append an entry, chaining off the previous hash. `tick` is clamped to be
+    /// >= the last entry's tick (fail-closed monotonic invariant — a backward
+    /// tick can never create a broken chain link).
     pub fn append(&mut self, tick: u64, actor: &str, action: &str, payload: &str) -> &Entry {
+        let last_tick = self.entries.last().map(|e| e.tick).unwrap_or(0);
+        let tick = tick.max(last_tick); // enforce tick >= last (monotonic)
         let seq = self.entries.len() as u64;
         let material = format!(
             "{}|{}|{}|{}|{}|{}",
@@ -72,6 +76,12 @@ impl AuditLog {
     }
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Mutable access for forensic tests / RED→GREEN tamper simulation.
+    /// NOTE: any mutation here breaks `verify()` on the next call (by design).
+    pub fn entries_mut(&mut self) -> &mut [Entry] {
+        &mut self.entries
     }
 
     /// Verify the whole chain. Returns the index of the FIRST broken entry, or
