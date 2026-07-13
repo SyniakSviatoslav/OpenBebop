@@ -41,6 +41,7 @@ pub mod knowledge;
 pub mod lanes; // O: parallel-session scheduler (throughput/auto-queue/ETA)
 pub mod launch;
 pub mod ledger; // deterministic double-entry money/resource boundary (TigerBeetle invariant)
+pub mod loop_runtime; // BP-18: 6-layer control loop state machine (wires field+stabilizer+governor+memory+kalman+goodhart)
 pub mod mapping; // MAPPING: live edge-weight refresh (congestion → W_uv) over reconnect
 pub mod matcher; // OPEN dispatch matcher: pure/deterministic/replicable (kills DANGER #1 single-server)
 pub mod mathx; // §2 numerics: divergence, transfer-func step response, Lagrange interp, limit-cycle detect
