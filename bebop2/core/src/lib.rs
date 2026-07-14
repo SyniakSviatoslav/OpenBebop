@@ -34,8 +34,10 @@ mod no_std_runtime {
 
     // Bump allocator over a static 4 MiB heap. Sufficient for the crate's transient
     // allocation patterns (temporary Vecs freed on scope exit; we never shrink — fine for
-    // the empty-import wasm use-case). Never frees; acceptable for short-lived wasm runs.
-    // AtomicUsize is Sync+Send (unlike Cell) so it satisfies the GlobalAlloc bound.
+    // the empty-import wasm use-case). B3 fix: use `fetch_add` (single atomic RMW) instead
+    // of load+store so concurrent allocs from different threads/tasks cannot race and
+    // return overlapping regions. dealloc is a no-op (monotonic bump) — acceptable for
+    // short-lived wasm; long-lived use should prefer a real allocator crate behind `std`.
     const HEAP_SIZE: usize = 4 * 1024 * 1024;
     static mut HEAP: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -43,17 +45,30 @@ mod no_std_runtime {
     struct Bump;
     unsafe impl GlobalAlloc for Bump {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            let start = NEXT.load(Ordering::Relaxed);
+            // Single atomic read-modify-write: reserve [aligned, end) or detect overflow.
             let align = layout.align();
-            let aligned = (start + align - 1) & !(align - 1);
-            let end = aligned + layout.size();
-            if end > HEAP_SIZE {
-                return core::ptr::null_mut();
-            }
-            NEXT.store(end, Ordering::Relaxed);
+            let aligned = loop {
+                let start = NEXT.load(Ordering::Relaxed);
+                let aligned = (start + align - 1) & !(align - 1);
+                let end = aligned + layout.size();
+                if end > HEAP_SIZE {
+                    return core::ptr::null_mut();
+                }
+                if NEXT
+                    .compare_exchange(start, end, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    break aligned;
+                }
+                // CAS failed: another alloc won the race; retry with the fresh value.
+            };
             HEAP.as_mut_ptr().add(aligned)
         }
-        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+            // Monotonic bump allocator: no individual free. This matches the design
+            // (short-lived wasm, transient scratch only). Real deallocation is out of
+            // scope for the bare-metal target and is available via std builds.
+        }
     }
 
     #[global_allocator]

@@ -1046,7 +1046,7 @@ pub fn derive_pq_seed(master: &[u8; SEEDBYTES]) -> [u8; SEEDBYTES] {
 pub fn keygen_from_entropy() -> Result<(MlDsa65Pk, MlDsa65Sk), crate::rng::EntropyError> {
     let mut seed = [0u8; SEEDBYTES];
     crate::rng::entropy_provider().fill(&mut seed)?;
-    Ok(keygen(&seed))
+    Ok(keygen_derivable(&seed))
 }
 
 /// Sign (internal interface, deterministic-capable via rnd; rnd=0 → FIPS deterministic mode).
