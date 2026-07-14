@@ -72,6 +72,8 @@ jobs:
         run: bash scripts/ci-no-serde-json-wire.sh
       - name: G2 — single canonical event-log primitive in bebop2 (no duplicate log)
         run: bash scripts/ci-no-duplicate-eventlog.sh
+      - name: G3 — sync topic unified under canonical Resource::Sync / Action::Pull (no placeholder carrier)
+        run: bash scripts/ci-no-placeholder-synctopic.sh
       - name: G4 — scope/effect attenuation is a real set-subset (no flat equality)
         run: bash scripts/ci-no-flat-scope.sh
       - name: G5 — capability-scoped red-line gate present (auth/money/secrets/migrations)

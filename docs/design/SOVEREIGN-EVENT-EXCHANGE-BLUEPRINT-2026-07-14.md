@@ -97,6 +97,12 @@ already present in code:
   decouple by event type for *authorization*, but there is no subscription registry / fan-out
   dispatcher, and the "topic" enum is split (`scope.rs::Resource` vs `sync_pull.rs::SyncResource`,
   the latter an explicit placeholder).
+  **PARTIALLY CLOSED 2026-07-14 (wave 5, topic-taxonomy slice):** the sync topic is now a canonical
+  proto-cap variant — `Resource::Sync` + `Action::Pull` added to `scope.rs`, and `SyncScope::
+  to_capability_scope` maps 1:1 to `(Resource::Sync, Action::Pull)` instead of the old `Ledger::Read`
+  placeholder carrier. The topic taxonomy is unified under `Resource`; `SyncResource`/`SyncAction`
+  remain only as wire-local discriminant mirrors. The remaining G3 work — a real subscription
+  registry / fan-out dispatcher (pub/sub as a bus) — is a larger P5 effort, out of this gap's scope.
 - **G4 — Trust root is genesis-frozen.** `AnchorRoster` is enrolled once, never rotates at
   runtime; there is no revocation-*gossip*; and `Effect::is_subset_of` (`roster.rs`) WAS flat
   equality, so delegation "attenuation" narrowed nothing. **CLOSED 2026-07-14 (wave 2):** `Scope`
@@ -135,6 +141,7 @@ already present in code:
 | No new dep without a falsifiable comparison (zero-trust adoption) | DECART (`AGENTS.md §5`) | process-rule; **no script yet** (follow-up: dep-diff gate) |
 | No reputation/scoring/blacklist of movers | `ci-no-courier-scoring.sh` (scoped to the mesh/trust layer; `bebop2/core/` math excluded) | **WIRED by this change** (law-hooks + CI); RED-proven (G7 closed 2026-07-14) |
 | Canonical schema-on-write on the wire (no serde_json SignedFrame) | `ci-no-serde-json-wire.sh` | **WIRED by wave-1 (2026-07-14)** (law-hooks + CI); RED-proven; G1 CLOSED |
+| Sync topic unified under canonical Resource (no placeholder carrier) | `ci-no-placeholder-synctopic.sh` | **WIRED by wave-5 (2026-07-14)** (law-hooks + CI); RED-proven; G3 topic-taxonomy slice CLOSED |
 | Single canonical event-log primitive in bebop2 (no duplicate log) | `ci-no-duplicate-eventlog.sh` | **WIRED by wave-4 (2026-07-14)** (law-hooks + CI); RED-proven; G2 in-repo slice CLOSED (cross-repo mirror out-of-scope via ci-kernel-fence) |
 | Scope/Effect attenuation is a real set-subset (no flat equality) | `ci-no-flat-scope.sh` | **WIRED by wave-2 (2026-07-14)** (law-hooks + CI); RED-proven; G4 CLOSED |
 | Red-line gate inside bebop2 (auth/money/secrets/migrations deny) | `ci-no-redline-gate.sh` | **WIRED by wave-3 (2026-07-14)** (law-hooks + CI); RED-proven; G5 CLOSED |

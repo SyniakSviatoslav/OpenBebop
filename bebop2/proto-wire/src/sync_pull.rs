@@ -105,13 +105,12 @@ impl SyncScope {
     }
 
     /// Map this local scope onto a proto-cap `Scope` for the `SignedFrame`
-    /// capability. TEMPORARY: until MESH-03 adds `Resource::Sync` /
-    /// `Action::Pull`, we map `Sync::Pull` to an existing proto-cap scope
-    /// (`Ledger::Read`) as a placeholder carrier gate. The sync *authorization*
-    /// semantics are identical; only the discriminant byte will shift when
-    /// MESH-03 promotes the canonical variant.
+    /// capability. G3 (2026-07-14): the sync topic is now a canonical proto-cap
+    /// variant, so this maps 1:1 to `Resource::Sync` / `Action::Pull` — NO
+    /// placeholder carrier. Previously this mapped to `Ledger::Read` as a
+    /// temporary stand-in; the topic taxonomy is now unified under `Resource`.
     pub fn to_capability_scope(&self) -> Scope {
-        Scope::single(Resource::Ledger, Action::Read)
+        Scope::single(Resource::Sync, Action::Pull)
     }
 }
 
@@ -1005,5 +1004,22 @@ mod tests {
             node_b.root(),
             "converged over in-memory transport"
         );
+    }
+
+    // ── G3 (2026-07-14): sync topic is a canonical proto-cap variant, not a
+    // placeholder carrier. The sync scope MUST map to (Resource::Sync,
+    // Action::Pull) — NOT to Ledger::Read (the old temporary stand-in). This
+    // proves the topic taxonomy is unified under `Resource`.
+    #[test]
+    fn g3_sync_scope_maps_to_canonical_sync_topic() {
+        let scope = SyncScope::pull();
+        let cap = scope.to_capability_scope();
+        assert_eq!(
+            cap.grants,
+            vec![(Resource::Sync, Action::Pull)],
+            "sync topic must be the canonical Sync::Pull variant, not a Ledger::Read placeholder"
+        );
+        // And it must NOT be the legacy placeholder.
+        assert_ne!(cap.grants, vec![(Resource::Ledger, Action::Read)]);
     }
 }

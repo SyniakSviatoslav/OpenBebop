@@ -36,6 +36,10 @@ pub enum Resource {
     /// Added for the MESH delivery choreography; pinned discriminant so the byte
     /// mapping is wire-stable (do NOT renumber existing variants).
     Claim,
+    /// Mesh event-log anti-entropy sync. Promoted to a canonical `Resource`
+    /// (G3, 2026-07-14) so the sync topic is no longer a parallel placeholder
+    /// enum (`SyncResource`) — the topic taxonomy is unified under `Resource`.
+    Sync,
 }
 
 /// An action permitted on a [`Resource`]. Closed set.
@@ -79,6 +83,10 @@ pub enum Action {
     DeliveryConfirmed,
     /// Settlement recorded (ledger i64). MESH delivery choreography.
     SettlementRecorded,
+    /// Pull anti-entropy: request another node's events past our watermark
+    /// (mesh event-log sync). Promoted to a canonical `Action` (G3, 2026-07-14)
+    /// so the sync verb is no longer a parallel placeholder enum (`SyncAction`).
+    Pull,
 }
 
 /// `(resource, action)` pair a capability authorizes. No score, no subject rating.
@@ -149,6 +157,7 @@ impl Resource {
             Resource::Backup => 0x0A,
             Resource::Loyalty => 0x0B,
             Resource::Claim => 0x0C,
+            Resource::Sync => 0x0D,
         }
     }
 
@@ -168,6 +177,7 @@ impl Resource {
             0x0A => Some(Resource::Backup),
             0x0B => Some(Resource::Loyalty),
             0x0C => Some(Resource::Claim),
+            0x0D => Some(Resource::Sync),
             _ => None,
         }
     }
@@ -196,6 +206,7 @@ impl Action {
             Action::Pickup => 0x11,
             Action::DeliveryConfirmed => 0x12,
             Action::SettlementRecorded => 0x13,
+            Action::Pull => 0x14,
         }
     }
 
@@ -222,6 +233,7 @@ impl Action {
             0x11 => Some(Action::Pickup),
             0x12 => Some(Action::DeliveryConfirmed),
             0x13 => Some(Action::SettlementRecorded),
+            0x14 => Some(Action::Pull),
             _ => None,
         }
     }
