@@ -839,20 +839,65 @@ pub fn call_tool(
 /// Deterministic native executor used by multipilot (no model, air-gapped).
 /// Produces a structured plan string from the task; ok=true unless empty.
 pub fn native_exec(task: &str) -> crate::copilot::NativeOutcome {
-    let plan = if task.trim().is_empty() {
-        String::new()
-    } else {
-        format!(
-            "plan[{}]: 1) parse '{}' 2) route 3) execute 4) verify",
-            task.len(),
-            task
-        )
-    };
-    crate::copilot::NativeOutcome {
-        ok: !plan.is_empty(),
-        backend: "native".into(),
-        summary: plan,
-        exit_code: 0,
+    Proposer::propose(&NativeProposer, task)
+}
+
+/// Model-agnostic doer seam (P2c). The proposal backend is injected, not
+/// hard-coded: a host can swap `NativeProposer` (air-gapped, zero-dep) for a
+/// future model-backed adapter behind the SAME trait without touching call
+/// sites. `NullProposer` is the offline default (no model, no network) so the
+/// system stays falsifiable + air-gapped unless an operator explicitly wires a
+/// model adapter. GREEN: `NativeProposer` yields a real plan; RED: an empty task
+/// or `NullProposer` yields `ok=false` (fail-closed, never a fake proposal).
+pub trait Proposer {
+    /// Human-readable backend id (e.g. "native", "null", "openai-compat").
+    fn backend(&self) -> &'static str;
+    /// Propose a plan for `task`. `ok=false` on empty/invalid input.
+    fn propose(&self, task: &str) -> crate::copilot::NativeOutcome;
+}
+
+/// Air-gapped deterministic doer (the current `native_exec` logic).
+pub struct NativeProposer;
+
+impl Proposer for NativeProposer {
+    fn backend(&self) -> &'static str {
+        "native"
+    }
+    fn propose(&self, task: &str) -> crate::copilot::NativeOutcome {
+        let plan = if task.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "plan[{}]: 1) parse '{}' 2) route 3) execute 4) verify",
+                task.len(),
+                task
+            )
+        };
+        crate::copilot::NativeOutcome {
+            ok: !plan.is_empty(),
+            backend: self.backend().into(),
+            summary: plan,
+            exit_code: 0,
+        }
+    }
+}
+
+/// Offline default doer: no model, no network. Used when no adapter is wired.
+/// `ok=false` always (it produces no proposal) — fail-closed so a missing
+/// backend can never be mistaken for a successful plan.
+pub struct NullProposer;
+
+impl Proposer for NullProposer {
+    fn backend(&self) -> &'static str {
+        "null"
+    }
+    fn propose(&self, _task: &str) -> crate::copilot::NativeOutcome {
+        crate::copilot::NativeOutcome {
+            ok: false,
+            backend: self.backend().into(),
+            summary: String::new(),
+            exit_code: 0,
+        }
     }
 }
 
@@ -1301,5 +1346,42 @@ mod tests {
             !out.contains("multipilot(10000)"),
             "fan-out must NOT reflect the attacker-requested 10000: {out}"
         );
+    }
+
+    #[test]
+    fn proposer_native_yields_real_plan_green() {
+        // GREEN: NativeProposer (air-gapped) turns a task into a real plan.
+        let o = Proposer::propose(&NativeProposer, "ship the kernel");
+        assert!(o.ok, "native proposer must succeed on a non-empty task");
+        assert_eq!(o.backend, "native");
+        assert!(o.summary.contains("ship the kernel"));
+    }
+
+    #[test]
+    fn proposer_native_empty_task_fails_closed_red() {
+        // RED: an empty task yields ok=false (fail-closed, never a fake plan).
+        let o = Proposer::propose(&NativeProposer, "   ");
+        assert!(!o.ok, "empty task must fail closed");
+        assert!(o.summary.is_empty());
+    }
+
+    #[test]
+    fn proposer_null_offline_default_never_fakes_red() {
+        // RED: NullProposer (offline default) is fail-closed — no model, no plan.
+        let o = Proposer::propose(&NullProposer, "ship the kernel");
+        assert!(!o.ok, "null proposer must never produce a fake plan");
+        assert_eq!(o.backend, "null");
+        assert!(o.summary.is_empty());
+    }
+
+    #[test]
+    fn native_exec_matches_native_proposer() {
+        // Regression: the legacy `native_exec` entry point still delegates to
+        // NativeProposer (no behavior change at call sites).
+        let direct = Proposer::propose(&NativeProposer, "route delta");
+        let via_fn = native_exec("route delta");
+        assert_eq!(direct.ok, via_fn.ok);
+        assert_eq!(direct.summary, via_fn.summary);
+        assert_eq!(direct.backend, via_fn.backend);
     }
 }

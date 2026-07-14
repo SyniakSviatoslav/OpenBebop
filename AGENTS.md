@@ -83,7 +83,7 @@ These invariants are now MECHANICALLY ENFORCED (were a manual RED-suite):
 - **A DONE/CLOSED mesh claim must cite a live test** (`ci-claim-live-test.sh`) — CI.
 
 ## Build/test
-- `cargo test` — 792 Rust tests, RED+GREEN, 0 fail
+- `cargo test` — 796 Rust tests, RED+GREEN, 0 fail
 - `cargo test -p bebop2-core` (full suite), `cargo clippy -p bebop2-core --all-targets`
 - Crypto KATs live in `bebop2/core/src/kat/`; RFC 8439 §2.5.2 + Appendix A.3 are the Poly1305 anchors.
 
