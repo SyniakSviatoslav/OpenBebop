@@ -84,8 +84,15 @@ already present in code:
   (45 tests). The outer `Envelope` JSON shell remains (non-signed framing; out of G1 scope).
 - **G2 — The event log is duplicated, not consolidated.** The canonical `EventLog` lives in
   `dowiz/kernel` and is reachable only via the default-OFF `kernel-rlib` feature; `bebop2`
-  ships a parallel look-alike (`sync_pull.rs::SyncFrame`) with the same shape but no shared
-  code — two models to keep in sync by hand.
+  ships a parallel look-alike (`sync_pull.rs::SyncFrame`/`MerkleLog`) with the same shape but
+  no shared code — two models to keep in sync by hand.
+  **PARTIALLY CLOSED 2026-07-14 (wave 4, in-repo slice):** `MerkleLog` is pinned as the sole
+  append-only event-log primitive inside bebop2, enforced by `ci-no-duplicate-eventlog.sh`
+  (fails if a second `*Log` type appears in proto-wire/proto-cap). The cross-repo mirror
+  (`dowiz/kernel::EventLog`) is intentionally NOT consolidated here — `ci-kernel-fence` forbids
+  proto-cap/proto-wire depending on dowiz-kernel, and the blueprint's own P2 keeps that layer
+  guard intact. A genuine single-source consolidation needs a fence-respecting adapter
+  (separate, out-of-scope task).
 - **G3 — Pub/sub is a typing discipline, not a bus.** `Scope`/`InboundPort`/`OutboundPort`
   decouple by event type for *authorization*, but there is no subscription registry / fan-out
   dispatcher, and the "topic" enum is split (`scope.rs::Resource` vs `sync_pull.rs::SyncResource`,
@@ -128,6 +135,7 @@ already present in code:
 | No new dep without a falsifiable comparison (zero-trust adoption) | DECART (`AGENTS.md §5`) | process-rule; **no script yet** (follow-up: dep-diff gate) |
 | No reputation/scoring/blacklist of movers | `ci-no-courier-scoring.sh` (scoped to the mesh/trust layer; `bebop2/core/` math excluded) | **WIRED by this change** (law-hooks + CI); RED-proven (G7 closed 2026-07-14) |
 | Canonical schema-on-write on the wire (no serde_json SignedFrame) | `ci-no-serde-json-wire.sh` | **WIRED by wave-1 (2026-07-14)** (law-hooks + CI); RED-proven; G1 CLOSED |
+| Single canonical event-log primitive in bebop2 (no duplicate log) | `ci-no-duplicate-eventlog.sh` | **WIRED by wave-4 (2026-07-14)** (law-hooks + CI); RED-proven; G2 in-repo slice CLOSED (cross-repo mirror out-of-scope via ci-kernel-fence) |
 | Scope/Effect attenuation is a real set-subset (no flat equality) | `ci-no-flat-scope.sh` | **WIRED by wave-2 (2026-07-14)** (law-hooks + CI); RED-proven; G4 CLOSED |
 | Red-line gate inside bebop2 (auth/money/secrets/migrations deny) | `ci-no-redline-gate.sh` | **WIRED by wave-3 (2026-07-14)** (law-hooks + CI); RED-proven; G5 CLOSED |
 | Sovereign core reaches no clock/RNG/socket (no phone-home) | `verify-empty-imports.sh` (wasm32 empty-import) | **WIRED by this change** (CI) |
