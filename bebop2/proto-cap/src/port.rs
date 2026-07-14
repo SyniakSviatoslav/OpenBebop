@@ -267,7 +267,7 @@ mod tests {
         bad_pq: bool,
     ) -> (SignedFrame, AnchorRoster) {
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
 
         let (sign_pk, sign_sk) = if bad_pq {
             bebop2_core::pq_dsa::keygen(&[0xCDu8; 32])
@@ -361,7 +361,7 @@ mod tests {
         // a validly-signed capability so the only possible failure is the port
         // scope gate (not the hybrid gate).
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
         let link = Delegation::sign(
             a_pk,
             l_pk,

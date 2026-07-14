@@ -78,6 +78,8 @@ jobs:
         run: bash scripts/ci-no-flat-scope.sh
       - name: G5 — capability-scoped red-line gate present (auth/money/secrets/migrations)
         run: bash scripts/ci-no-redline-gate.sh
+      - name: C3 — constant-seed keygen gated off in production (no arbitrary-seed mint)
+        run: bash scripts/ci-no-ungated-keygen.sh
       - name: CRDT periphery fence (money/order ⊥ CRDT-merge crate)
         run: bash scripts/ci-crdt-fence.sh
       - name: Kernel layer fence (proto-cap ⊥ dowiz-kernel)

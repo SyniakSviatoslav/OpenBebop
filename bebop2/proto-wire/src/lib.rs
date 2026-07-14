@@ -123,7 +123,7 @@ pub fn sign_frame_bound(
     // Ed25519 key above) so the two legs of the hybrid identity are independent. The
     // capability's `subject_key_pq` MUST be minted from this same `derive_pq_seed`.
     let pq_seed = bebop2_core::pq_dsa::derive_pq_seed(seed);
-    let (_pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+    let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
     frame
         .sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
         .map_err(|e| crate::error::WireError::Carrier(format!("pq sign: {e:?}")))?;

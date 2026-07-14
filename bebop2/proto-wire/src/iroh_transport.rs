@@ -394,7 +394,7 @@ mod tests {
         nonce: [u8; 8],
         expiry: u64,
     ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(leaf_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(leaf_seed);
         let cap = Capability::new_hybrid(
             *leaf_pk,
             pq_pk.bytes.clone(),

@@ -490,7 +490,7 @@ mod tests {
         // PQ half of the hybrid identity, derived from the SAME leaf seed as the
         // classical key. IMPORTANT: pq_pk (public, 1952B) goes into the cap's
         // `subject_key_pq`; pq_sk (secret, 4032B) signs — never swap them.
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(leaf_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(leaf_seed);
         let cap = Capability::new_hybrid(
             *leaf_pk,
             pq_pk.bytes.clone(),

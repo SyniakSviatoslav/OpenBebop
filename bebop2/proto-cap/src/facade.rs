@@ -213,7 +213,7 @@ mod tests {
     ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
         // Real ML-DSA-65 keypair for the leaf's PQ identity.
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
 
         // For a non-verifying PQ leg, sign with a second, unrelated PQ keypair.
         // (The structs are not Clone; derive fresh keypairs per branch.)
@@ -263,7 +263,7 @@ mod tests {
         cap_action: Action,
     ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
         let link = Delegation::sign(
             *anchor_pk,
             *leaf_pk,
@@ -317,7 +317,7 @@ mod tests {
 
         // Chain grants a WRITE subtree (Order::CreateOrder) to the leaf.
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
         let link = Delegation::sign(
             a_pk,
             l_pk,

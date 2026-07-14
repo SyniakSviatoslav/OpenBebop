@@ -320,7 +320,7 @@ mod tests {
         let (l_seed, l_pk) = key(3);
         // Consistent PQ keypair for the leaf (same key used to sign the PQ leg).
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
         let cap = Capability::new_hybrid(
             l_pk,
             pq_pk.bytes.clone(),
@@ -431,7 +431,7 @@ mod tests {
         nonce: [u8; 8],
     ) -> (SignedFrame, AnchorRoster, Vec<Delegation>, [u8; 32]) {
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
         let cap = Capability::new_hybrid(
             *leaf_pk,
             pq_pk.bytes.clone(),
@@ -612,7 +612,7 @@ mod tests {
         nonce: [u8; 8],
     ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
         let pq_seed = [0xABu8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
         let cap =
             Capability::new_hybrid(*leaf_pk, pq_pk.bytes.clone(), resource, action, nonce, 9999);
         let mut f = SignedFrame::new(cap, b"data".to_vec());

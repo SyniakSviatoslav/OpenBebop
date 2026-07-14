@@ -111,7 +111,11 @@ impl ComponentInstance {
 pub fn allowed_imports_for_scope(scope: &Scope) -> Vec<String> {
     // Scope is a SET of (Resource, Action) grants. Notify is granted iff the
     // (Order, Notify) grant is present; everything else is denied (zero ambient authority).
-    if scope.grants.iter().any(|(r, a)| *r == Resource::Order && *a == Action::Notify) {
+    if scope
+        .grants
+        .iter()
+        .any(|(r, a)| *r == Resource::Order && *a == Action::Notify)
+    {
         vec!["notify-telegram".to_string()]
     } else {
         Vec::new()
@@ -244,13 +248,19 @@ mod tests {
             vec!["notify-telegram".to_string()]
         );
         // Any other scope resolves to an EMPTY allow-set (no ambient authority).
+        assert!(allowed_imports_for_scope(&Scope::new(vec![(
+            Resource::Order,
+            Action::CreateOrder
+        )]))
+        .is_empty());
         assert!(
-            allowed_imports_for_scope(&Scope::new(vec![(Resource::Order, Action::CreateOrder)])).is_empty()
+            allowed_imports_for_scope(&Scope::new(vec![(Resource::Ledger, Action::Append)]))
+                .is_empty()
         );
         assert!(
-            allowed_imports_for_scope(&Scope::new(vec![(Resource::Ledger, Action::Append)])).is_empty()
+            allowed_imports_for_scope(&Scope::new(vec![(Resource::Route, Action::Send)]))
+                .is_empty()
         );
-        assert!(allowed_imports_for_scope(&Scope::new(vec![(Resource::Route, Action::Send)])).is_empty());
     }
 
     // R-DK03 (feature ON, real wasmtime): a component granted ONLY `Notify` that

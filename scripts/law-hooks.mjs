@@ -64,7 +64,7 @@ console.log('◆ [§9B] supply-chain gate (cargo-deny advisories/bans/licenses +
 // gate. Only the FAST ones run here (pure grep / cargo metadata); the slow
 // wasm-empty-import proof runs in CI (see .github/workflows/ci.yml sovereign-guards).
 // ---------------------------------------------------------------------------
-console.log('◆ [sovereign] no-courier-scoring · G1 wire-codec · G2 single-eventlog · G3 sync-topic · G4 scope-subset · G5 red-line-gate · crdt-fence · kernel-fence (structural invariants)');
+console.log('◆ [sovereign] no-courier-scoring · G1 wire-codec · G2 single-eventlog · G3 sync-topic · G4 scope-subset · G5 red-line-gate · C3 keygen-gate · crdt-fence · kernel-fence (structural invariants)');
 for (const [script, why] of [
   ['scripts/ci-no-courier-scoring.sh', 'a struct field names a courier/agent score/rating/rank — trust is a signed capability, never a reputation metric'],
   ['scripts/ci-crdt-fence.sh', 'a money/order crate depends on a CRDT-merge crate (MESH-08 periphery fence)'],
@@ -74,6 +74,7 @@ for (const [script, why] of [
   ['scripts/ci-no-duplicate-eventlog.sh', 'G2 — a second parallel event-log primitive appeared in bebop2 (MerkleLog is the sole sanctioned log; the dowiz-kernel MeshEvent mirror is out-of-scope via ci-kernel-fence)'],
   ['scripts/ci-no-flat-scope.sh', 'G4 — Scope/Effect reverted to flat 2-arg equality, making UCAN attenuation a no-op (must be the set-subset model)'],
   ['scripts/ci-no-redline-gate.sh', 'G5 — bebop2 lost its capability-scoped red-line (auth/money/secrets/migrations) deny gate; money/claim mutations execute with no operator brake'],
+  ['scripts/ci-no-ungated-keygen.sh', 'C3 — constant-seed keygen (pq_dsa::keygen / pq_kem::keygen_internal) is no longer gated off in production; arbitrary-seed minting re-exposed'],
 ]) {
   const r = sh('bash', [script]);
   if (r.code !== 0) hard(`${script} failed — ${why}`);

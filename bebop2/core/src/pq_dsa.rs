@@ -986,7 +986,27 @@ pub struct MlDsa65Sig {
 }
 
 /// KeyGen (FIPS 204). seed = 32 bytes.
+///
+/// **GATED** like `sign::keygen`: a constant-seed ML-DSA keygen is reachable ONLY in
+/// tests or under an explicit `dangerous_deterministic` / `test_keygen` feature. A
+/// normal (feature-off, non-test) production build CANNOT mint a key from an arbitrary
+/// 32-byte seed — this closes C3 (constant-seed keygen was previously `pub` + ungated).
+/// The legitimate production hybrid-identity path uses [`keygen_derivable`] instead.
+#[cfg(any(test, feature = "dangerous_deterministic", feature = "test_keygen"))]
 pub fn keygen(seed: &[u8; SEEDBYTES]) -> (MlDsa65Pk, MlDsa65Sk) {
+    let (pk, sk) = keygen_bytes(seed);
+    (MlDsa65Pk { bytes: pk }, MlDsa65Sk { bytes: sk })
+}
+
+/// Production-safe deterministic ML-DSA-65 keygen for the C6 hybrid identity.
+///
+/// Unlike [`keygen`] (gated off in production), this entrypoint is always available
+/// because it is intended to be called ONLY with a **domain-separated** seed produced
+/// by [`derive_pq_seed`] — never with an arbitrary/adversary-controlled seed. It is the
+/// single sanctioned constant-seed path in a production build. Same crypto as `keygen`
+/// (both wrap `keygen_bytes`); the split exists purely to remove the arbitrary-seed
+/// footgun from prod (C3).
+pub fn keygen_derivable(seed: &[u8; SEEDBYTES]) -> (MlDsa65Pk, MlDsa65Sk) {
     let (pk, sk) = keygen_bytes(seed);
     (MlDsa65Pk { bytes: pk }, MlDsa65Sk { bytes: sk })
 }
@@ -1075,7 +1095,11 @@ mod tests {
         );
 
         // (2) determinism.
-        assert_eq!(pq_seed, derive_pq_seed(&master), "derive_pq_seed not deterministic");
+        assert_eq!(
+            pq_seed,
+            derive_pq_seed(&master),
+            "derive_pq_seed not deterministic"
+        );
 
         // (3) label-bound: SHAKE256(master ‖ other-label) must differ from the real one.
         let mut other = Vec::new();
@@ -1101,7 +1125,34 @@ mod tests {
         let (pk, sk) = keygen(&pq_seed);
         let rnd = [0u8; RNDBYTES];
         let sig = sign(&sk, msg, &rnd);
-        assert!(verify(&pk, msg, &sig), "domain-separated PQ key must sign/verify");
+        assert!(
+            verify(&pk, msg, &sig),
+            "domain-separated PQ key must sign/verify"
+        );
+    }
+
+    // C3 — `keygen_derivable` (the always-available production entry) MUST be
+    // byte-identical to the gated constant-seed `keygen`. This is the proof that
+    // closing C3 (gating `keygen` off in prod) did NOT change the C6 hybrid-identity
+    // crypto: the prod path is the same keygen, just behind a named, non-footsgun entry.
+    #[test]
+    fn c3_derivable_matches_gated_keygen() {
+        let seed = [0xABu8; 32];
+        let (pk_g, sk_g) = keygen(&seed);
+        let (pk_d, sk_d) = keygen_derivable(&seed);
+        assert_eq!(
+            pk_g.bytes, pk_d.bytes,
+            "derivable pk differs from gated keygen"
+        );
+        assert_eq!(
+            sk_g.bytes, sk_d.bytes,
+            "derivable sk differs from gated keygen"
+        );
+        // And it still signs/verifies.
+        let msg = b"c3 gate equivalence probe";
+        let rnd = [0u8; RNDBYTES];
+        let sig = sign(&sk_d, msg, &rnd);
+        assert!(verify(&pk_d, msg, &sig), "derivable key must sign/verify");
     }
 
     #[test]

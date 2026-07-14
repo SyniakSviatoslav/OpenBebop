@@ -313,7 +313,7 @@ mod tests {
         let (pk, _) = bebop2_core::sign::keygen(&seed);
         // Provision a real ML-DSA-65 keypair for the subject.
         let pq_seed = [7u8; 32];
-        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&pq_seed);
         let cap = Capability::new_hybrid(
             pk,
             pq_pk.bytes.clone(),

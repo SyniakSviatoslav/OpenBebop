@@ -578,7 +578,25 @@ fn kpke_decrypt(dk_pke: &[u8], ct: &[u8; KEM768_CT_LEN]) -> [u8; 32] {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// ML-KEM.KeyGen_internal (FIPS 203 Algorithm 16) — deterministic from seeds.
+///
+/// **GATED** like `sign::keygen` / `pq_dsa::keygen`: a constant-seed ML-KEM keygen is
+/// reachable ONLY in tests or under an explicit `dangerous_deterministic` /
+/// `test_keygen` feature. A normal (feature-off, non-test) production build CANNOT
+/// mint a KEM keypair from arbitrary `d`/`z` seeds — this closes C3 for the KEM side
+/// (constant-seed keygen was previously `pub` + ungated). The legitimate production
+/// random-seed path uses [`keygen_internal_prod`] instead.
+#[cfg(any(test, feature = "dangerous_deterministic", feature = "test_keygen"))]
 pub fn keygen_internal(d: &[u8; 32], z: &[u8; 32]) -> (MlKem768Ek, MlKem768Dk) {
+    keygen_internal_prod(d, z)
+}
+
+/// Production-safe ML-KEM-768 keygen from seeds (always available).
+///
+/// Unlike [`keygen_internal`] (gated off in production), this is the sanctioned path
+/// used by the random-seed production entries [`keygen`] / [`keygen_from_entropy`].
+/// It is `pub(crate)` so the public arbitrary-seed surface stays closed in prod (C3)
+/// while the real random-seed keygen still works.
+pub(crate) fn keygen_internal_prod(d: &[u8; 32], z: &[u8; 32]) -> (MlKem768Ek, MlKem768Dk) {
     let mut ginput = [0u8; 33];
     ginput[..32].copy_from_slice(d);
     ginput[32] = K as u8; // domain separation
@@ -637,7 +655,7 @@ pub fn keygen<F: FnMut(&mut [u8])>(rng: &mut F) -> (MlKem768Ek, MlKem768Dk) {
     let mut z = [0u8; 32];
     rng(&mut d);
     rng(&mut z);
-    keygen_internal(&d, &z)
+    keygen_internal_prod(&d, &z)
 }
 
 /// Production ML-KEM-768 keygen: draw the full entropy requirement (a fresh `d` and
@@ -649,7 +667,7 @@ pub fn keygen_from_entropy() -> Result<(MlKem768Ek, MlKem768Dk), crate::rng::Ent
     let mut z = [0u8; 32];
     crate::rng::entropy_provider().fill(&mut d)?;
     crate::rng::entropy_provider().fill(&mut z)?;
-    Ok(keygen_internal(&d, &z))
+    Ok(keygen_internal_prod(&d, &z))
 }
 
 /// ML-KEM.Encaps_internal (Algorithm 17).
