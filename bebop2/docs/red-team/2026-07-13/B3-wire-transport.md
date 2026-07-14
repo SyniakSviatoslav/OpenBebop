@@ -33,7 +33,7 @@ Net posture: this is a **signed-message library, not a secure transport.** Expos
 | Plaintext "WSS" server (no TLS) | **OPEN** | `wss_transport.rs:118` wraps the raw TCP stream in `MaybeTlsStream::Plain`; `wss_transport.rs:91` dials `ws://`; `Cargo.toml` comment: *"deliberately NO native-tls … wss:// support lands with the rustls migration in a later phase."* → F1 |
 | Version field write-only / unenforced | **OPEN** | `framing::decode` (`framing.rs:38-53`) never reads `version`; `recv` (`wss_transport.rs:140-155`) never reads `env.version`. PoC `poc_envelope_version_is_not_enforced_on_decode` **passes**. → F4 |
 | DoS in framing | **PARTIAL** | 8 MiB cap (`framing.rs:19,43`) is real and checked before *app* allocation, but only *after* tungstenite has already buffered up to its 64 MiB default; no connection cap / rate limit / timeout exists. → F5/F7 |
-| iroh transport 100 % stub (returns NotConnected) | **OPEN** | `iroh_transport.rs:57/64/70/75` — all four methods `Err(WireError::NotConnected)`; `#![allow(dead_code)]` at `:21`. → F9 |
+| iroh/QUIC carrier was 100 % stub (returned NotConnected) | **CLOSED** | replaced by a real `quinn`/`rustls` QUIC carrier in `iroh_transport.rs`; two live RED tests `quic_roundtrip_signs_and_verifies` + `quic_rejects_tampered_frame` prove a signed frame round-trips over a real QUIC stream and a tampered frame is rejected. → F9 |
 | No confidentiality | **OPEN** | Direct consequence of plaintext `ws://` (F1). Payloads (`SignedFrame.payload`) are cleartext on the wire. |
 | Non-canonical serde_json on the **signed** path | **FIXED** | Signatures now commit to hand-built TLV: `Capability::canonical_bytes_tlv` (`capability.rs:86`), `SignedFrame::signing_domain` / `binding_signing_domain` (`signed_frame.rs:128-161`). serde_json survives only on the *unsigned outer envelope* (`envelope.rs:41-48`) → downgraded to informational F8. |
 | Handshake module = dead code | **OPEN** | `Handshake` struct (`handshake.rs:36`) is constructed only inside its own `new`; never sent/received. `channel_binding_hash` is used, but fed a **synthetic** transcript by the caller, never the real channel bytes. → F3 |
@@ -88,10 +88,14 @@ Net posture: this is a **signed-message library, not a secure transport.** Expos
 - **file:line:** `envelope.rs:41-48` (`to_bytes`/`from_bytes` = `serde_json`); `wss_transport.rs:130,144` (`SignedFrame` (de)serialized via `serde_json`).
 - **Evidence:** the prior "signatures over non-canonical serde_json" defect is **FIXED** — the signed path is now TLV (`capability.rs:86`, `signed_frame.rs:128-161`). The remaining serde_json is only the *unsigned* transport framing, so its malleability does not break authentication. It is still (a) at odds with the framing doc's "byte-deterministic" claim (`framing.rs:3`) and (b) a bounded JSON-parse CPU surface on attacker bytes.
 - **Fix:** move the envelope to fixed-layout too, or explicitly document it as unauthenticated framing.
+### F9 — iroh/QUIC carrier was a 100 % stub (transport-independence unproven) · **CLOSED**
 
-### F9 — iroh/QUIC carrier is a 100 % stub (transport-independence unproven) · **INFO**
-- **file:line:** `iroh_transport.rs:57,64,70,75` — all four `Transport` methods return `Err(WireError::NotConnected)`; `#![allow(dead_code)]` at `:21`.
-- **Evidence:** n = 1 real carrier, and it is the plaintext WSS one. The "carrier-agnostic behind a `Transport` trait" claim is untested against any second carrier.
+- **file:line:** previously `iroh_transport.rs:57,64,70,75` — all four `Transport` methods returned `Err(WireError::NotConnected)`; `#![allow(dead_code)]` at `:21`.
+- **Now:** the module is a real `quinn`/`rustls` (ring provider) QUIC carrier implementing the `Transport` trait. It reuses the exact SignedFrame ↔ Envelope ↔ framing pipeline as the WSS carrier, so it satisfies the same hybrid-gate / anchor-roster contract.
+- **Live evidence (cites `#[test]`):**
+  - `fn quic_roundtrip_signs_and_verifies` — two real QUIC nodes over loopback exchange an anchor-rooted hybrid (Ed25519+ML-DSA-65) signed frame; the server verifies it through `HybridGate::RequireBoth` and echoes it back; client reads the identical payload.
+  - `fn quic_rejects_tampered_frame` — a signed-then-mutated frame is rejected by the server's `recv` (hybrid gate) over the real QUIC stream.
+- **Residual ceiling (not a stub, honest limit):** the dev TLS cert is `rcgen` self-signed with an `InsecureAcceptAny` verifier — acceptable for the QUIC handshake because wire auth is the signed-frame envelope; production must swap in a real cert chain + proper verifier. This is an `innovate:` ceiling, not a P6-park.
 
 ---
 

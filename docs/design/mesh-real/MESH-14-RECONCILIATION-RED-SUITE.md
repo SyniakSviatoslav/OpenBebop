@@ -37,6 +37,8 @@ no CRDT last-writer-wins for money/order state (that is compile-fenced, see
 | MESH-11 | revocation gossip converges idempotently | `fn gossip_payload_merge_converges_idempotent` | `bebop-proto-cap` |
 | MESH-12 | self-issue rejected; genesis loader fail-closed | `fn ` node_id tests | `bebop-proto-cap` |
 | MESH-13 | ML-KEM-768 bit-exact KAT + zeroize | `fn ml_kem_external_ACVP_KAT_bit_exact` | `bebop-proto-crypto` |
+| MESH-P6 | real QUIC node-to-node carrier (was `unimplemented!()` stub) | `fn quic_roundtrip_signs_and_verifies` | `bebop-proto-wire` |
+| MESH-P6 | tampered frame rejected over real QUIC (RED) | `fn quic_rejects_tampered_frame` | `bebop-proto-wire` |
 
 Run the whole suite:
 
