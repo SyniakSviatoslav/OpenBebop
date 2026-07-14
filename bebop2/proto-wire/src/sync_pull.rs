@@ -92,6 +92,18 @@ impl SyncScope {
         [self.resource.discriminant(), self.action.discriminant()]
     }
 
+    /// Canonical inverse of [`SyncScope::to_tlv_bytes`]. Accepts ONLY the pinned
+    /// `Sync`/`Pull` discriminants `[0x0C, 0x0C]`; any other bytes → `None` (the sync
+    /// port carries exactly one scope today). Used by the canonical wire decoder.
+    pub fn from_tlv_bytes(b: &[u8; 2]) -> Option<Self> {
+        let want = SyncScope::pull().to_tlv_bytes();
+        if *b == want {
+            Some(SyncScope::pull())
+        } else {
+            None
+        }
+    }
+
     /// Map this local scope onto a proto-cap `Scope` for the `SignedFrame`
     /// capability. TEMPORARY: until MESH-03 adds `Resource::Sync` /
     /// `Action::Pull`, we map `Sync::Pull` to an existing proto-cap scope
@@ -139,6 +151,14 @@ pub struct SyncFrame {
     pub sig: Option<Vec<u8>>,
 }
 
+/// C7b canonical wire codec constants (see [`SyncFrame::to_wire_bytes`]).
+/// Fixed head = scope(2) + content_id(32) + prev(32) + actor(32) + seq(8) + payload_len(4).
+const SYNC_WIRE_FIXED_HEAD: usize = 2 + 32 + 32 + 32 + 8 + 4;
+/// Ed25519 signature width.
+const SYNC_SIG_LEN: usize = 64;
+/// Defense-in-depth bound on a decoded payload (matches the 1 MiB envelope frame cap, C7a).
+const MAX_SYNC_PAYLOAD: usize = 1 << 20;
+
 impl SyncFrame {
     /// Canonical signing domain: `prev || actor || seq_le || payload || scope`.
     /// (The `content_id` is derived from `prev||actor||seq||payload` and is
@@ -152,6 +172,118 @@ impl SyncFrame {
         buf.extend_from_slice(&self.payload);
         buf.extend_from_slice(&self.scope.to_tlv_bytes());
         buf
+    }
+
+    /// C7b — canonical, length-delimited wire encoding for the SIGNED sync path.
+    ///
+    /// Fixed-layout fields + explicit `u32` length prefixes give exactly ONE byte
+    /// representation per `SyncFrame` (injective), a bounded decode (no unbounded or
+    /// recursive parse), and no parser-differential surface — the properties a payload
+    /// carried under a signature needs, and which `serde_json` (non-canonical,
+    /// version-sensitive, lenient about trailing/whitespace/number-forms) does NOT
+    /// guarantee. Replaces `serde_json::{to_vec,from_slice}` on the signed path.
+    ///
+    /// Layout (all integers little-endian):
+    ///   scope[2] · content_id[32] · prev[32] · actor[32] · seq[8]
+    ///   · payload_len:u32 · payload[payload_len]
+    ///   · sig_present:u8 (0|1) · sig[64] (present iff sig_present == 1)
+    pub fn to_wire_bytes(&self) -> Vec<u8> {
+        // Encoder self-enforces the SAME bounds the decoder checks, so a hand-built
+        // SyncFrame (public fields, not via `sign`) can never emit a non-canonical or
+        // length-truncated image. Unreachable on every in-tree path (envelope + payload
+        // caps bite first); the asserts document + guard the invariant.
+        debug_assert!(
+            self.payload.len() <= MAX_SYNC_PAYLOAD,
+            "payload exceeds MAX_SYNC_PAYLOAD"
+        );
+        debug_assert!(
+            self.sig.as_ref().map(|s| s.len() == SYNC_SIG_LEN).unwrap_or(true),
+            "signature present but not the fixed width"
+        );
+        let mut out =
+            Vec::with_capacity(SYNC_WIRE_FIXED_HEAD + self.payload.len() + 1 + SYNC_SIG_LEN);
+        out.extend_from_slice(&self.scope.to_tlv_bytes()); // 2
+        out.extend_from_slice(&self.content_id); // 32
+        out.extend_from_slice(&self.prev); // 32
+        out.extend_from_slice(&self.actor); // 32
+        out.extend_from_slice(&self.seq.to_le_bytes()); // 8
+        out.extend_from_slice(&(self.payload.len() as u32).to_le_bytes()); // 4
+        out.extend_from_slice(&self.payload);
+        match &self.sig {
+            // A well-formed signed frame carries exactly 64 sig bytes; the decoder
+            // enforces that width, so present ⇒ 64 bytes follow the flag.
+            Some(s) => {
+                out.push(1);
+                out.extend_from_slice(s);
+            }
+            None => out.push(0),
+        }
+        out
+    }
+
+    /// Canonical inverse of [`SyncFrame::to_wire_bytes`]. Strict: any deviation from
+    /// the exact single encoding — short input, trailing bytes, an out-of-range
+    /// `sig_present` flag, a wrong signature width, an oversized `payload_len`, or a
+    /// non-`Sync/Pull` scope — is rejected as [`SyncReject::BadPayload`]. No lenient or
+    /// ambiguous parse path exists, so a signed frame has one and only one byte image.
+    pub fn from_wire_bytes(b: &[u8]) -> Result<SyncFrame, SyncReject> {
+        if b.len() < SYNC_WIRE_FIXED_HEAD {
+            return Err(SyncReject::BadPayload);
+        }
+        let mut o = 0usize;
+        let scope = SyncScope::from_tlv_bytes(&[b[0], b[1]]).ok_or(SyncReject::BadPayload)?;
+        o += 2;
+        // Fixed-width slices; `try_into` on an exact-length slice never fails here.
+        let content_id: [u8; 32] = b[o..o + 32].try_into().map_err(|_| SyncReject::BadPayload)?;
+        o += 32;
+        let prev: [u8; 32] = b[o..o + 32].try_into().map_err(|_| SyncReject::BadPayload)?;
+        o += 32;
+        let actor: [u8; 32] = b[o..o + 32].try_into().map_err(|_| SyncReject::BadPayload)?;
+        o += 32;
+        let seq = u64::from_le_bytes(b[o..o + 8].try_into().map_err(|_| SyncReject::BadPayload)?);
+        o += 8;
+        let payload_len =
+            u32::from_le_bytes(b[o..o + 4].try_into().map_err(|_| SyncReject::BadPayload)?) as usize;
+        o += 4;
+        // Bound the declared length BEFORE trusting it (defense-in-depth over the
+        // 1 MiB envelope frame cap, C7a) so a huge prefix can't drive an allocation.
+        if payload_len > MAX_SYNC_PAYLOAD {
+            return Err(SyncReject::BadPayload);
+        }
+        // Need payload + the 1-byte sig flag.
+        if b.len() < o + payload_len + 1 {
+            return Err(SyncReject::BadPayload);
+        }
+        let payload = b[o..o + payload_len].to_vec();
+        o += payload_len;
+        let sig_flag = b[o];
+        o += 1;
+        let sig = match sig_flag {
+            0 => {
+                // Canonical: no trailing bytes after an unsigned frame.
+                if b.len() != o {
+                    return Err(SyncReject::BadPayload);
+                }
+                None
+            }
+            1 => {
+                // Exactly one 64-byte signature and nothing after it.
+                if b.len() != o + SYNC_SIG_LEN {
+                    return Err(SyncReject::BadPayload);
+                }
+                Some(b[o..o + SYNC_SIG_LEN].to_vec())
+            }
+            _ => return Err(SyncReject::BadPayload),
+        };
+        Ok(SyncFrame {
+            scope,
+            content_id,
+            prev,
+            actor,
+            seq,
+            payload,
+            sig,
+        })
     }
 
     /// Derive the content-id from the event body (excludes the embedded id so a
@@ -233,7 +365,8 @@ impl SyncFrame {
         // Use seq as part of nonce so each pull frame is single-use.
         let mut cap = cap;
         cap.nonce = self.content_id[0..8].try_into().unwrap();
-        let mut frame = SignedFrame::new(cap, serde_json::to_vec(self).unwrap());
+        // C7b: sign a CANONICAL TLV encoding, not serde_json (non-canonical/lenient).
+        let mut frame = SignedFrame::new(cap, self.to_wire_bytes());
         frame.sign_classical(seed).unwrap();
         frame
     }
@@ -245,8 +378,8 @@ impl SyncFrame {
         // Real classical signature check (no anchor chain needed at this layer;
         // the carrier wraps the full HybridGate anchor-rooted RequireBoth check).
         frame.verify_classical().map_err(|_| SyncReject::Unsigned)?;
-        let sf: SyncFrame =
-            serde_json::from_slice(&frame.payload).map_err(|_| SyncReject::BadPayload)?;
+        // C7b: decode the canonical TLV (strict/bounded), not serde_json.
+        let sf = SyncFrame::from_wire_bytes(&frame.payload)?;
         sf.verify()?;
         Ok(sf)
     }
@@ -536,6 +669,65 @@ mod tests {
         let f = SyncFrame::sign(SyncScope::pull(), [0u8; 32], pk, 1, b"e1".to_vec(), &seed);
         assert!(f.verify().is_ok(), "well-formed signed frame verifies");
         assert_eq!(f.compute_content_id(), f.content_id);
+    }
+
+    // ── C7b: canonical TLV wire codec on the SIGNED path ────────────────────────────
+    // The signed payload must be a canonical, injective, bounded encoding — exactly one
+    // byte image per frame, strict decode. RED (a lenient decoder that ignores trailing
+    // bytes, or a lossy encoder): the round-trip / trailing / flag assertions fail.
+    #[test]
+    fn sync_frame_wire_is_canonical() {
+        let (seed, pk) = actor(3);
+        let f = SyncFrame::sign(SyncScope::pull(), [9u8; 32], pk, 7, b"payload-xyz".to_vec(), &seed);
+
+        // (1) round-trip is lossless and the recovered frame still verifies.
+        let wire = f.to_wire_bytes();
+        let back = SyncFrame::from_wire_bytes(&wire).expect("decode");
+        assert_eq!(back, f, "wire round-trip must be lossless");
+        assert!(back.verify().is_ok(), "decoded frame must verify");
+
+        // (2) deterministic encoding (one representation).
+        assert_eq!(wire, f.to_wire_bytes(), "encoding must be deterministic");
+
+        // (3) injective: a different frame → different bytes.
+        let g = SyncFrame::sign(SyncScope::pull(), [9u8; 32], pk, 8, b"payload-xyz".to_vec(), &seed);
+        assert_ne!(g.to_wire_bytes(), wire, "distinct frames must encode distinctly");
+
+        // (4) canonical/bounded: any deviation from the exact encoding is rejected.
+        let mut trailing = wire.clone();
+        trailing.push(0x00); // one extra byte
+        assert!(
+            matches!(SyncFrame::from_wire_bytes(&trailing), Err(SyncReject::BadPayload)),
+            "trailing bytes must be rejected (canonical: exactly one image)"
+        );
+        assert!(
+            matches!(SyncFrame::from_wire_bytes(&wire[..wire.len() - 1]), Err(SyncReject::BadPayload)),
+            "truncated input must be rejected"
+        );
+        // Flip the sig_present flag (last-but-64 byte) to an out-of-range value.
+        let mut bad_flag = wire.clone();
+        let flag_pos = wire.len() - 1 - SYNC_SIG_LEN;
+        bad_flag[flag_pos] = 2;
+        assert!(
+            matches!(SyncFrame::from_wire_bytes(&bad_flag), Err(SyncReject::BadPayload)),
+            "out-of-range sig_present flag must be rejected"
+        );
+        // Oversized payload_len (offset 2+32+32+32+8 = 106): claim > 1 MiB.
+        let mut big = wire.clone();
+        big[106..110].copy_from_slice(&((MAX_SYNC_PAYLOAD as u32) + 1).to_le_bytes());
+        assert!(
+            matches!(SyncFrame::from_wire_bytes(&big), Err(SyncReject::BadPayload)),
+            "oversized payload_len must be rejected before allocation"
+        );
+
+        // (5) an unsigned frame (sig = None) also round-trips canonically.
+        let mut unsigned = f.clone();
+        unsigned.sig = None;
+        assert_eq!(
+            SyncFrame::from_wire_bytes(&unsigned.to_wire_bytes()).unwrap(),
+            unsigned,
+            "unsigned frame round-trips"
+        );
     }
 
     #[test]
