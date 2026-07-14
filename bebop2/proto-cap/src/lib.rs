@@ -36,6 +36,7 @@ pub mod facade;
 pub mod hybrid_gate;
 pub mod matcher;
 pub mod port;
+pub mod redline; // G5 — capability-scoped red-line (auth/money/secrets/migrations) deny gate
 pub mod revocation;
 pub mod roster;
 pub mod scope;

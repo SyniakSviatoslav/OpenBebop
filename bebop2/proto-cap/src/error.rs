@@ -58,6 +58,12 @@ pub enum CapError {
     /// otherwise valid and unexpired — revocation is the missing authz control
     /// that expiry alone could never provide (MESH-11).
     Revoked,
+    /// G5 (2026-07-14): the capability's scope touches a red-line category
+    /// (auth / money / secrets / migrations) and the operator policy denied it.
+    /// Fail-closed — a validly-signed capability for a money/settlement/claim
+    /// mutation is REJECTED unless the operator has explicitly allow-listed that
+    /// exact verb-on-object. This is the red-line gate going RED.
+    RedLineViolation,
 }
 
 impl fmt::Display for CapError {
@@ -86,6 +92,9 @@ impl fmt::Display for CapError {
             }
             CapError::LockPoisoned => "replay ledger unavailable (internal fault)",
             CapError::Revoked => "capability or subject key has been revoked",
+            CapError::RedLineViolation => {
+                "capability scope touches a red-line category (auth/money/secrets/migrations) denied by operator policy"
+            }
         };
         f.write_str(s)
     }

@@ -100,6 +100,15 @@ already present in code:
   this gap's scope).
 - **G5 — No red-line gate inside bebop2.** The deny-list guard kernel is archived TS or an
   unrelated graph-physics veto in a different crate whose `bebop boot` no longer calls it.
+  **CLOSED 2026-07-14 (wave 3):** new `proto-cap/src/redline.rs` — a capability-scoped
+  `RedLineGate` over `RedLineCategory { Money, Secrets, Migrations, Auth }` with a
+  `RedLinePolicy::{DenyByDefault, AllowList}`. Wired into `HybridGate::new_redlined` so a
+  validly-signed money/settlement/claim capability is REJECTED (`CapError::RedLineViolation`)
+  unless the operator explicitly allow-lists that verb-on-object. Proven RED by
+  `g5_*` tests (a real signed settlement frame verifies on the unarmed gate but is rejected
+  on the armed deny-by-default gate) + `ci-no-redline-gate.sh`. The gate is unarmed by
+  default in `HybridGate::new` (backward-compatible with crypto/chain tests); production
+  MUST construct via `new_redlined`.
 - **G6 — Sovereignty guards existed but were not enforced.** `ci-no-courier-scoring.sh`,
   `verify-empty-imports.sh`, `ci-crdt-fence.sh`, `ci-kernel-fence.sh`, `ci-claim-live-test.sh`
   were a *manual* RED-suite (per `docs/design/mesh-real/MESH-14-RECONCILIATION-RED-SUITE.md`),
@@ -120,7 +129,9 @@ already present in code:
 | No reputation/scoring/blacklist of movers | `ci-no-courier-scoring.sh` (scoped to the mesh/trust layer; `bebop2/core/` math excluded) | **WIRED by this change** (law-hooks + CI); RED-proven (G7 closed 2026-07-14) |
 | Canonical schema-on-write on the wire (no serde_json SignedFrame) | `ci-no-serde-json-wire.sh` | **WIRED by wave-1 (2026-07-14)** (law-hooks + CI); RED-proven; G1 CLOSED |
 | Scope/Effect attenuation is a real set-subset (no flat equality) | `ci-no-flat-scope.sh` | **WIRED by wave-2 (2026-07-14)** (law-hooks + CI); RED-proven; G4 CLOSED |
+| Red-line gate inside bebop2 (auth/money/secrets/migrations deny) | `ci-no-redline-gate.sh` | **WIRED by wave-3 (2026-07-14)** (law-hooks + CI); RED-proven; G5 CLOSED |
 | Sovereign core reaches no clock/RNG/socket (no phone-home) | `verify-empty-imports.sh` (wasm32 empty-import) | **WIRED by this change** (CI) |
+| Sovereign core reaches n° k/n threshold signature | `ci-kernel-fence.sh` (layer purity) | by design (proto-cap ⊥ kernel) |
 | Money/order code never depends on a CRDT-merge crate | `ci-crdt-fence.sh` | **WIRED by this change** (law-hooks + CI) |
 | `proto-cap` never depends on `dowiz-kernel` (layer purity) | `ci-kernel-fence.sh` | **WIRED by this change** (law-hooks + CI) |
 | A "DONE/CLOSED" mesh claim must cite a live test | `ci-claim-live-test.sh` (scans `docs/design/mesh-real/*.md` only) | **WIRED by this change** (CI) |

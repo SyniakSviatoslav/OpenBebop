@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 
 use crate::error::{CapError, CapResult};
+use crate::redline::{RedLineGate, RedLinePolicy};
 use crate::revocation::{pq_key_id, revocation_hash, RevocationSet};
 use crate::roster::{verify_chain, AnchorRoster, Delegation};
 use crate::signed_frame::SignedFrame;
@@ -57,17 +58,46 @@ const MAX_SEEN_NONCES: usize = 1 << 20; // ~1M; ~8 MiB worst case, then pruned.
 #[derive(Debug)]
 pub struct HybridGate {
     pub policy: HybridPolicy,
+    /// G5 (2026-07-14): optional red-line policy. `None` = gate unarmed
+    /// (backward-compatible with existing crypto/chain tests that exercise
+    /// order/ledger flows in isolation). Production MUST arm it via
+    /// [`HybridGate::new_redlined`] — deny-by-default.
+    redline: Option<RedLinePolicy>,
     /// Nonces already accepted this gate's lifetime. Dup = replay.
     seen: Mutex<HashSet<[u8; 8]>>,
 }
 
 impl HybridGate {
-    /// Build a gate with the given policy.
+    /// Build a gate with the given policy. The red-line gate is UNARMED here
+    /// (backward-compatible: existing crypto/chain/revocation tests exercise
+    /// order/ledger flows in isolation and must stay green). To enforce the
+    /// red-line policy in production, use [`HybridGate::new_redlined`].
     pub fn new(policy: HybridPolicy) -> Self {
         HybridGate {
             policy,
+            redline: None,
             seen: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Build a gate with the red-line policy ARMED. `RedLinePolicy::DenyByDefault`
+    /// rejects any capability whose scope touches auth/money/secrets/migrations
+    /// unless explicitly allow-listed; `RedLinePolicy::AllowList` narrows to the
+    /// operator-enumerated verbs-on-objects. Production MUST use this constructor
+    /// — the red-line gate is the missing brake on validly-signed money/claim
+    /// mutations (blueprint gap G5).
+    pub fn new_redlined(policy: HybridPolicy, redline: RedLinePolicy) -> Self {
+        HybridGate {
+            policy,
+            redline: Some(redline),
+            seen: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// The currently-armed red-line policy (if any). Used by tests/operators to
+    /// inspect gate configuration.
+    pub fn redline_policy(&self) -> Option<&RedLinePolicy> {
+        self.redline.as_ref()
     }
 
     /// Check a frame against the policy. `now` is the caller-supplied tick used
@@ -110,6 +140,18 @@ impl HybridGate {
         // enrolled anchor and satisfy the UCAN-subset lattice. Fail-closed:
         // an empty/absent chain or a non-anchor root is UnknownIssuer.
         verify_chain(roster, chain, &frame.capability, now)?;
+
+        // G5 red-line gate (armed only when the gate was built via
+        // `new_redlined`). Runs AFTER the chain verifies (so we never burn a
+        // nonce on an unauthenticated frame) but BEFORE replay/revocation —
+        // a red-line capability must be rejected regardless of signature
+        // validity. Deny-by-default: a validly-signed money/claim/secrets/
+        // migrations scope is REJECTED unless the operator allow-listed it.
+        if let Some(rl) = &self.redline {
+            if let Err(_cat) = RedLineGate::check(&frame.capability.scope, rl) {
+                return Err(CapError::RedLineViolation);
+            }
+        }
 
         // Revocation (MESH-11) — checked AFTER the chain verifies so we never
         // burn a nonce on a frame that fails auth. A revoked capability/key is
@@ -553,5 +595,127 @@ mod tests {
                 .is_ok(),
             "a failed-auth frame must not burn the nonce (H2 verify-then-record)"
         );
+    }
+
+    // ── G5 (2026-07-14): red-line gate goes RED ──
+    // Build a fully-valid (anchored, signed, unexpired) frame whose capability
+    // scope is a RED-LINE verb (money settlement). The chain + signatures are
+    // REAL and would verify on their own — the only thing rejecting it is the
+    // red-line policy. This proves the brake is live, not decorative.
+    fn redline_frame(
+        anchor_seed: &[u8; 32],
+        anchor_pk: &[u8; 32],
+        leaf_seed: &[u8; 32],
+        leaf_pk: &[u8; 32],
+        resource: Resource,
+        action: Action,
+        nonce: [u8; 8],
+    ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
+        let pq_seed = [0xABu8; 32];
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen(&pq_seed);
+        let cap =
+            Capability::new_hybrid(*leaf_pk, pq_pk.bytes.clone(), resource, action, nonce, 9999);
+        let mut f = SignedFrame::new(cap, b"data".to_vec());
+        f.sign_classical(leaf_seed).unwrap();
+        f.sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
+            .unwrap();
+        let link = Delegation::sign(
+            *anchor_pk,
+            *leaf_pk,
+            Scope::single(resource, action),
+            Effect::single(resource, action),
+            9999,
+            nonce,
+            anchor_seed,
+        )
+        .unwrap();
+        let mut roster = AnchorRoster::new();
+        roster.enroll(anchor_pk);
+        (f, roster, vec![link])
+    }
+
+    #[test]
+    fn g5_deny_by_default_rejects_red_line_capability() {
+        let (a_seed, a_pk) = key(60);
+        let (l_seed, l_pk) = key(61);
+        let (f, roster, chain) = redline_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Ledger,
+            Action::SettlementRecorded,
+            [60u8; 8],
+        );
+        // Unarmed gate: the frame verifies (crypto/chain are sound).
+        let unarmed = HybridGate::new(HybridPolicy::RequireBoth);
+        assert!(unarmed
+            .check(&f, &roster, &chain, &RevocationSet::new(), 0)
+            .is_ok());
+        // Armed, deny-by-default: the SAME frame is REJECTED (gate goes RED).
+        let armed =
+            HybridGate::new_redlined(HybridPolicy::RequireBoth, RedLinePolicy::DenyByDefault);
+        assert!(matches!(
+            armed.check(&f, &roster, &chain, &RevocationSet::new(), 0),
+            Err(CapError::RedLineViolation)
+        ));
+    }
+
+    #[test]
+    fn g5_allow_list_narrows_precisely_through_gate() {
+        let (a_seed, a_pk) = key(62);
+        let (l_seed, l_pk) = key(63);
+        let (settle, roster, chain) = redline_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Ledger,
+            Action::SettlementRecorded,
+            [62u8; 8],
+        );
+        let (create, _, chain2) = redline_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Order,
+            Action::CreateOrder,
+            [63u8; 8],
+        );
+        let armed = HybridGate::new_redlined(
+            HybridPolicy::RequireBoth,
+            RedLinePolicy::AllowList(vec![Scope::single(
+                Resource::Ledger,
+                Action::SettlementRecorded,
+            )]),
+        );
+        assert!(armed
+            .check(&settle, &roster, &chain, &RevocationSet::new(), 0)
+            .is_ok());
+        assert!(matches!(
+            armed.check(&create, &roster, &chain2, &RevocationSet::new(), 0),
+            Err(CapError::RedLineViolation)
+        ));
+    }
+
+    #[test]
+    fn g5_clean_capability_passes_armed_gate() {
+        let (a_seed, a_pk) = key(64);
+        let (l_seed, l_pk) = key(65);
+        let (f, roster, chain) = redline_frame(
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [64u8; 8],
+        );
+        let armed =
+            HybridGate::new_redlined(HybridPolicy::RequireBoth, RedLinePolicy::DenyByDefault);
+        assert!(armed
+            .check(&f, &roster, &chain, &RevocationSet::new(), 0)
+            .is_ok());
     }
 }
