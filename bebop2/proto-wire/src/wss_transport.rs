@@ -221,7 +221,8 @@ impl WssTransport {
     /// this is a client-side TLS session. Test-only accessor: lets a test assert which
     /// certificate the SERVER actually presented — so a routing bug that served the
     /// self-signed dev cert instead of the operator cert goes RED end-to-end.
-    #[cfg(test)]
+    /// (Its only caller is the insecure-tls-gated roundtrip test, so gate to match.)
+    #[cfg(all(test, feature = "insecure-tls"))]
     pub(crate) fn peer_leaf_cert_der(&self) -> Option<Vec<u8>> {
         match self.ws.get_ref() {
             WssStream::ClientTls(s) => s
@@ -527,6 +528,9 @@ mod tests {
     }
 
     /// Same as `run_server` but accepts over real rustls TLS (self-signed cert) — the `wss://` path.
+    /// Only its self-signed handshake test is insecure-tls-gated, so gate the helper to match
+    /// (otherwise it is dead code under `--no-default-features`).
+    #[cfg(feature = "insecure-tls")]
     async fn run_server_tls<F, Fut>(
         addr: String,
         roster: AnchorRoster,
@@ -575,6 +579,37 @@ mod tests {
         assert!(
             res.is_err(),
             "hardened webpki-roots verifier MUST reject the self-signed server cert"
+        );
+        let _ = server.await;
+    }
+
+    // Hardened build ONLY: exercise the PRODUCTION client config (`client_rustls_config`
+    // with `insecure-tls` OFF = webpki-roots) — the exact verifier `WssTransport::connect`
+    // and the QUIC client use — and assert it REJECTS a self-signed server cert. Closes the
+    // gap that `hardened_verifier_rejects_self_signed_cert` builds its OWN inline config: a
+    // regression flipping `client_rustls_config`'s hardened branch to accept-any goes RED here.
+    #[cfg(not(feature = "insecure-tls"))]
+    #[tokio::test]
+    async fn production_client_config_rejects_self_signed() {
+        let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+        let (tx, rx) = oneshot::channel();
+        let saddr = addr.to_string();
+        let server = tokio::spawn(async move {
+            let _ = tx.send(());
+            let _ = WssTransport::accept(&WssEndpoint::ListenTls(saddr)).await;
+        });
+        rx.await.unwrap();
+        let cfg = crate::iroh_transport::client_rustls_config(); // real production verifier
+        let tcp = TcpStream::connect(addr).await.unwrap();
+        let dns = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let res = TlsConnector::from(std::sync::Arc::new(cfg))
+            .connect(dns, tcp)
+            .await;
+        assert!(
+            res.is_err(),
+            "production client_rustls_config (hardened) MUST reject a self-signed server cert"
         );
         let _ = server.await;
     }
@@ -711,6 +746,9 @@ mod tests {
         server.await.unwrap();
     }
 
+    // Requires the accept-any client to complete a handshake against the self-signed dev cert;
+    // hardened (`--no-default-features`) correctly rejects it (see hardened_verifier_...).
+    #[cfg(feature = "insecure-tls")]
     #[tokio::test]
     async fn wss_tls_handshake_roundtrip() {
         // C5 PROOF (not compile-only): a REAL wss:// handshake end-to-end. The server does a rustls

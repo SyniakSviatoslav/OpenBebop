@@ -304,12 +304,18 @@ pub mod kalman; // Kalman filter (trajectory integrals, not vector math)
 pub mod lyapunov; // Lyapunov derivative (stability, not ad-hoc vectors)
 #[cfg(feature = "host")]
 pub mod resonator;
+// `speedometer` uses `std::time::Instant` + `f64::log2` (both std-only), so it is gated to
+// the `std` build — the pure no_std crypto core never benchmarks. (No non-std caller exists.)
+#[cfg(feature = "std")]
 pub mod speedometer; // zero-dep bench + entropy gauge (benchmark-as-speedometer invariant)
-                     // NOTE: `linalg` is intentionally NOT gated behind `feature = "host"`. It is plain
+                     // `linalg` is intentionally NOT gated behind `feature = "host"`. It is plain
                      // `f64` + `alloc` (no `crate::math`, no `crate::fft`), so it stays reachable from
                      // `bebop_proto_cap`, which compiles `bebop2-core` with `default-features = false,
-                     // features = ["std", "test_keygen"]` (no `host`). It is the ONE authoritative
-                     // eigensolver — the dual-authority hazard kill.
+                     // features = ["std", "test_keygen"]` (no `host`). It uses `f64::hypot` (a std
+                     // method), so it is available whenever `std` OR `host` is on, and excluded ONLY
+                     // from the pure no_std crypto build. It is the ONE authoritative eigensolver —
+                     // the dual-authority hazard kill.
+#[cfg(any(feature = "std", feature = "host"))]
 pub mod linalg; // the single authoritative eigensolver (Faddeev-LeVerrier + Durand-Kerner)
 #[cfg(feature = "host")]
 pub mod vsa; // vector symbolic archive (hyperplane bundling, not dense matrices) // closed-loop controller: generate→reflect→supervise, Lyapunov freeze, rollback-to-best

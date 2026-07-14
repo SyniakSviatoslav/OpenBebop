@@ -435,6 +435,9 @@ mod tests {
     /// frame: client sends an anchor-rooted hybrid frame, server verifies it
     /// through the RequireBoth gate and echoes it back. Proves the QUIC carrier
     /// is no longer a stub — it moves signed frames over a real QUIC stream.
+    // Uses the accept-any client against a self-signed QUIC server cert; hardened
+    // (`--no-default-features`) rejects the untrusted cert, so this is insecure-tls-only.
+    #[cfg(feature = "insecure-tls")]
     #[tokio::test]
     async fn quic_roundtrip_signs_and_verifies() {
         let _lock = QUIC_PORT_LOCK.lock().await;
@@ -481,6 +484,9 @@ mod tests {
 
     /// RED over the REAL QUIC carrier: a tampered frame (signed, then payload
     /// mutated) MUST be rejected by the server's recv (hybrid gate).
+    // Accept-any client against a self-signed QUIC server cert (insecure-tls-only); the
+    // tamper-rejection property it proves is independent of the TLS verifier.
+    #[cfg(feature = "insecure-tls")]
     #[tokio::test]
     async fn quic_rejects_tampered_frame() {
         let _lock = QUIC_PORT_LOCK.lock().await;

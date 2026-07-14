@@ -28,3 +28,23 @@ jobs:
         run: node scripts/verify-doc-claims.mjs
       - name: Falsifiable-proof guardrail (every test can go RED)
         run: node scripts/guardrail-falsifiable-proof.mjs
+
+  # Hardened / sovereign build: proves the crates compile + pass on the --no-default-features
+  # path (no_std crypto core for wasm32, hardened webpki TLS client), which the default build
+  # never exercises. A regression that reaches for std / an accept-any TLS shim fails HERE.
+  rust-hardened:
+    name: Rust hardened (--no-default-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain + wasm32 target
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+      - name: Crypto crates — default-features tests (C8/C4/C6/C7b + operator-cert)
+        run: cargo test -p bebop2-core -p bebop-proto-wire
+      - name: bebop2-core — pure no_std build (empty-import wasm32, --no-default-features)
+        run: cargo build -p bebop2-core --no-default-features --target wasm32-unknown-unknown
+      - name: proto-wire — hardened TLS test (--no-default-features; webpki rejects self-signed)
+        run: cargo test -p bebop-proto-wire --no-default-features
