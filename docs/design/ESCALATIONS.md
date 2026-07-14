@@ -14,7 +14,7 @@ operator or a designated user) fills the `Resolution` field.
 - Never delete an `OPEN` entry to make the gate green.
 
 <!-- LOGIC-GATE:OPEN-ITEMS (regenerated each run; do not edit by hand) -->
-## Open escalations (18) — human arbiter required
+## Open escalations (22) — human arbiter required
 
 - **ESC-b259452574aa** [unbacked] `README.md:38` — - **Narration + looks** — `bebop init` picks a voice (bebop / plain / sarcastic / corporate-killer)
   - Arbiter: operator · Status: OPEN
@@ -51,6 +51,14 @@ operator or a designated user) fills the `Resolution` field.
 - **ESC-abbd6a9a76e1** [unbacked] `README.md:140` — | **zkVM `decide()` journal** | Every admitted command gets a tamper-evident digest over `(state, commandHash, seq)`. On by default at the kernel gate. Replay-verifiable. **Scope:** detects *accidenta
   - Arbiter: operator · Status: OPEN
 - **ESC-864e6017dfd1** [unbacked] `README.md:143` — | **Optical field recall** | SVETlANNa/Meep optical primitive re-ranks `recall` candidates by field correlation, behind `opts.opticalRecall`. Advisory only — graph score dominates. | LIVE (knowledge.t
+  - Arbiter: operator · Status: OPEN
+- **ESC-e5c9a57b91a8** [unbacked] `AGENTS.md:62` —   comparison proves it genuinely better on the merits.**
+  - Arbiter: operator · Status: OPEN
+- **ESC-642ce1eb9f7f** [unbacked] `AGENTS.md:82` —    decisions, and ground-truth facts to the canonical corpus. Source of truth = the corpus, not chat.
+  - Arbiter: operator · Status: OPEN
+- **ESC-e3ca8e9e19ca** [unbacked] `AGENTS.md:84` —    decisions, and ground-truth facts to the canonical corpus. Source of truth = the corpus, not chat.
+  - Arbiter: operator · Status: OPEN
+- **ESC-15a5ee2d58e0** [unbacked] `AGENTS.md:95` —    decisions, and ground-truth facts to the canonical corpus. Source of truth = the corpus, not chat.
   - Arbiter: operator · Status: OPEN
 
 ## Resolved (0)
