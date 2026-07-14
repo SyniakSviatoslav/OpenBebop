@@ -70,7 +70,10 @@ mod tests {
         assert!((cosine_similarity(&a, &c) + 1.0).abs() < 1e-12);
         assert!(cosine_similarity(&orth, &orth2).abs() < 1e-12);
         let big = [10.0, 20.0, 30.0];
-        assert!((cosine_similarity(&a, &big) - 1.0).abs() < 1e-12, "norm-invariant");
+        assert!(
+            (cosine_similarity(&a, &big) - 1.0).abs() < 1e-12,
+            "norm-invariant"
+        );
     }
 
     #[test]

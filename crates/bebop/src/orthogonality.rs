@@ -232,10 +232,7 @@ mod tests {
             "style-sensitive critic must flip: flip_rate={fr}"
         );
         let rho = style_correlation(&critic, &x, &paraphrases, &q);
-        assert!(
-            rho.abs() > TAU_ORTH,
-            "ρ_gc should exceed τ_orth: {rho}"
-        );
+        assert!(rho.abs() > TAU_ORTH, "ρ_gc should exceed τ_orth: {rho}");
     }
 
     // ── Orthogonality GREEN: reference-term rubric → flip_rate ≈ 0 ─────────────────
@@ -257,10 +254,7 @@ mod tests {
             "reference rubric must be style-invariant: flip_rate={fr}"
         );
         let rho = style_correlation(&critic, &x, &paraphrases, &q);
-        assert!(
-            rho.abs() <= TAU_ORTH,
-            "ρ_gc must be ≤ τ_orth: {rho}"
-        );
+        assert!(rho.abs() <= TAU_ORTH, "ρ_gc must be ≤ τ_orth: {rho}");
     }
 
     // ── e_⊥ reuse of algebra::project ──────────────────────────────────────────────
@@ -271,7 +265,10 @@ mod tests {
         let e_perp = orthogonalize_style(&style, &content);
         // proj of style onto content = [1,0,0]; residual = [0,1,0].
         assert!(e_perp[0].abs() < 1e-9, "residual has no content component");
-        assert!((e_perp[1] - 1.0).abs() < 1e-9, "residual keeps style component");
+        assert!(
+            (e_perp[1] - 1.0).abs() < 1e-9,
+            "residual keeps style component"
+        );
         assert!(
             style_content_alignment(&e_perp, &content).abs() < 1e-9,
             "residual ⊥ content"
@@ -307,7 +304,9 @@ mod tests {
     #[test]
     fn goodhart_green_correlated_with_noise() {
         let inc = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
-        let noise = [0.02, -0.01, 0.03, -0.02, 0.01, -0.03, 0.02, -0.01, 0.03, -0.02];
+        let noise = [
+            0.02, -0.01, 0.03, -0.02, 0.01, -0.03, 0.02, -0.01, 0.03, -0.02,
+        ];
         let mut s = Vec::new();
         let mut q = Vec::new();
         let mut cs = 0.0f64;
@@ -324,6 +323,10 @@ mod tests {
             "q≈s+noise must NOT alarm (r_lower={}, r_hat={})",
             alarm.r_lower, alarm.r_hat
         );
-        assert!(alarm.r_hat > 0.9, "r_hat should exceed 0.9: {}", alarm.r_hat);
+        assert!(
+            alarm.r_hat > 0.9,
+            "r_hat should exceed 0.9: {}",
+            alarm.r_hat
+        );
     }
 }

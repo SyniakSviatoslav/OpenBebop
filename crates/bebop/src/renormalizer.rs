@@ -42,20 +42,61 @@ use std::collections::HashSet;
 /// the claim set (GREEN), while a rewrite that touches any non-filler token
 /// breaks equality (RED).
 pub const FILLER: &[&str] = &[
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "and", "or", "of", "to",
-    "in", "on", "at", "for", "with", "very", "really", "just", "basically", "um", "uh", "like",
-    "so", "well", "you", "know", "etc", "please", "kindly", "we", "our", "i", "it", "that", "this",
-    "as", "by", "from", "but", "not", // NOTE: "not" is filler here ONLY for the *default* pipeline;
-    // a real deployment that treats negation as a claim should pull it out of
-    // this list. The RED tests build a *custom* cheat rewrite that removes a
-    // content-bearing token, independent of this list, to prove the gate fires.
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "and",
+    "or",
+    "of",
+    "to",
+    "in",
+    "on",
+    "at",
+    "for",
+    "with",
+    "very",
+    "really",
+    "just",
+    "basically",
+    "um",
+    "uh",
+    "like",
+    "so",
+    "well",
+    "you",
+    "know",
+    "etc",
+    "please",
+    "kindly",
+    "we",
+    "our",
+    "i",
+    "it",
+    "that",
+    "this",
+    "as",
+    "by",
+    "from",
+    "but",
+    "not", // NOTE: "not" is filler here ONLY for the *default* pipeline;
+           // a real deployment that treats negation as a claim should pull it out of
+           // this list. The RED tests build a *custom* cheat rewrite that removes a
+           // content-bearing token, independent of this list, to prove the gate fires.
 ];
 
 /// Normalize a single whitespace-delimited token to its alpha-numeric core
 /// (lowercased, punctuation stripped). Used by both the default extractor and
 /// the default rewrite so they agree on what a "word" is.
 fn core_token(w: &str) -> String {
-    w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()
+    w.trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
 }
 
 /// Default deterministic claim extractor: the set of *non-filler* content
@@ -202,10 +243,7 @@ mod tests {
                 assert!(output.len() < x.len(), "L must strictly decrease");
                 assert!(*dh_out > 0, "ΔH_out must be credited (>0)");
                 // And the saved entropy equals L(x) − L(x') by construction.
-                assert_eq!(
-                    *dh_out,
-                    delta_h_out(x.as_bytes(), output.as_bytes())
-                );
+                assert_eq!(*dh_out, delta_h_out(x.as_bytes(), output.as_bytes()));
             }
             other => panic!("expected Compressed, got {other:?}"),
         }
@@ -217,18 +255,18 @@ mod tests {
         };
         let mut b = EntropyBudget::new(100_000);
         b.step(0, 0).unwrap(); // baseline debt 0
-        // Seed some debt to observe the credit.
+                               // Seed some debt to observe the credit.
         b.step(dh_out + 200, 0).unwrap();
         let before = b.debt();
-        let r2 = renorm_and_credit(x, default_rewrite, default_claims_extract, &mut b, "g1")
-            .unwrap();
+        let r2 =
+            renorm_and_credit(x, default_rewrite, default_claims_extract, &mut b, "g1").unwrap();
         assert!(matches!(r2, RenormResult::Compressed { .. }));
         assert_eq!(b.debt(), before - dh_out, "budget credited by ΔH_out");
         assert!(b.invariant_holds());
 
         // Idempotent replay of the SAME id does not re-credit.
-        let r3 = renorm_and_credit(x, default_rewrite, default_claims_extract, &mut b, "g1")
-            .unwrap();
+        let r3 =
+            renorm_and_credit(x, default_rewrite, default_claims_extract, &mut b, "g1").unwrap();
         assert!(matches!(r3, RenormResult::Compressed { .. }));
         assert_eq!(b.debt(), before - dh_out, "replay must not double-credit");
     }
@@ -264,7 +302,9 @@ mod tests {
                 assert_eq!(output, x, "rollback returns the ORIGINAL text");
                 assert_ne!(*output, xp, "the cheating rewrite is discarded");
             }
-            other => panic!("expected RolledBack, got {other:?} — gate FAILED to reject a claim-dropping cheat"),
+            other => panic!(
+                "expected RolledBack, got {other:?} — gate FAILED to reject a claim-dropping cheat"
+            ),
         }
 
         // Budget is left UNCHANGED (no credit for a rejected renormalization).
@@ -294,12 +334,17 @@ mod tests {
             RenormResult::RolledBack { output } => {
                 assert_eq!(output, x, "hallucinating rewrite is rolled back to x");
             }
-            other => panic!("expected RolledBack, got {other:?} — gate FAILED to reject hallucination"),
+            other => {
+                panic!("expected RolledBack, got {other:?} — gate FAILED to reject hallucination")
+            }
         }
 
         let c1 = default_claims_extract(&cheat(x));
         let c0 = default_claims_extract(x);
-        assert!(c1.is_superset(&c0) && c1 != c0, "cheat is a proper superset (⊋)");
+        assert!(
+            c1.is_superset(&c0) && c1 != c0,
+            "cheat is a proper superset (⊋)"
+        );
     }
 
     // ---------------------------------------------------------------------

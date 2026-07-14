@@ -50,7 +50,12 @@ static ACCUM: std::sync::Mutex<(usize, Vec<f64>)> = std::sync::Mutex::new((0usiz
 /// Upload a CSR adjacency (A, undirected treated as L=D-A) of an n-node graph.
 /// `row_ptr` has n+1 entries, `col_idx` has nnz entries. Returns 0 on success.
 #[no_mangle]
-pub unsafe extern "C" fn field_build(row_ptr: *const i32, col_idx: *const i32, nnz: i32, n: i32) -> i32 {
+pub unsafe extern "C" fn field_build(
+    row_ptr: *const i32,
+    col_idx: *const i32,
+    nnz: i32,
+    n: i32,
+) -> i32 {
     if n <= 0 || nnz < 0 {
         return 1;
     }
@@ -1030,7 +1035,13 @@ mod tests {
     /// GREEN: sinc(0) = 1 (removable singularity, L'Hôpital), sinc(π) = 0.
     #[test]
     fn test_sinc_singularity_and_zero() {
-        assert!((unsafe { sinc(0.0) } - 1.0).abs() < 1e-12, "sinc(0)=1 by limit");
-        assert!((unsafe { sinc(core::f64::consts::PI) }).abs() < 1e-12, "sinc(π)=0");
+        assert!(
+            (unsafe { sinc(0.0) } - 1.0).abs() < 1e-12,
+            "sinc(0)=1 by limit"
+        );
+        assert!(
+            (unsafe { sinc(core::f64::consts::PI) }).abs() < 1e-12,
+            "sinc(π)=0"
+        );
     }
 }
