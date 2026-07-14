@@ -11,13 +11,13 @@
 //! moves signed frames; it never grades the mover.
 
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::tungstenite::Message;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, client_async, WebSocketStream};
 
 use bebop_proto_cap::roster::AnchorRoster;
@@ -38,7 +38,11 @@ pub(crate) enum WssStream {
 }
 
 impl AsyncRead for WssStream {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
             WssStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
             WssStream::ClientTls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
@@ -47,7 +51,11 @@ impl AsyncRead for WssStream {
     }
 }
 impl AsyncWrite for WssStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, b: &[u8]) -> Poll<std::io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        b: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
         match self.get_mut() {
             WssStream::Plain(s) => Pin::new(s).poll_write(cx, b),
             WssStream::ClientTls(s) => Pin::new(s.as_mut()).poll_write(cx, b),
@@ -296,7 +304,8 @@ impl Transport for WssTransport {
         // `insecure-tls`). `ws://` stays plaintext (loopback tests). The server side is symmetric
         // (see `accept` + `ListenTls`), so a real `wss://` connection now completes end-to-end.
         let stream = if secure {
-            let connector = TlsConnector::from(Arc::new(crate::iroh_transport::client_rustls_config()));
+            let connector =
+                TlsConnector::from(Arc::new(crate::iroh_transport::client_rustls_config()));
             let dns = rustls::pki_types::ServerName::try_from(host.clone())
                 .map_err(|e| WireError::HandshakeRejected(format!("bad server name: {e}")))?;
             WssStream::ClientTls(Box::new(
@@ -392,9 +401,9 @@ impl Transport for WssTransport {
     }
 
     async fn send(&mut self, frame: SignedFrame) -> WireResult<()> {
-        // Frame the signed frame: serialize the SignedFrame, wrap in an Envelope,
-        // then length-prefix it for the carrier.
-        let inner = serde_json::to_vec(&frame)?;
+        // G1 (2026-07-14): canonical binary codec replaces serde_json — bytes are
+        // now fixed-layout and re-encodable cross-implementation (see wire_codec).
+        let inner = crate::wire_codec::encode_frame(&frame)?;
         let envelope = crate::envelope::Envelope::new([0u8; 16], inner);
         let bytes = framing::encode(&envelope)?;
         self.ws
@@ -408,7 +417,8 @@ impl Transport for WssTransport {
         loop {
             // Try to decode a complete envelope from the buffer first.
             if let Some(env) = framing::decode(&mut self.buf)? {
-                let frame: SignedFrame = serde_json::from_slice(&env.payload)?;
+                // G1 (2026-07-14): decode the canonical wire codec, not serde_json.
+                let frame: SignedFrame = crate::wire_codec::decode_frame(&env.payload)?;
                 // Verify the capability through the hybrid gate: anchor-rooted
                 // delegation chain (root-of-trust) + real classical sig + replay
                 // + expiry. `now` is the REAL wall-clock tick (not hardcoded 0),
@@ -575,7 +585,9 @@ mod tests {
         .with_no_client_auth();
         let tcp = TcpStream::connect(addr).await.unwrap();
         let dns = rustls::pki_types::ServerName::try_from("localhost").unwrap();
-        let res = TlsConnector::from(std::sync::Arc::new(cfg)).connect(dns, tcp).await;
+        let res = TlsConnector::from(std::sync::Arc::new(cfg))
+            .connect(dns, tcp)
+            .await;
         assert!(
             res.is_err(),
             "hardened webpki-roots verifier MUST reject the self-signed server cert"
@@ -700,7 +712,14 @@ mod tests {
         let (a_seed, a_pk) = key(2);
         let (l_seed, l_pk) = key(3);
         let (frame, roster, chain) = anchored_frame(
-            &a_seed, &a_pk, &l_seed, &l_pk, Resource::Route, Action::Send, [7u8; 8], 9_999_999_999,
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [7u8; 8],
+            9_999_999_999,
         );
 
         let (tx, rx) = oneshot::channel();
@@ -762,7 +781,14 @@ mod tests {
         let (a_seed, a_pk) = key(2);
         let (l_seed, l_pk) = key(3);
         let (frame, roster, chain) = anchored_frame(
-            &a_seed, &a_pk, &l_seed, &l_pk, Resource::Route, Action::Send, [7u8; 8], 9_999_999_999,
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [7u8; 8],
+            9_999_999_999,
         );
 
         let (tx, rx) = oneshot::channel();

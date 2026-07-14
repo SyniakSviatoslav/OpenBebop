@@ -113,9 +113,7 @@ impl QuicTransport {
     /// is the signed-frame envelope, not x509). No openssl-sys involved.
     fn server_crypto() -> QuicServerConfig {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            cert.signing_key.serialize_der(),
-        ));
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()));
         let cert_der = CertificateDer::from(cert.cert.der().to_vec());
         let mut sc = rustls::ServerConfig::builder()
             .with_no_client_auth()
@@ -242,9 +240,8 @@ impl Transport for QuicTransport {
             .and_then(|mut i| i.next())
             .ok_or_else(|| WireError::HandshakeRejected(format!("bad dial addr: {addr}")))?;
 
-        let mut endpoint =
-            Endpoint::client("127.0.0.1:0".parse().unwrap())
-                .map_err(|e| WireError::Carrier(e.to_string()))?;
+        let mut endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())
+            .map_err(|e| WireError::Carrier(e.to_string()))?;
         endpoint.set_default_client_config(Self::client_crypto());
 
         let conn = endpoint
@@ -320,7 +317,8 @@ impl Transport for QuicTransport {
     }
 
     async fn send(&mut self, frame: SignedFrame) -> WireResult<()> {
-        let inner = serde_json::to_vec(&frame)?;
+        // G1 (2026-07-14): canonical binary codec replaces serde_json.
+        let inner = crate::wire_codec::encode_frame(&frame)?;
         let envelope = crate::envelope::Envelope::new([0u8; 16], inner);
         let bytes = framing::encode(&envelope)?;
         self.send
@@ -336,7 +334,8 @@ impl Transport for QuicTransport {
     async fn recv(&mut self) -> WireResult<SignedFrame> {
         loop {
             if let Some(env) = framing::decode(&mut self.buf)? {
-                let frame: SignedFrame = serde_json::from_slice(&env.payload)?;
+                // G1 (2026-07-14): decode the canonical wire codec, not serde_json.
+                let frame: SignedFrame = crate::wire_codec::decode_frame(&env.payload)?;
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
@@ -368,9 +367,9 @@ mod tests {
     use bebop_proto_cap::roster::{AnchorRoster, Delegation, Effect};
     use bebop_proto_cap::scope::{Action, Resource, Scope};
     use bebop_proto_cap::{Capability, SignedFrame};
+    use std::sync::LazyLock;
     use tokio::net::UdpSocket;
     use tokio::sync::{oneshot, Mutex};
-    use std::sync::LazyLock;
 
     /// Serialize the QUIC tests: they grab ephemeral UDP ports, and running them
     /// concurrently can recycle a just-released port before the prior endpoint
@@ -446,8 +445,14 @@ mod tests {
         let (a_seed, a_pk) = key(2);
         let (l_seed, l_pk) = key(3);
         let (frame, roster, chain) = anchored_frame(
-            &a_seed, &a_pk, &l_seed, &l_pk,
-            Resource::Route, Action::Send, [7u8; 8], 9_999_999_999,
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Route,
+            Action::Send,
+            [7u8; 8],
+            9_999_999_999,
         );
 
         let (tx, rx) = oneshot::channel();
@@ -458,7 +463,10 @@ mod tests {
         let server = tokio::spawn(async move {
             let _ = tx.send(());
             let ep = QuicEndpoint::Bind(server_addr);
-            let mut t = QuicTransport::accept(&ep).await.unwrap().with_roster(server_roster);
+            let mut t = QuicTransport::accept(&ep)
+                .await
+                .unwrap()
+                .with_roster(server_roster);
             let frame = t.recv().await.unwrap();
             t.send(frame).await.unwrap();
             // Hold the QUIC connection open until the client has read the echo,
@@ -468,8 +476,10 @@ mod tests {
         rx.await.unwrap();
 
         let client_ep = QuicEndpoint::Dial(addr);
-        let mut client =
-            QuicTransport::connect(&client_ep).await.unwrap().with_roster(roster.clone());
+        let mut client = QuicTransport::connect(&client_ep)
+            .await
+            .unwrap()
+            .with_roster(roster.clone());
         let mut signed = frame;
         signed.delegation_chain = chain;
         client.send(signed).await.unwrap();
@@ -495,8 +505,14 @@ mod tests {
         let (a_seed, a_pk) = key(2);
         let (l_seed, l_pk) = key(3);
         let (frame, roster, chain) = anchored_frame(
-            &a_seed, &a_pk, &l_seed, &l_pk,
-            Resource::Ledger, Action::Append, [2u8; 8], 9_999_999_999,
+            &a_seed,
+            &a_pk,
+            &l_seed,
+            &l_pk,
+            Resource::Ledger,
+            Action::Append,
+            [2u8; 8],
+            9_999_999_999,
         );
 
         let (tx, rx) = oneshot::channel();
@@ -504,7 +520,10 @@ mod tests {
         let server = tokio::spawn(async move {
             let _ = tx.send(());
             let ep = QuicEndpoint::Bind(server_addr);
-            let mut t = QuicTransport::accept(&ep).await.unwrap().with_roster(roster);
+            let mut t = QuicTransport::accept(&ep)
+                .await
+                .unwrap()
+                .with_roster(roster);
             let res = t.recv().await;
             assert!(res.is_err(), "tampered frame MUST be rejected over QUIC");
         });

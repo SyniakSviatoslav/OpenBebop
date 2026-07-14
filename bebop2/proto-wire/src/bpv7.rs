@@ -378,7 +378,8 @@ mod tests {
             9_999_999_999,
         );
         let frame = SignedFrame::new(cap, vec![seq; 4]);
-        let payload = serde_json::to_vec(&frame).unwrap();
+        // G1 (2026-07-14): store canonical wire bytes, not serde_json.
+        let payload = crate::wire_codec::encode_frame(&frame).unwrap();
         Bundle {
             primary: PrimaryBlock {
                 dest: [0u8; 32],
@@ -422,7 +423,7 @@ mod tests {
 
         // Drain undelivered oldest-first; send until the link drops.
         for b in sf.retry_oldest_first() {
-            let frame: SignedFrame = serde_json::from_slice(&b.payload).unwrap();
+            let frame: SignedFrame = crate::wire_codec::decode_frame(&b.payload).unwrap();
             match sender.send(frame).await {
                 Ok(()) => {
                     // Receiver picks it up.
@@ -452,7 +453,7 @@ mod tests {
         let mut sender2 = MemTransport::connect(&ep).await.unwrap();
         // sender2 defaults to drop_after = usize::MAX (steady-state carrier).
         for b in sf.retry_oldest_first() {
-            let frame: SignedFrame = serde_json::from_slice(&b.payload).unwrap();
+            let frame: SignedFrame = crate::wire_codec::decode_frame(&b.payload).unwrap();
             // FRESH channel binding per replay: re-sign the frame for the new
             // channel (F7). Demonstrates the caller re-binds each replay.
             let mut frame = frame;

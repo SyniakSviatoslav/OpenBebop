@@ -37,6 +37,9 @@ pub mod iroh_transport;
 /// MESH-07 — pull anti-entropy + Merkle digest of the event-log.
 pub mod sync_pull;
 pub mod transport_policy;
+/// G1 (2026-07-14) — canonical, fail-closed binary codec for `SignedFrame`
+/// (replaces the prior `serde_json` wire serialization). See module docs.
+pub mod wire_codec;
 pub mod wss_transport;
 
 pub use error::{WireError, WireResult};

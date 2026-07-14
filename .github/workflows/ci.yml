@@ -68,6 +68,8 @@ jobs:
           rustup target add wasm32-unknown-unknown
       - name: No reputation/scoring of movers
         run: bash scripts/ci-no-courier-scoring.sh
+      - name: G1 — canonical wire codec (no serde_json on the SignedFrame wire path)
+        run: bash scripts/ci-no-serde-json-wire.sh
       - name: CRDT periphery fence (money/order ⊥ CRDT-merge crate)
         run: bash scripts/ci-crdt-fence.sh
       - name: Kernel layer fence (proto-cap ⊥ dowiz-kernel)

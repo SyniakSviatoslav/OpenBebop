@@ -69,6 +69,7 @@ for (const [script, why] of [
   ['scripts/ci-no-courier-scoring.sh', 'a struct field names a courier/agent score/rating/rank — trust is a signed capability, never a reputation metric'],
   ['scripts/ci-crdt-fence.sh', 'a money/order crate depends on a CRDT-merge crate (MESH-08 periphery fence)'],
   ['scripts/ci-kernel-fence.sh', 'proto-cap depends on dowiz-kernel (MESH-02 layer-purity fence)'],
+  ['scripts/ci-no-serde-json-wire.sh', 'G1 — SignedFrame is serialized with serde_json on the wire instead of the canonical binary codec (wire_codec)'],
 ]) {
   const r = sh('bash', [script]);
   if (r.code !== 0) hard(`${script} failed — ${why}`);

@@ -72,11 +72,16 @@ already present in code:
 
 ## Honest gaps (what "OpenDDE" describes but bebop2 does not yet fully do)
 
-- **G1 — Wire is not schema-on-write end-to-end.** Only the *signing domain* (`tlv.rs`) and
-  `SyncFrame` (C7b) are canonical. The bytes each transport actually puts on the socket are
-  still `serde_json::to_vec(&frame)` (`envelope.rs:42`, `iroh_transport.rs:323`,
-  `wss_transport.rs:397`, `bpv7.rs:381`) — non-canonical, Rust-defined, not reproducible by a
-  second-language node. → a peer can *verify* but not *re-serialize* the wire.
+- **G1 — Wire is not schema-on-write end-to-end.** *(CLOSED 2026-07-14, wave 1.)* Only the
+  *signing domain* (`tlv.rs`) and `SyncFrame` (C7b) were canonical; the outer `SignedFrame` wire
+  bytes were `serde_json::to_vec(&frame)`. **Fixed:** new `proto-wire/src/wire_codec.rs` — a
+  hand-written, fixed-layout, length-prefixed, domain-separated binary codec (`encode_frame` /
+  `decode_frame`) replaces `serde_json` on all four call sites (`envelope.rs` inner frame,
+  `iroh_transport.rs`, `wss_transport.rs`, `bpv7.rs`). Decode is fail-closed (bounds-checked,
+  unknown-field rejected, bad magic/version rejected). 5 new tests prove canonical/injective/
+  fail-closed + decoded-frame re-verifies. A `ci-no-serde-json-wire.sh` guard (RED-proven by
+  `scripts/test-no-serde-json-wire.sh`) keeps it closed. `cargo test -p bebop-proto-wire` green
+  (45 tests). The outer `Envelope` JSON shell remains (non-signed framing; out of G1 scope).
 - **G2 — The event log is duplicated, not consolidated.** The canonical `EventLog` lives in
   `dowiz/kernel` and is reachable only via the default-OFF `kernel-rlib` feature; `bebop2`
   ships a parallel look-alike (`sync_pull.rs::SyncFrame`) with the same shape but no shared
@@ -94,9 +99,12 @@ already present in code:
   `verify-empty-imports.sh`, `ci-crdt-fence.sh`, `ci-kernel-fence.sh`, `ci-claim-live-test.sh`
   were a *manual* RED-suite (per `docs/design/mesh-real/MESH-14-RECONCILIATION-RED-SUITE.md`),
   wired into **neither** pre-commit **nor** CI. **This blueprint's change fixes G6** (see below).
-- **G7 — `NO-COURIER-SCORING` regex misses `pub` fields.** `ci-no-courier-scoring.sh:15` matches
-  `^\s*name:` but not `^\s*pub\s+name:`, so a `pub score: u32` would slip through. Backstop is
-  the field-limited type design; the regex should be widened. (Follow-up, not this change.)
+- **G7 — `NO-COURIER-SCORING` regex misses `pub` fields.** *(CLOSED 2026-07-14, wave 1.)* The
+  old pattern `^\s*name:` did not match `^\s*pub\s+name:`, so a `pub score: u32` slipped through.
+  **Fixed:** `ci-no-courier-scoring.sh` now matches `^\s*(pub\s+)?ident:\s` (scoped to the mesh/trust
+  layer, `bebop2/core/` still excluded for legitimate math `rank`/`score`). RED-proven by
+  `scripts/test-no-courier-scoring.sh` (writes a temp crate with `pub courier_score: u32` and
+  asserts the guard goes red; also asserts the current tree stays green).
 
 ## Enforcement matrix — principle → hook
 
@@ -104,7 +112,8 @@ already present in code:
 |---|---|---|
 | Verified-by-Math / first-principles validation | `guardrail-falsifiable-proof.mjs`, `logic-gate.mjs`, `three-model-review.sh` | ENFORCED (pre-commit) |
 | No new dep without a falsifiable comparison (zero-trust adoption) | DECART (`AGENTS.md §5`) | process-rule; **no script yet** (follow-up: dep-diff gate) |
-| No reputation/scoring/blacklist of movers | `ci-no-courier-scoring.sh` (scoped to the mesh/trust layer; `bebop2/core/` math excluded) | **WIRED by this change** (law-hooks + CI); RED-proven |
+| No reputation/scoring/blacklist of movers | `ci-no-courier-scoring.sh` (scoped to the mesh/trust layer; `bebop2/core/` math excluded) | **WIRED by this change** (law-hooks + CI); RED-proven (G7 closed 2026-07-14) |
+| Canonical schema-on-write on the wire (no serde_json SignedFrame) | `ci-no-serde-json-wire.sh` | **WIRED by wave-1 (2026-07-14)** (law-hooks + CI); RED-proven; G1 CLOSED |
 | Sovereign core reaches no clock/RNG/socket (no phone-home) | `verify-empty-imports.sh` (wasm32 empty-import) | **WIRED by this change** (CI) |
 | Money/order code never depends on a CRDT-merge crate | `ci-crdt-fence.sh` | **WIRED by this change** (law-hooks + CI) |
 | `proto-cap` never depends on `dowiz-kernel` (layer purity) | `ci-kernel-fence.sh` | **WIRED by this change** (law-hooks + CI) |
@@ -114,7 +123,7 @@ already present in code:
 > (local pre-commit). The full 5 run in the `sovereign-guards` CI job — but `ci.yml` triggers only
 > on push/PR to `main`, so a feature-branch commit gets the 3 fast guards locally and the CI-only
 > two (`verify-empty-imports`, `ci-claim-live-test`) only when a PR targets `main`.
-| Canonical schema-on-write on the wire | (structural + tests today) | ADVISORY → hook is P1 (G1) |
+| Canonical schema-on-write on the wire | `ci-no-serde-json-wire.sh` (enforced; G1 CLOSED 2026-07-14) | ENFORCED (law-hooks + CI) |
 | Append-only / content-addressed log | (type design + tests) | ADVISORY (P2 consolidation, G2) |
 
 ## Blueprints

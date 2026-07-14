@@ -7,13 +7,19 @@ cd "$(dirname "$0")/.."
 hit=0
 # Whole-word score/rating/reputation/rank anywhere in a field-ish context,
 # plus trust_score/trust_level (root-of-trust / trust_anchor are ALLOWED).
+#
+# G7 FIX (2026-07-14): the field pattern now ALSO matches a leading `pub`
+# modifier — `^\s*pub\s+ident: type`. The old pattern `^\s*ident:\s` silently
+# let a `pub score: u32` field slip through (the `pub ` prefix broke the anchor).
+# A regression test (`scripts/test-no-courier-scoring.sh`) pins this: it writes a
+# temp crate containing `pub courier_score: u32` and asserts the guard goes RED.
 while IFS= read -r f; do
-  # Only flag FIELD definitions (an ident followed by ':' and a type), never
-  # comments or prose that merely mentions the word "score". Scoped to the mesh
-  # protocol line (bebop2/): the physics field-engine crate/bebop is out of
-  # scope and its own `score` metrics are legitimate (not courier/agent rating).
-  if grep -nE '^\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' >/dev/null; then
-    echo "NO-COURIER-SCORING violation in $f:"; grep -nE '^\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' | sed 's/^/  /'
+  # Only flag FIELD definitions (an ident preceded optionally by `pub`, followed
+  # by ':' and a type), never comments or prose that merely mentions "score".
+  # Scoped to the mesh protocol line (bebop2/): the physics field-engine crate is
+  # out of scope (its `score` metrics are legitimate, not courier/agent rating).
+  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' >/dev/null; then
+    echo "NO-COURIER-SCORING violation in $f:"; grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' | sed 's/^/  /'
     hit=1
   fi
 done < <(grep -rlE '\bstruct\b' --include='*.rs' bebop2 2>/dev/null | grep -vE '^bebop2/core/' || true)
