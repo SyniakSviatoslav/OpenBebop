@@ -38,7 +38,7 @@ jobs:
       - name: Refresh wiki from git diffs
         run: openwiki --update "Update the wiki to reflect changes since the last run."
       - name: Open PR with wiki changes
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           commit-message: 'docs(openwiki): scheduled wiki refresh'
           title: 'docs(openwiki): scheduled wiki refresh'
