@@ -52,6 +52,25 @@ ship them; flag for human confirmation.
 When a test is red, the bug is real even if the code "looks right". Investigate with an independent
 oracle (e.g. a Python reference implementation) before concluding the test is wrong.
 
+## 5. Integration decart — compare & probe before you adopt (operator, 2026-07-14)
+**Agnostic, innovative, ethical — zero ideological attachments.** Any NEW integration (a new crate in
+`Cargo.toml` [dependencies] · external service/API · transport/provider/carrier/protocol · **or a swap of
+one for another**) must FIRST pass a decart evaluation and leave a **decart comparison report** in the
+change. No silent adoption. (NOT covered: internal refactors, in-line version bumps within a pinned line,
+dev-only tooling that never ships in the sovereign core.)
+- Decide by **honest, falsifiable comparison** (in the spirit of §2 VbM — falsifiable evidence over
+  narrative) — never by appeal to authority. Modern/Rust-native is the **default + tiebreak**; a proven
+  classical method wins **only when honest comparison proves it genuinely better on the merits.**
+- The report = a table (candidates × criteria: sovereign-core fit · falsifiable correctness/security ·
+  measured performance · supply-chain/license (`cargo-deny`/`deny.toml`) · maintainability ·
+  reversibility-as-port · evidence-cited), a `DECISION:` line with a falsifiable reason, an
+  **older-as-adapter** note if older tech is kept
+  (bridge, **not purged**), and a **mandatory probe** (the strongest honest argument *against* the choice).
+- **Banned as a deciding reason:** "industry standard / more mature / battle-tested / community-approved."
+  Social proof is not evidence. (An honest *technical* case for a mature tool is welcome — if it wins on
+  merit, it's chosen.) Worked example (rustls+ring vs aws-lc-rs vs native-tls) + full template →
+  `docs/design/INTEGRATION-DECART-RULE-2026-07-14.md`.
+
 ## Build/test
 - `cargo test` — 767 Rust tests, RED+GREEN, 0 fail
 - `cargo test -p bebop2-core` (full suite), `cargo clippy -p bebop2-core --all-targets`
