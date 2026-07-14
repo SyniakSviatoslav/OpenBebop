@@ -1,0 +1,8 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537924, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop use native"}
+[0.004522, "o", "### bebop use native\r\n"]
+[0.872014, "o", "\u001b[1G"]
+[0.872108, "o", "\u001b[0K"]
+[1.224283, "o", "\u001b[38;2;70;176;164m  ✓ switched default agent → native\u001b[0m\r\n\u001b[2m  profile → /root/.bebop/settings.json\u001b[0m\r\n"]
+[1.242651, "o", "\u001b[2m  rotation: native → free → opencode* → claude* → codex* → hermes* → goose* → aider* → native\u001b[0m\r\n"]
+[1.261646, "o", "\u001b[1G\u001b[0K⠙"]
+[1.262846, "o", "\u001b[1G\u001b[0K"]

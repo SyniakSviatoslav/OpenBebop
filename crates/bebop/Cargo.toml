@@ -1,0 +1,68 @@
+[package]
+name = "bebop"
+version = "0.4.0"
+edition = "2021"
+description = "Bebop — your own coding agent. Warm cosmo-noir, deterministic guard OS, living memory, post-quantum node identity. Native Rust + WASM. AGPL-3.0."
+license = "AGPL-3.0-or-later"
+default-run = "bebop"
+
+[[bin]]
+name = "bebop"
+path = "src/main.rs"
+
+[lib]
+name = "bebop"
+path = "src/lib.rs"
+
+[dependencies]
+# Host-side deps (the native CLI). NOT the air-gapped sovereign core — that stays dep-free in rust-core/.
+ratatui = "0.30"
+crossterm = { version = "0.28", features = ["event-stream"] }
+clap = { version = "4", features = ["derive", "cargo"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+# crypto (vault): hybrid post-quantum (FIPS 203/204) + classical fallback,
+# memory-hard KDF, pure-Rust audited (RUSTCRYPTO).
+chacha20poly1305 = "0.11"   # AEAD (confidentiality — still fine post-quantum)
+argon2 = "0.5"            # memory-hard KDF (replaces scrypt), argon2id
+ml-kem = { version = "0.3", features = ["getrandom"] }   # FIPS 203 (ML-KEM / Kyber successor) — PQ KEM
+ml-dsa = { version = "0.1", features = ["getrandom"] }   # FIPS 204 (ML-DSA / Dilithium successor) — PQ signatures
+x25519-dalek = { version = "3", features = ["static_secrets", "getrandom"] }   # classical DH fallback (hybrid w/ ML-KEM)
+ed25519-dalek = "3"      # classical sig fallback (hybrid w/ ML-DSA)
+getrandom = "0.3"           # OsRng-backed byte fill for keygen (rand_core 0.10 — matches PQ crates)
+signature = "3"             # SignatureEncoding trait for PQ sig (de)serialization
+zeroize = "1"              # zeroize secret key material on drop
+sha2 = "0.10"
+hex = "0.4"
+# Structured telemetry over the host-agent hot paths (loop cycle, wire).
+tracing = "0.1"
+# Pretty env-filter subscriber for `init_tracing()` (shipped; native/CLI only).
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.bebop-core]
+path = "../../rust-core"
+version = "0.2.0"
+
+[dependencies.bebop2-core]
+path = "../../bebop2/core"
+version = "0.1.0"
+
+[features]
+default = ["native"]
+# native = TUI binary. wasm = bindgen core for the web build pipeline.
+native = []
+wasm = ["dep:wasm-bindgen"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+
+[dev-dependencies]
+# Benchmarking harness for real latency/throughput telemetry on the hot paths.
+criterion = "0.5"
+
+[[bench]]
+name = "criterion"
+harness = false

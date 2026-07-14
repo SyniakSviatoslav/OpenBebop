@@ -1,0 +1,14 @@
+# Bebop Sovereign Node build context exclusions
+node_modules
+crates/core/target
+dist
+.git
+*.log
+scripts
+docs
+tools
+*.md
+!package.json
+!package-lock.json
+!bebop.ts
+!llm-manifest.json

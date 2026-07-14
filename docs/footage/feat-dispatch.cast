@@ -1,0 +1,7 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537898, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop dispatch \"fix the red ship animation\""}
+[0.007833, "o", "### bebop dispatch fix the red ship animation\r\n"]
+[0.835501, "o", "\u001b[1G"]
+[0.835864, "o", "\u001b[0K"]
+[1.184242, "o", "\u001b[2m  [doer=native checker=native] native handled: fix the red ship animation\u001b[0m\r\n\u001b[2m  copilot verdict: approve | governor authority=1.000 (factor=unknown, resonance=ok)\u001b[0m\r\n"]
+[1.202407, "o", "\u001b[1G\u001b[0K⠙"]
+[1.203574, "o", "\u001b[1G\u001b[0K"]

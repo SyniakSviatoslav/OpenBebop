@@ -1,0 +1,17 @@
+[package]
+name = "bebop-core-legacy"
+version = "0.1.0"
+edition = "2021"
+description = "DEPRECATED legacy guard kernel — superseded by rust-core/ (bebop-core). Kept for reference only; not a workspace member; not depended on by the live build."
+license = "AGPL-3.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true

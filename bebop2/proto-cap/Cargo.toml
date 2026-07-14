@@ -1,0 +1,32 @@
+[package]
+name = "bebop-proto-cap"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "A (authorization) — bebop2 protocol library line. Per-frame signed capability replacing bearer JWT; hybrid gate in code."
+
+[dependencies]
+# Real from-scratch PQ core (Ed25519 classical leg is wired; ML-DSA-65 PQ leg is a
+# marked TODO pending the pack/unpack API — see signed_frame.rs / hybrid_gate.rs).
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
+
+# `serde` is retained ONLY for out-of-band *transport framing* in proto-wire
+# (serializing the whole SignedFrame envelope to the carrier). It is NEVER on the
+# signing path: signatures commit to a fixed-layout TLV ([`bebop_proto_cap::tlv`]),
+# in direct compliance with ARCHITECTURE.md:75 (no serde on the signed path) and
+# red-team §4A. `serde_json` has been removed entirely — it was the non-canonical
+# signing defect.
+serde = { version = "1", features = ["derive"] }
+
+# `anu` restores the REAL ANU QRNG HTTP adapter (ADVISORY-ONLY, never trusted
+# alone, never the fail-closed floor). Off by default so the default build is
+# offline-clean and never touches the network. No new dependency is pulled.
+[features]
+anu = []
+
+# `serde_json` is a *dev-only* dependency, used solely by the regression test
+# `tlv::tests::serde_json_is_non_canonical_red` to PROVE the defect the TLV codec
+# fixes (serde_json is implementation-defined, not canonical: float formatting and
+# map key ordering diverge across versions). It is NOT used on the signing path.
+[dev-dependencies]
+serde_json = "1"

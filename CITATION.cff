@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: "Bebop: A Deterministic, Guard-OS-Driven Coding Agent with Living Memory and a Math-Proven Telemetry Governor"
+message: "If you use this agent or its components (guard OS, VSA memory, PID+ICIR governor, post-quantum identity), please cite it."
+type: software
+authors:
+  - given-names: "Syniak"
+    family-names: "Sviatoslav"
+    orcid: "https://github.com/SyniakSviatoslav"
+repository-code: "https://github.com/SyniakSviatoslav/bebop"
+url: "https://github.com/SyniakSviatoslav/bebop"
+license: AGPL-3.0-or-later
+version: 0.1.0
+date-released: 2026-07-08
+keywords:
+  - ai-agent
+  - coding-agent
+  - autonomous-agent
+  - guard-os
+  - post-quantum
+  - vector-symbolic-architecture
+  - associative-memory
+  - pid-controller
+  - telemetry
+  - icir
+  - content-addressable
+  - mesh
+  - event-sourcing
+  - deterministic
+  - self-hosted
+  - offline-first

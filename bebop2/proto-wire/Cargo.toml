@@ -1,0 +1,63 @@
+[package]
+name = "bebop-proto-wire"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "W (wire transport) — bebop2 protocol library line. iroh + WSS transport carrying signed proto-cap frames."
+
+[dependencies]
+# Real authorization line: signed frames + hybrid gate (classical Ed25519 leg +
+# LIVE ML-DSA-65 PQ leg, both enforced via HybridGate).
+bebop-proto-cap = { path = "../proto-cap", version = "0.1.0" }
+
+# Async runtime + WebSocket carrier (tokio-tungstenite, pure-Rust, std-friendly).
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+# NOTE: deliberately NO `native-tls` feature. The blueprint (§3G/F6) bans the C-build
+# supply chain (openssl-sys/native-tls). Plain `ws://` transport (used by the round-trip
+# tests) works without any TLS feature; `wss://` support lands with the rustls migration
+# in a later phase. Keeping this feature off keeps openssl-sys OUT of the lock entirely,
+# so `cargo deny` can hard-fail if it ever re-enters.
+# TLS is done via `tokio-rustls` directly (client_async/accept_async over WssStream), so
+# tokio-tungstenite needs no rustls feature — only its default `connect`.
+tokio-tungstenite = "0.23"
+futures-util = "0.3"
+
+# Deterministic (de)serialization of the envelope/frame onto carrier bytes.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Hashing for channel binding (F7): SHA3-256 handshake transcript -> binding.
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
+quinn = { version = "0.11.11", features = ["ring"] }
+rcgen = { version = "0.14.8", features = ["pem"] }
+rustls = { version = "0.23.42", features = ["ring"] }
+# Real server-cert verification roots (Mozilla CA bundle) for the hardened (non-insecure-tls) build
+# of BOTH carriers — iroh (quinn) and wss (tokio-tungstenite). C5: real TLS, not deferred.
+webpki-roots = "0.26"
+# Server + client TLS handshake types for the full wss migration (accept + connect over rustls).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+http = "1"
+
+# ── Mesh carrier (iroh / QUIC) — DEFERRED, OFFLINE-SAFE ─────────────────────
+# The `iroh` crate is intentionally NOT a dependency: the sovereign core MUST
+# build offline (no network deps), and iroh 1.0.0 conflicts with the
+# `ed25519-dalek` pin in `crates/bebop` (`=3.0.0-rc.0` vs `^3`). The real QUIC
+# carrier is deferred to post-G11-GREEN (see iroh_transport.rs `innovate:`
+# marker); `IrohTransport` is a compile-clean stub today and the BPv7 overlay
+# (`bpv7.rs`) carries the store-and-forward semantics. The empty `iroh` feature
+# is a documented hook, NOT resolvable offline until the dalek conflict is fixed.
+[features]
+default = ["insecure-tls"]
+iroh = []
+# insecure-tls (C5): the iroh/QUIC client accepts ANY TLS cert (dev/local-first — the signed-frame
+# hybrid gate is the real auth). Default-ON preserves current behavior; a hardened build
+# (`--no-default-features`) turns it OFF and REFUSES TO COMPILE until a real ServerCertVerifier is wired.
+insecure-tls = []
+
+[dev-dependencies]
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+futures-util = "0.3"
+# Real Ed25519 keygen (RFC 8032, from scratch) for the round-trip tests. The lib
+# itself stays free of a direct core dependency (signing is reached via
+# `bebop_proto_cap`), but the tests need to mint keys.
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
