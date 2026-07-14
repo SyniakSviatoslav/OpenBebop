@@ -189,15 +189,24 @@ unsafe impl Sync for InsecureAcceptAny {}
 /// - hardened (`insecure-tls` OFF) → verify the server cert against the Mozilla CA roots.
 /// - dev (`insecure-tls` ON, the DEFAULT) → accept ANY cert (local-first; the signed-frame hybrid
 ///   gate is the real auth boundary, verified on every recv).
-/// HONEST SCOPE (2026-07-14 3-model review): CLIENT half only. The wss SERVER (`accept`) still runs
-/// plaintext (no TLS acceptor), so a real `wss://` handshake can't complete end-to-end yet; and the
-/// hardened verify branch is COMPILE-CHECKED ONLY — no `wss://` handshake test exercises it. Server-side
-/// TLS accept + a handshake test (rcgen self-signed cert → rejected hardened / accepted dev) are the
-/// REMAINING half of the rustls migration.
+/// SCOPE (2026-07-14 3-model review): TLS is proven end-to-end on BOTH paths — `wss_tls_handshake_roundtrip`
+/// proves a real handshake + signed-frame round-trip, and `hardened_verifier_rejects_self_signed_cert`
+/// proves the webpki-roots verifier REJECTS an untrusted cert. Remaining follow-up: a prod operator-cert
+/// `ListenTls` variant (the self-signed cert is dev/test only — a real deployment supplies a CA-issued
+/// cert; a hardened client rejects self-signed on both unknown-issuer and SAN grounds).
+/// DECIDED (operator, 2026-07-14): rustls+ring is the explicit MAIN crypto provider (runtime, via
+/// `builder_with_provider`); aws-lc-rs and other providers are accepted FALLBACKS (compiled, not primary)
+/// — a decision, NOT a defect, so no cross-crate provider purge is pursued.
 pub(crate) fn client_rustls_config() -> rustls::ClientConfig {
+    // ring is the PRIMARY crypto provider, chosen EXPLICITLY — do not rely on the process-default,
+    // which silently prefers aws-lc-rs (a C/cmake build) when both are compiled. rustls+ring keeps the
+    // sovereign, no-C-supply-chain posture; aws-lc, if present transitively, stays an unused fallback.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
     #[cfg(feature = "insecure-tls")]
     {
-        rustls::ClientConfig::builder()
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("ring supports default TLS versions")
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(InsecureAcceptAny))
             .with_no_client_auth()
@@ -206,7 +215,9 @@ pub(crate) fn client_rustls_config() -> rustls::ClientConfig {
     {
         let mut roots = rustls::RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        rustls::ClientConfig::builder()
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("ring supports default TLS versions")
             .with_root_certificates(roots)
             .with_no_client_auth()
     }

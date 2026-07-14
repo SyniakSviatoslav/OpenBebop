@@ -287,12 +287,14 @@ dependencies = [
  "bebop-proto-cap",
  "bebop2-core",
  "futures-util",
+ "http",
  "quinn",
  "rcgen",
  "rustls",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "webpki-roots 0.26.11",
 ]
@@ -3457,12 +3459,8 @@ checksum = "c6989540ced10490aaf14e6bad2e3d33728a2813310a0c71d1574304c49631cd"
 dependencies = [
  "futures-util",
  "log",
- "rustls",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls",
  "tungstenite",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -3581,8 +3579,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.6",
- "rustls",
- "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

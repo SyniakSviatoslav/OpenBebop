@@ -13,9 +13,12 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{
-    accept_async, connect_async_tls_with_config, Connector, MaybeTlsStream, WebSocketStream,
-};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tokio_tungstenite::{accept_async, client_async, WebSocketStream};
 
 use bebop_proto_cap::roster::AnchorRoster;
 use bebop_proto_cap::{HybridGate, HybridPolicy, RevocationSet, SignedFrame};
@@ -23,6 +26,67 @@ use bebop_proto_cap::{HybridGate, HybridPolicy, RevocationSet, SignedFrame};
 use crate::error::{WireError, WireResult};
 use crate::framing;
 use crate::Transport;
+
+/// Unified WSS byte stream so `connect` and `accept` produce ONE `WssTransport` type while BOTH ends
+/// support real rustls TLS (C5, full migration). Plaintext (`ws://`, loopback tests) and TLS (`wss://`)
+/// coexist. All variants are `Unpin` (TcpStream + tokio-rustls TlsStream over an Unpin IO), so the
+/// poll methods project via `Pin::new` with no `unsafe`/pin-project.
+pub(crate) enum WssStream {
+    Plain(TcpStream),
+    ClientTls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+    ServerTls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for WssStream {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            WssStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            WssStream::ClientTls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+            WssStream::ServerTls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+impl AsyncWrite for WssStream {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, b: &[u8]) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            WssStream::Plain(s) => Pin::new(s).poll_write(cx, b),
+            WssStream::ClientTls(s) => Pin::new(s.as_mut()).poll_write(cx, b),
+            WssStream::ServerTls(s) => Pin::new(s.as_mut()).poll_write(cx, b),
+        }
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            WssStream::Plain(s) => Pin::new(s).poll_flush(cx),
+            WssStream::ClientTls(s) => Pin::new(s.as_mut()).poll_flush(cx),
+            WssStream::ServerTls(s) => Pin::new(s.as_mut()).poll_flush(cx),
+        }
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            WssStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            WssStream::ClientTls(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
+            WssStream::ServerTls(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
+        }
+    }
+}
+
+/// Server TLS config with a fresh self-signed cert (dev/test). Prod deployments MUST supply a real
+/// cert/key (a follow-up: a `ListenTls`-with-cert-path variant); this proves the TLS accept path and
+/// lets the `wss://` handshake test run end-to-end.
+fn server_tls_config() -> WireResult<rustls::ServerConfig> {
+    let ck = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+        .map_err(|e| WireError::Carrier(format!("self-signed cert: {e}")))?;
+    let cert = ck.cert.der().clone();
+    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(ck.signing_key.serialize_der());
+    // ring as the explicit PRIMARY provider (see client_rustls_config) — never the aws-lc default.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| WireError::Carrier(format!("tls versions: {e}")))?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key.into())
+        .map_err(|e| WireError::Carrier(format!("server tls config: {e}")))
+}
 
 /// Monotonic-ish tick for capability expiry. Uses wall-clock seconds since
 /// A WebSocket Secure transport endpoint descriptor.
@@ -35,14 +99,16 @@ use crate::Transport;
 pub enum WssEndpoint {
     /// A WebSocket URL to dial as a client.
     Url(String),
-    /// A `host:port` to bind and accept upgrades on (server side).
+    /// A `host:port` to bind and accept plaintext `ws://` upgrades on (server side).
     Listen(String),
+    /// A `host:port` to bind and accept over rustls TLS (`wss://`) with a self-signed dev cert.
+    ListenTls(String),
 }
 
 /// An active WSS session. Carries a single peer's WebSocket stream plus the
 /// decode buffer and the verification gate. No score, no reputation.
 pub struct WssTransport {
-    ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ws: WebSocketStream<WssStream>,
     /// Reassembly buffer for the length-prefixed framing.
     buf: Vec<u8>,
     /// Hybrid gate used to verify every received frame (classical live; PQ todo).
@@ -59,7 +125,7 @@ pub struct WssTransport {
 impl WssTransport {
     /// Build a transport from an already-upgraded WebSocket stream.
     fn from_stream(
-        ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        ws: WebSocketStream<WssStream>,
         gate: HybridGate,
         roster: AnchorRoster,
         revocations: RevocationSet,
@@ -115,20 +181,43 @@ impl Transport for WssTransport {
     async fn connect(endpoint: &Self::Endpoint) -> WireResult<Self> {
         let url = match endpoint {
             WssEndpoint::Url(u) => u.clone(),
-            WssEndpoint::Listen(_) => {
+            _ => {
                 return Err(WireError::HandshakeRejected(
-                    "use accept() for a Listen endpoint".into(),
+                    "use accept() for a Listen/ListenTls endpoint".into(),
                 ))
             }
         };
-        // C5: client-side rustls TLS for `wss://` (shared config = webpki-roots verification when
-        // hardened, accept-any under `insecure-tls`). `ws://` stays plaintext (connector unused in
-        // Plain mode), so the loopback tests are unaffected. HONEST: the wss SERVER (`accept`) is still
-        // plaintext, so a real `wss://` handshake can't complete end-to-end yet — this is the client half.
-        let connector = Connector::Rustls(std::sync::Arc::new(
-            crate::iroh_transport::client_rustls_config(),
-        ));
-        let (ws, _resp) = connect_async_tls_with_config(&url, None, false, Some(connector))
+        // Parse scheme/host/port for the transport connection.
+        let uri: http::Uri = url
+            .parse()
+            .map_err(|e| WireError::HandshakeRejected(format!("bad url: {e}")))?;
+        let host = uri
+            .host()
+            .ok_or_else(|| WireError::HandshakeRejected("url has no host".into()))?
+            .to_string();
+        let secure = uri.scheme_str() == Some("wss");
+        let port = uri.port_u16().unwrap_or(if secure { 443 } else { 80 });
+        let tcp = TcpStream::connect((host.as_str(), port))
+            .await
+            .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
+        // C5 (full rustls migration): `wss://` does a real CLIENT TLS handshake via
+        // `client_rustls_config` (webpki-roots verification when hardened, accept-any under
+        // `insecure-tls`). `ws://` stays plaintext (loopback tests). The server side is symmetric
+        // (see `accept` + `ListenTls`), so a real `wss://` connection now completes end-to-end.
+        let stream = if secure {
+            let connector = TlsConnector::from(Arc::new(crate::iroh_transport::client_rustls_config()));
+            let dns = rustls::pki_types::ServerName::try_from(host.clone())
+                .map_err(|e| WireError::HandshakeRejected(format!("bad server name: {e}")))?;
+            WssStream::ClientTls(Box::new(
+                connector
+                    .connect(dns, tcp)
+                    .await
+                    .map_err(|e| WireError::HandshakeRejected(format!("client tls: {e}")))?,
+            ))
+        } else {
+            WssStream::Plain(tcp)
+        };
+        let (ws, _resp) = client_async(&url, stream)
             .await
             .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
         Ok(WssTransport::from_stream(
@@ -156,8 +245,9 @@ impl Transport for WssTransport {
     // but readable by a passive on-path observer.
 
     async fn accept(endpoint: &Self::Endpoint) -> WireResult<Self> {
-        let addr = match endpoint {
-            WssEndpoint::Listen(a) => a.clone(),
+        let (addr, tls) = match endpoint {
+            WssEndpoint::Listen(a) => (a.clone(), false),
+            WssEndpoint::ListenTls(a) => (a.clone(), true),
             WssEndpoint::Url(_) => {
                 return Err(WireError::HandshakeRejected(
                     "use connect() for a Url endpoint".into(),
@@ -167,13 +257,24 @@ impl Transport for WssTransport {
         let listener = TcpListener::bind(&addr)
             .await
             .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
-        let (stream, _peer) = listener
+        let (tcp, _peer) = listener
             .accept()
             .await
             .map_err(|e| WireError::Carrier(e.to_string()))?;
-        // Wrap in MaybeTlsStream::Plain so the server stream type matches the
-        // client's `MaybeTlsStream<TcpStream>` (from connect_async over a URL).
-        let ws = accept_async(MaybeTlsStream::Plain(stream))
+        // C5 (full rustls migration): `ListenTls` completes a real SERVER TLS handshake (self-signed
+        // dev cert) so `wss://` works end-to-end; `Listen` stays plaintext (loopback tests).
+        let stream = if tls {
+            let acceptor = TlsAcceptor::from(Arc::new(server_tls_config()?));
+            WssStream::ServerTls(Box::new(
+                acceptor
+                    .accept(tcp)
+                    .await
+                    .map_err(|e| WireError::HandshakeRejected(format!("server tls: {e}")))?,
+            ))
+        } else {
+            WssStream::Plain(tcp)
+        };
+        let ws = accept_async(stream)
             .await
             .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
         Ok(WssTransport::from_stream(
@@ -321,6 +422,105 @@ mod tests {
         let ep = WssEndpoint::Listen(addr);
         let t = WssTransport::accept(&ep).await.unwrap().with_roster(roster);
         body(t).await;
+    }
+
+    /// Same as `run_server` but accepts over real rustls TLS (self-signed cert) — the `wss://` path.
+    async fn run_server_tls<F, Fut>(
+        addr: String,
+        roster: AnchorRoster,
+        tx: oneshot::Sender<()>,
+        body: F,
+    ) where
+        F: FnOnce(WssTransport) -> Fut,
+        Fut: core::future::Future<Output = ()>,
+    {
+        let _ = tx.send(());
+        let ep = WssEndpoint::ListenTls(addr);
+        let t = WssTransport::accept(&ep).await.unwrap().with_roster(roster);
+        body(t).await;
+    }
+
+    #[tokio::test]
+    async fn hardened_verifier_rejects_self_signed_cert() {
+        // C5 SECURITY PROOF: the REAL webpki-roots verifier (NOT accept-any) REJECTS an untrusted
+        // (self-signed) server cert. Builds a hardened client config EXPLICITLY here (independent of the
+        // `insecure-tls` feature) so this negative check runs under the default test build — closing the
+        // "verifier compile-checked only" gap the 3-model review flagged.
+        use tokio_rustls::TlsConnector;
+        let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+        let (tx, rx) = oneshot::channel();
+        let saddr = addr.to_string();
+        let server = tokio::spawn(async move {
+            let _ = tx.send(());
+            // Server presents a self-signed cert; the hardened client below must reject it.
+            let _ = WssTransport::accept(&WssEndpoint::ListenTls(saddr)).await;
+        });
+        rx.await.unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let cfg = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let tcp = TcpStream::connect(addr).await.unwrap();
+        let dns = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let res = TlsConnector::from(std::sync::Arc::new(cfg)).connect(dns, tcp).await;
+        assert!(
+            res.is_err(),
+            "hardened webpki-roots verifier MUST reject the self-signed server cert"
+        );
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn wss_tls_handshake_roundtrip() {
+        // C5 PROOF (not compile-only): a REAL wss:// handshake end-to-end. The server does a rustls
+        // TLS accept (self-signed cert via server_tls_config); the client does a rustls TLS connect.
+        // Under the default `insecure-tls` the client accepts the self-signed cert, so this exercises
+        // the actual TLS handshake + the signed-frame round-trip — proving the full migration works.
+        let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+
+        let (a_seed, a_pk) = key(2);
+        let (l_seed, l_pk) = key(3);
+        let (frame, roster, chain) = anchored_frame(
+            &a_seed, &a_pk, &l_seed, &l_pk, Resource::Route, Action::Send, [7u8; 8], 9_999_999_999,
+        );
+
+        let (tx, rx) = oneshot::channel();
+        let server_addr = addr.to_string();
+        let server_roster = roster.clone();
+        let server = tokio::spawn(async move {
+            run_server_tls(server_addr, server_roster, tx, |mut t| async move {
+                let frame = t.recv().await.unwrap();
+                t.send(frame).await.unwrap();
+                let _ = t.close().await;
+            })
+            .await;
+        });
+
+        rx.await.unwrap();
+
+        let client_ep = WssEndpoint::Url(format!("wss://{addr}"));
+        let mut client = WssTransport::connect(&client_ep)
+            .await
+            .expect("wss:// TLS handshake must complete")
+            .with_roster(roster.clone());
+        let mut signed = frame;
+        signed.delegation_chain = chain;
+        client.send(signed).await.unwrap();
+
+        let echoed = client.recv().await.unwrap();
+        assert_eq!(echoed.payload, b"wire-payload");
+        assert!(echoed.verify_classical().is_ok());
+
+        server.await.unwrap();
     }
 
     /// Two in-memory WSS endpoints over a loopback `ws://` connection that sign +
