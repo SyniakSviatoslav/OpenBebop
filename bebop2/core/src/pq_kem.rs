@@ -698,10 +698,16 @@ pub fn decaps(dk: &[u8; KEM768_DK_LEN], ct: &[u8; KEM768_CT_LEN]) -> SharedSecre
     let mut r = [0u8; 32];
     r.copy_from_slice(&g[32..64]);
 
+    // FIPS 203 §6.3 Alg 18 line 7: K̄ ← J(z ‖ c), where J = SHAKE256(·, 8·32) (FIPS 203 §4.1).
+    // The implicit-rejection secret MUST use SHAKE256, not SHA3-256: both share rate 136, but the
+    // domain-separation pad differs (SHAKE 0x1f vs SHA3 0x06), so a SHA3-256 rejection value is a
+    // different 32 bytes and is non-conformant — a spec-correct peer would derive a different K̄.
+    // (C8, 2026-07-14 crypto conformance pass.)
     let mut jinput = [0u8; 32 + KEM768_CT_LEN];
     jinput[..32].copy_from_slice(z);
     jinput[32..].copy_from_slice(ct);
-    let kbar2 = sha3_256(&jinput);
+    let mut kbar2 = [0u8; 32];
+    shake256(&jinput, &mut kbar2);
 
     let cprime = kpke_encrypt(ek, &mprime, &r);
     // FIPS 203 §9.1 / Alg 21: implicit rejection MUST be data-independent. Accumulate the FULL
@@ -950,6 +956,52 @@ mod tests {
             assert_ne!(
                 ss_bad, ss,
                 "tampered ciphertext decoded to same K (trial {trial})"
+            );
+        }
+    }
+
+    // ── C8: implicit-rejection KAT — K̄ MUST equal J(z ‖ c) = SHAKE256(z ‖ c, 32) ──────
+    // FIPS 203 §6.3 Alg 18 line 7 with J = SHAKE256(·, 8·32) (§4.1). An invalid ciphertext
+    // drives the implicit-rejection branch; the returned secret must be the SHAKE256-derived
+    // rejection value, NOT the pre-fix SHA3-256(z ‖ c). RED before the fix (decaps returned
+    // sha3_256(...)), GREEN after. SHAKE256 itself is anchored by `fips202_kat` above.
+    #[test]
+    fn kem_implicit_rejection_equals_fips203_j() {
+        let mut st = 0xC8C0_DE00_u64;
+        for trial in 0..8 {
+            let mut d = [0u8; 32];
+            let mut z = [0u8; 32];
+            let mut m = [0u8; 32];
+            lcg_fill(&mut st, &mut d);
+            lcg_fill(&mut st, &mut z);
+            lcg_fill(&mut st, &mut m);
+            let (ek, dk) = keygen_internal(&d, &z);
+            let (valid_ss, ct) = encaps_internal(&ek, &m);
+
+            // Force the implicit-rejection path with an invalid ciphertext.
+            let mut ct_bad = ct;
+            ct_bad[(trial * 41) % KEM768_CT_LEN] ^= 0xFF;
+
+            // z' = last 32 bytes of dk (the implicit-rejection seed).
+            let zr = &dk[KEM768_DK_LEN - 32..];
+            let mut jin = [0u8; 32 + KEM768_CT_LEN];
+            jin[..32].copy_from_slice(zr);
+            jin[32..].copy_from_slice(&ct_bad);
+            let mut expected_j = [0u8; 32];
+            shake256(&jin, &mut expected_j); // J(z ‖ c) per FIPS 203 §4.1
+
+            let got = decaps(&dk, &ct_bad);
+
+            // (a) rejection was actually taken (else the assertion below would be vacuous).
+            assert_ne!(got, valid_ss, "trial {trial}: rejection branch not taken");
+            // (b) conformance: the rejection secret is exactly SHAKE256(z ‖ c).
+            assert_eq!(got, expected_j, "trial {trial}: K̄ != J(z‖c)=SHAKE256(z‖c)");
+            // (c) non-triviality: the pre-fix SHA3-256(z ‖ c) is a DIFFERENT value, so this
+            //     test genuinely discriminates the conformance fix (would fail RED).
+            assert_ne!(
+                sha3_256(&jin),
+                expected_j,
+                "trial {trial}: SHA3-256 and SHAKE256 collided — test cannot discriminate"
             );
         }
     }
