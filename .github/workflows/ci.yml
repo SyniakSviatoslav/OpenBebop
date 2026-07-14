@@ -10,7 +10,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -36,7 +36,7 @@ jobs:
     name: Rust hardened (--no-default-features)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust toolchain + wasm32 target
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
@@ -60,7 +60,7 @@ jobs:
     name: Sovereign guards (MESH invariants)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust toolchain + wasm32 target
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
