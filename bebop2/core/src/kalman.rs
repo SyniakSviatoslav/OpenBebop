@@ -25,7 +25,10 @@ use alloc::vec::Vec;
 /// Returns `(eigenvalues as Complex (real parts for the reference systems), eigenvectors V
 /// row-major: V[i*n + j] = component i of eigenvector j)`. Deterministic, no RNG. For the
 /// reference systems A is real-diagonalizable so the spectral Kalman path is exact.
-fn real_eig(a: &[f64], n: usize) -> (Vec<Complex>, Vec<f64>) {
+// NOTE: visibility widened to `pub` for the cross-solver PARITY-GATE integration test
+// (core/tests/eigensolver_parity.rs). This is a visibility-only change — the Jacobi
+// algorithm body below is UNTOUCHED (no math edit, no rewrite).
+pub fn real_eig(a: &[f64], n: usize) -> (Vec<Complex>, Vec<f64>) {
     let mut m = a.to_vec();
     let mut v = vec![0.0f64; n * n];
     for i in 0..n {
