@@ -6,7 +6,8 @@ license = "AGPL-3.0-or-later"
 description = "W (wire transport) — bebop2 protocol library line. iroh + WSS transport carrying signed proto-cap frames."
 
 [dependencies]
-# Real authorization line: signed frames + hybrid gate (classical leg live, PQ TODO).
+# Real authorization line: signed frames + hybrid gate (classical Ed25519 leg +
+# LIVE ML-DSA-65 PQ leg, both enforced via HybridGate).
 bebop-proto-cap = { path = "../proto-cap", version = "0.1.0" }
 
 # Async runtime + WebSocket carrier (tokio-tungstenite, pure-Rust, std-friendly).

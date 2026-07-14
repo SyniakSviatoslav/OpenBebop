@@ -89,8 +89,11 @@ pub struct SignedFrame {
     /// `Vec<u8>` because serde's derive only auto-implements arrays up to length
     /// 32; the byte length is fixed at 64 by `bebop2_core::sign`.
     pub classical_sig: Option<Vec<u8>>,
-    /// TODO-PQ: 32-byte-encoded ML-DSA-65 signature over `signing_domain()`.
-    /// `None` until the PQ pack/unpack API lands. Not faked.
+    /// ML-DSA-65 signature (3309 bytes) over `binding_signing_domain()`. This is
+    /// the LIVE post-quantum leg of the hybrid frame — `sign_pq` computes a real
+    /// FIPS 204 signature and `verify_pq` checks it. `None` only for an unsigned/
+    /// unverified frame; never faked (a missing PQ leg fails `HybridGate::check`
+    /// as `HybridIncomplete`). See module docs: the PQ leg is enforced, not a TODO.
     pub pq_sig: Option<Vec<u8>>,
     /// The UCAN-subset delegation chain rooting this frame's authority in an
     /// enrolled trust anchor. Carried on the wire (serde) for the verifier's
@@ -243,7 +246,9 @@ impl SignedFrame {
     }
 
     /// Run the hybrid gate: classical MUST verify; PQ is required by policy but
-    /// currently reports `HybridIncomplete` (todo) rather than failing the frame
+    /// did NOT verify the PQ leg (the live ML-DSA-65 leg) — the frame is only
+    /// half-signed. `verify` reports this as `HybridIncomplete` rather than
+    /// accepting a classical-only frame as fully authorized. PQ is enforced.
     /// outright. See [`crate::hybrid_gate`]. The anchor-rooted `delegation_chain`
     /// is passed through so the gate enforces the root-of-trust live.
     ///

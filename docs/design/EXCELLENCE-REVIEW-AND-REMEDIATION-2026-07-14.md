@@ -70,6 +70,7 @@ One runtime story (cargo-only), one test count (from live `cargo test`), one ver
 `ARCHITECTURE.md` (+ kill the case-colliding `architecture.md`), both `CONTRIBUTING.md`, `llms.txt`,
 `llm-manifest.json`, `README.uk.md`. Add `docs/design/README.md` index + tombstone superseded dumps.
 Add 2-3 runnable `examples/`. Rewrite the stale "PQ=TODO" docs to state PQ is live + enforced.
+- **P3a** ✅ DONE (2026-07-14, this wave): the "PQ=TODO" markers in `bebop2` were STALE — `SignedFrame::sign_pq`/`verify_pq` compute and verify a real 3309-byte ML-DSA-65 signature; `HybridGate` enforces both legs. Removed `TODO-PQ` from `signed_frame.rs`, `error.rs`, `proto-wire/src/lib.rs`, `proto-wire/Cargo.toml`; the PQ leg is now documented as LIVE+enforced. (The remaining "not a TODO" strings are the truthful corrections.)
 
 ### P4 — Clean-slate publish (GATED — your `!`)
 Assemble the remediated keep-set into a fresh-history repo (secrets verified absent) → verify green →

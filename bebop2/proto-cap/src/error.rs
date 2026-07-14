@@ -17,7 +17,8 @@ pub enum CapError {
     /// The post-quantum (ML-DSA-65) signature failed to verify.
     PqVerifyFailed,
     /// The hybrid gate requires BOTH a classical and a PQ signature, but one or
-    /// both are missing (or the PQ leg is still a TODO on this build).
+    /// both are missing (the PQ leg is LIVE — a missing PQ sig is a real
+    /// authorization failure, not a build-time TODO).
     HybridIncomplete,
     /// The capability nonce has already been seen (replay) or is invalid.
     NonceRejected,
@@ -72,7 +73,7 @@ impl fmt::Display for CapError {
             CapError::ClassicalVerifyFailed => "classical (Ed25519) signature verification failed",
             CapError::PqVerifyFailed => "post-quantum (ML-DSA-65) signature verification failed",
             CapError::HybridIncomplete => {
-                "hybrid gate requires BOTH classical + PQ signatures (one missing or PQ leg TODO)"
+                "hybrid gate requires BOTH classical + PQ signatures (one missing; PQ leg is enforced, not a TODO)"
             }
             CapError::NonceRejected => "capability nonce rejected (replay or invalid)",
             CapError::Expired => "capability expired",

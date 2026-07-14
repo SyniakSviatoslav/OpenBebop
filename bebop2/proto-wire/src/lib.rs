@@ -93,7 +93,8 @@ pub trait Transport {
 ///
 /// This is a thin helper so callers do not reach into `bebop_proto_cap` directly.
 /// Honors the no-fake-signature rule: it uses the REAL Ed25519 from
-/// `bebop2-core`; the PQ leg is a marked TODO inside `SignedFrame::sign_pq`.
+/// `bebop2-core`; the PQ leg is LIVE (`SignedFrame::sign_pq`/`verify_pq` compute
+/// and check a real ML-DSA-65 signature).
 pub fn sign_frame(frame: &mut bebop_proto_cap::SignedFrame, seed: &[u8; 32]) -> WireResult<()> {
     frame.sign_classical(seed)?;
     Ok(())
