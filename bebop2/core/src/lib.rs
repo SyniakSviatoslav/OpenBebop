@@ -304,6 +304,7 @@ pub mod kalman; // Kalman filter (trajectory integrals, not vector math)
 pub mod lyapunov; // Lyapunov derivative (stability, not ad-hoc vectors)
 #[cfg(feature = "host")]
 pub mod resonator;
+pub mod speedometer; // zero-dep bench + entropy gauge (benchmark-as-speedometer invariant)
 #[cfg(feature = "host")]
 pub mod vsa; // vector symbolic archive (hyperplane bundling, not dense matrices) // closed-loop controller: generate→reflect→supervise, Lyapunov freeze, rollback-to-best
 
