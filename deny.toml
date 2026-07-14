@@ -43,6 +43,16 @@ wildcards = "deny"
 name = "openssl-sys"
 [[bans.deny]]
 name = "native-tls"
+# ── B4 (2026-07-14): C-built crypto confined to the transport layer. ───────────────
+# `ring` / `aws-lc-rs` are C-built crypto backends. The sovereign substrate
+# `bebop2-core` is from-scratch + empty-import and MUST stay C-crypto-free (proven by
+# `scripts/ci-core-no-ccrypto.sh`). They are permitted ONLY in `bebop-proto-wire`
+# (the QUIC/TLS transport, via quinn/rustls/tokio-rustls) — that is an ACCEPTED
+# dependency (operator decision 2026-07-14: a real post-quantum transport needs a
+# vetted TLS/QUIC stack; the PQ envelope rides INSIDE the bundle, the transport is the
+# channel). We do NOT ban ring/aws-lc globally (that would break the transport); instead
+# the property fence `ci-core-no-ccrypto.sh` enforces the core stays pure, and this note
+# records the deliberate scope. If `bebop2-core` ever pulls ring/aws-lc, CI turns RED.
 
 [licenses]
 version = 2

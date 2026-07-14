@@ -80,6 +80,8 @@ jobs:
         run: bash scripts/ci-no-redline-gate.sh
       - name: C3 — constant-seed keygen gated off in production (no arbitrary-seed mint)
         run: bash scripts/ci-no-ungated-keygen.sh
+      - name: B4 — sovereign core stays C-crypto-free (ring/aws-lc confined to transport)
+        run: bash scripts/ci-core-no-ccrypto.sh
       - name: B3 — no_std allocator reserve is race-free (compare_exchange, not load+store)
         run: bash scripts/ci-no-race-alloc.sh
       - name: CRDT periphery fence (money/order ⊥ CRDT-merge crate)
