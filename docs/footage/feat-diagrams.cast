@@ -1,0 +1,8 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537922, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop diagrams"}
+[0.003794, "o", "### bebop diagrams\r\n"]
+[0.832636, "o", "\u001b[1G\u001b[0K"]
+[1.199021, "o", "\u001b[38;2;70;176;164m  ◈ wrote docs/diagrams/project-map.svg\u001b[0m\r\n"]
+[1.199286, "o", "\u001b[38;2;70;176;164m  ◈ wrote 7 conceptual schemas (schema-*.svg)\u001b[0m\r\n\u001b[2m  graph: 35 modules, 71 real edges\u001b[0m\r\n"]
+[1.237329, "o", "\u001b[1G\u001b[0K"]
+[1.237928, "o", "⠙"]
+[1.239957, "o", "\u001b[1G\u001b[0K"]

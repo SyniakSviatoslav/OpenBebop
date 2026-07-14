@@ -1,0 +1,15 @@
+[package]
+name = "bebop-proto-crypto"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "H (crypto ladder) — bebop2 protocol library line. Wycheproof->FIPS re-derivation placeholder + constant-time marker. SCAFFOLD ONLY: no production logic."
+
+[dependencies]
+# Intentionally none in the scaffold. Design intent: consume the from-scratch PQ
+# primitives already in `bebop2-core` (ML-KEM-768, ML-DSA-65, XChaCha20-Poly1305,
+# Argon2id, etc.) and layer a *verification ladder* over them. Dep-free now so
+# cargo check stays green offline and the crate cannot affect dowiz.
+
+[dev-dependencies]
+# none.

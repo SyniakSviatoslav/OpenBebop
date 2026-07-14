@@ -1,0 +1,7 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537905, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop init"}
+[0.008961, "o", "### bebop init\r\n"]
+[0.833379, "o", "\u001b[1G"]
+[0.835804, "o", "\u001b[0K"]
+[1.144219, "o", "\r\n\u001b[38;2;70;176;164m◈\u001b[0m Choose your origin (behavior baseline):\r\n"]
+[1.144252, "o", "  1. claude\r\n  2. opencode\r\n  3. codex\r\n  4. hybrid\r\n"]
+[1.144419, "o", "  pick (1-4): "]

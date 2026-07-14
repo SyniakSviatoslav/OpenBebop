@@ -1,0 +1,7 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537927, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop route doer"}
+[0.004087, "o", "### bebop route doer\r\n"]
+[0.878809, "o", "\u001b[1G"]
+[0.8792, "o", "\u001b[0K"]
+[1.234286, "o", "\u001b[38;2;70;176;164m  doer → \u001b[1mhaiku\u001b[0m\u001b[0m\r\n\u001b[2m  Narrow doer task. Haiku is adequate — cheapest lane.\u001b[0m\r\n"]
+[1.249926, "o", "\u001b[1G\u001b[0K⠙"]
+[1.251029, "o", "\u001b[1G\u001b[0K"]

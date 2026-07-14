@@ -1,0 +1,15 @@
+{
+  "Program": "/app/bebop.ts",
+  "ProgramEnv": [
+    "BEBOP_SOVEREIGN=1",
+    "BEBOP_CORE_PATH=/app/src/bebop_core.wasm",
+    "BEBOP_CORE_RUNTIME=wasi",
+    "BEBOP_LLM_BASE_URL=http://127.0.0.1:11434",
+    "BEBOP_LLM_MODEL=qwen3-embedding:0.6b",
+    "BEBOP_ALLOW_EXTERNAL_LLM=0",
+    "BEBOP_TELEMETRY_SINK=local"
+  ],
+  "Files": ["/app/src/bebop_core.wasi.aot.wasm"],
+  "NoSSHEcho": true,
+  "DumpOnExit": false
+}

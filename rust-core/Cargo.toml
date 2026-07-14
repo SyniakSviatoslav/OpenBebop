@@ -1,0 +1,12 @@
+[package]
+name = "bebop-core"
+version = "0.2.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Deterministic graph-PDE field core (Rust->WASM). Chebyshev spectral propagator + active-set pruning. No RNG, no Date, no std deps."
+
+[lib]
+crate-type = ["cdylib", "rlib"]   # cdylib -> bebop_core.wasm; rlib -> linkable by the native CLI
+
+# NOTE: intentionally NO dependencies. The crate is pure `core`/`alloc` so it builds offline
+# (sovereign-core constraint: air-gapped, no network at build). ABI is raw C-ABI over linear memory.

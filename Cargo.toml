@@ -1,0 +1,43 @@
+# Root workspace for bebop (native Rust/WASM core).
+#
+# The live build is two crates:
+#   - rust-core/   -> `bebop-core`   : the deterministic graph-PDE + VSA field core (WASM, dep-free).
+#                                    bebop depends on it via [dependencies.bebop-core] -> ../../rust-core.
+#   - crates/bebop/-> `bebop`       : the host agent (TUI + MCP + vault + governor + field engines).
+#
+# `crates/core-legacy/` (renamed from crates/core on 2026-07-10) is the OLD ts-era guard kernel.
+# It is DEPRECATED and deliberately NOT a workspace member: the live kernel is rust-core, and the
+# legacy crate's package name collided with `bebop-core`. Keeping it out of the workspace lets
+# `cargo test --workspace` stay green and honest.
+[workspace]
+resolver = "2"
+members = [
+    "rust-core",
+    "crates/bebop",
+    "bebop2/core",
+    # ── Tier-0 P0-6 protocol W/A/H library lines (scaffold skeletons) ──────────
+    # Separate crate names from the agent core (`crates/bebop`) and the PQ core
+    # (`bebop2/core`). Dep-free; no production logic; do NOT affect dowiz.
+    "bebop2/proto-wire",    # W — wire transport (iroh + WSS; replaces zenoh stub)
+    "bebop2/proto-cap",     # A — per-frame signed capability (replaces JWT)
+    "bebop2/proto-crypto",  # H — crypto ladder stub (Wycheproof→FIPS, ct marker)
+    "bebop2/delivery-domain", # Layer-B decider-core adapter (default: no kernel dep; kernel-rlib feature opt-in)
+    # ── DK toolchain crates (WASM-component ports + host mapping) ─────────────
+    "bebop2/wasm-host",     # DK-03 — wasmtime host, feature-gated (default OFF)
+    # DK-02 — first Port-as-WASM-component (wasip2, zero-ambient-auth).
+    # Built standalone via `cargo component build --target wasm32-wasip2`
+    # (see bebop2/tooling/); EXCLUDED from the workspace so `cargo test
+    # --workspace` does not compile it in std-test mode (it is `#![no_std]` +
+    # a custom `#[panic_handler]`, which conflicts with the test harness).
+]
+exclude = [
+    "bebop2/ports/telegram",
+    # crates/core-legacy moved to attic/ on 2026-07-12 (deprecated ts-era guard kernel).
+]
+
+# Hoisted from per-crate manifests so Cargo doesn't warn "profiles for the non root package
+# will be ignored". rust-core used opt-level=3/lto; bebop used opt-level=3/lto/codegen-units=1.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

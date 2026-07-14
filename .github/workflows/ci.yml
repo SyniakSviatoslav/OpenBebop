@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      # Full install (incl. optional better-auth) so the auth test suite runs and is verified in CI.
+      # better-auth stays optional/lazy-loaded at RUNTIME; this only ensures the test count is real.
+      - run: npm install
+      - name: Guard-OS self-certification
+        run: npm run boot
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Falsifiable tests
+        run: npm test
+      - name: Doc-claim honesty gate
+        run: node scripts/verify-doc-claims.mjs
+      - name: Falsifiable-proof guardrail (every test can go RED)
+        run: node scripts/guardrail-falsifiable-proof.mjs
+
+  # Hardened / sovereign build: proves the crates compile + pass on the --no-default-features
+  # path (no_std crypto core for wasm32, hardened webpki TLS client), which the default build
+  # never exercises. A regression that reaches for std / an accept-any TLS shim fails HERE.
+  rust-hardened:
+    name: Rust hardened (--no-default-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain + wasm32 target
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+      - name: Crypto crates — default-features tests (C8/C4/C6/C7b + operator-cert)
+        run: cargo test -p bebop2-core -p bebop-proto-wire
+      - name: bebop2-core — pure no_std build (empty-import wasm32, --no-default-features)
+        run: cargo build -p bebop2-core --no-default-features --target wasm32-unknown-unknown
+      - name: proto-wire — hardened TLS test (--no-default-features; webpki rejects self-signed)
+        run: cargo test -p bebop-proto-wire --no-default-features
+
+  # Sovereign-event-exchange invariants (SOVEREIGN-EVENT-EXCHANGE-BLUEPRINT-2026-07-14, P0).
+  # These guard scripts encode agreed sovereignty invariants but were previously a MANUAL
+  # RED-suite (MESH-14) wired into nothing. This job makes them BLOCK at the main boundary:
+  #   - no reputation/scoring of movers (trust = signed capability, not a score)
+  #   - sovereign core reaches no clock/RNG/socket (empty wasm import section = no phone-home)
+  #   - money/order code never depends on a CRDT-merge crate; proto-cap never on dowiz-kernel
+  #   - a "DONE/CLOSED" mesh claim must cite a live test
+  sovereign-guards:
+    name: Sovereign guards (MESH invariants)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain + wasm32 target
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+      - name: No reputation/scoring of movers
+        run: bash scripts/ci-no-courier-scoring.sh
+      - name: G1 — canonical wire codec (no serde_json on the SignedFrame wire path)
+        run: bash scripts/ci-no-serde-json-wire.sh
+      - name: G2 — single canonical event-log primitive in bebop2 (no duplicate log)
+        run: bash scripts/ci-no-duplicate-eventlog.sh
+      - name: G3 — sync topic unified under canonical Resource::Sync / Action::Pull (no placeholder carrier)
+        run: bash scripts/ci-no-placeholder-synctopic.sh
+      - name: G4 — scope/effect attenuation is a real set-subset (no flat equality)
+        run: bash scripts/ci-no-flat-scope.sh
+      - name: G5 — capability-scoped red-line gate present (auth/money/secrets/migrations)
+        run: bash scripts/ci-no-redline-gate.sh
+      - name: C3 — constant-seed keygen gated off in production (no arbitrary-seed mint)
+        run: bash scripts/ci-no-ungated-keygen.sh
+      - name: B4 — sovereign core stays C-crypto-free (ring/aws-lc confined to transport)
+        run: bash scripts/ci-core-no-ccrypto.sh
+      - name: B3 — no_std allocator reserve is race-free (compare_exchange, not load+store)
+        run: bash scripts/ci-no-race-alloc.sh
+      - name: CRDT periphery fence (money/order ⊥ CRDT-merge crate)
+        run: bash scripts/ci-crdt-fence.sh
+      - name: Kernel layer fence (proto-cap ⊥ dowiz-kernel)
+        run: bash scripts/ci-kernel-fence.sh
+      - name: Live-test claim lint (CLOSED/DONE claims cite a test)
+        run: bash scripts/ci-claim-live-test.sh
+      - name: Sovereign core has an empty wasm import section (no phone-home)
+        run: bash scripts/verify-empty-imports.sh

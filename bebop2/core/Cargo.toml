@@ -1,0 +1,49 @@
+[package]
+name = "bebop2-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "From-scratch zero-dep post-quantum core for bebop2. Pure core+alloc, empty-import wasm. No vendors."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# INTENTIONALLY NO DEPENDENCIES. core+alloc only. Builds offline (air-gapped).
+# Every primitive must compile to wasm with an EMPTY import section.
+
+[dependencies]
+# none.
+
+[dev-dependencies]
+# Test-only (NOT in the production crypto dependency graph). Vendored NIST ACVP
+# FIPS204 ML-DSA vectors are parsed by the ACVP byte-exact property-gate test.
+# `paste` is used ONLY to synthesize one discrete #[test] per ACVP tcId.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+paste = "1.0"
+
+# `std` is the default. Disable it (`--no-default-features`) for a genuine no_std /
+# empty-import wasm32 build (core+alloc only). Native + test builds keep std so tests
+# can allocate + panic. The empty-import gate (reloop v2) enforces no_std on wasm when
+# std is disabled.
+#
+# `host` (default-on) gates the f64-heavy analytic kernel (field/vsa/algebra/kalman/
+# lyapunov/chebyshev/fft/active + the libm `math`/`fexp` shims). These use f64 trig
+# (sin/cos/sqrt/ln/exp) and heap-allocated `Vec<f64>` spectra that wasm32-unknown-unknown
+# cannot provide without std math. They are NOT part of the PQ crypto core. Disabling
+# `host` (`--no-default-features`) yields a pure, zero-float-dependency PQ crypto lib that
+# compiles to wasm32 with an EMPTY import section (no_std + self-contained bump allocator).
+[features]
+default = ["std", "host"]
+std = []
+host = []
+# Escape hatch for tests / pinned-KAT harnesses that must build a *deterministic*
+# generator from a caller-supplied constant seed (e.g. RFC/ACVP vectors). NEVER enable
+# in production — with it on, `sign::keygen(seed)`, `pq_dsa::keygen(seed)`, and
+# `ChaCha20Rng::from_seed` become public, re-opening the predictable-key red-flag.
+dangerous_deterministic = []
+# Downstream test suites (proto-cap/proto-wire) need the constant-seed `keygen(seed)`
+# entry points to mint deterministic keys in their own `#[cfg(test)]` code. This is the
+# same surface as `dangerous_deterministic` but named for test use only. Production code
+# must NOT enable this.
+test_keygen = []

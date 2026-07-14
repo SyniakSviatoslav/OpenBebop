@@ -1,0 +1,7 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537895, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop recall \"living memory\""}
+[0.004877, "o", "### bebop recall living memory\r\n"]
+[0.854213, "o", "\u001b[1G"]
+[0.854449, "o", "\u001b[0K"]
+[1.168677, "o", "\u001b[2m  §0·GP recall — in-process livingMemory (VSA + graph) only — §0·GP retriever not bundled in this standalone repo\u001b[0m\r\n"]
+[1.191697, "o", "\u001b[1G\u001b[0K⠙"]
+[1.192723, "o", "\u001b[1G\u001b[0K"]

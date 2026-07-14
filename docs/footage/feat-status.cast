@@ -1,0 +1,10 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1783537943, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "bebop status"}
+[0.007894, "o", "### bebop status\r\n"]
+[0.857921, "o", "\u001b[1G"]
+[0.857987, "o", "\u001b[0K"]
+[1.214325, "o", "\u001b[38;2;70;176;164m◈\u001b[0m \u001b[1m\u001b[38;2;242;233;219mBebop\u001b[0m\u001b[0m \u001b[2m— your kitchen, your ship, your cut.\u001b[0m\r\n"]
+[1.23966, "o", "\u001b[2m  rotation: native → free → opencode* → claude* → codex* → hermes* → goose* → aider* → native  (* = not installed / no key)\u001b[0m\r\n"]
+[2.773415, "o", "\u001b[2m  · native    \u001b[38;2;70;176;164mready\u001b[0m\u001b[0m\r\n\u001b[2m  · free      \u001b[38;2;232;165;68midle\u001b[0m\u001b[0m\r\n\u001b[2m  · opencode  \u001b[38;2;232;165;68midle\u001b[0m\u001b[0m\r\n\u001b[2m  · claude    \u001b[38;2;232;165;68midle\u001b[0m\u001b[0m\r\n\u001b[2m  · codex     \u001b[38;2;232;165;68midle\u001b[0m\u001b[0m\r\n\u001b[2m  · hermes    \u001b[38;2;232;165;68midle\u001b[0m\u001b[0m\r\n\u001b[2m  · goose     \u001b[38;2;232;165;68midle\u001b[0m\u001b[0m\r\n\u001b[2m  · aider     \u001b[38;2;232;165;68midle\u001b[0m\u001b[0m\r\n\u001b[2m  · native    \u001b[38;2;70;176;164mready\u001b[0m\u001b[0m\r\n"]
+[2.794774, "o", "\u001b[1G"]
+[2.794947, "o", "\u001b[0K⠙"]
+[2.796475, "o", "\u001b[1G\u001b[0K"]

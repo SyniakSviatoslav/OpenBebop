@@ -1,0 +1,19 @@
+[package]
+name = "bebop-delivery-domain"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Layer-B decider-core adapter: re-exports the dowiz-kernel order-machine decide/fold Law for bebop2. Default build is dependency-free and offline-clean; `kernel-rlib` links the real kernel."
+
+# ── Default deps: NONE ──
+# The default build of this crate pulls NO external crates (no serde, no wasm, no
+# serde_json, no browser/transport deps). It is a thin pure-Rust re-export shim
+# so bebop2's default `cargo test --workspace` stays offline-clean.
+[dependencies]
+
+# NOTE (publish): the optional `dowiz-kernel` link (former `kernel-rlib`
+# feature) is intentionally NOT declared here. It pointed at a sibling path
+# (`../../../dowiz/kernel`) that only exists on the operator's machine and broke
+# `cargo build` from a clean clone. The default build is dependency-free and
+# offline-clean. Operators who want the real kernel link add `dowiz-kernel` as
+# a path/git dep locally and re-enable the cfg-gated re-exports in src/lib.rs.

@@ -1,0 +1,68 @@
+{
+  "name": "bebop-agent",
+  "version": "0.5.0",
+  "description": "Bebop — your own coding agent. Warm cosmo-noir, a deterministic guard OS, living memory, and a math-proven telemetry governor. Native Rust/WASM core (no TypeScript at runtime). AGPL-3.0.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "keywords": [
+    "ai-agent",
+    "coding-agent",
+    "agent-framework",
+    "rust",
+    "wasm",
+    "autonomous-agent",
+    "guard-os",
+    "vector-symbolic-architecture",
+    "vsa",
+    "associative-memory",
+    "pid-controller",
+    "telemetry",
+    "icir",
+    "content-addressable",
+    "p2p",
+    "mesh",
+    "event-sourcing",
+    "deterministic",
+    "bebop",
+    "cosmo-noir",
+    "self-hosted",
+    "offline-first",
+    "agpl"
+  ],
+  "author": {
+    "name": "Syniak Sviatoslav",
+    "url": "https://github.com/SyniakSviatoslav"
+  },
+  "homepage": "https://github.com/SyniakSviatoslav/bebop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyniakSviatoslav/bebop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SyniakSviatoslav/bebop/issues"
+  },
+  "bin": {
+    "bebop": "bin/bebop"
+  },
+  "files": [
+    "bin",
+    "crates",
+    "rust-core",
+    "docs",
+    "scripts",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "build": "cargo build --release -p bebop",
+    "start": "cargo run -q -p bebop --",
+    "boot": "cargo run -q -p bebop -- boot",
+    "recall": "cargo run -q -p bebop -- recall",
+    "test": "cargo test --workspace",
+    "typecheck": "cargo check --workspace",
+    "verify": "cargo test --workspace && node scripts/verify-doc-claims.mjs && node scripts/guardrail-falsifiable-proof.mjs"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
