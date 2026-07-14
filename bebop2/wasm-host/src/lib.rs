@@ -107,12 +107,14 @@ impl ComponentInstance {
 /// ```
 ///
 /// This is the runtime mirror of `proto-cap::port::NotificationPort::required_scope()`
-/// (`Scope::new(Resource::Order, Action::Notify)`, scope.rs discriminants 0x06/0x08).
+/// (`Scope::new(vec![(Resource::Order, Action::Notify)])`, scope.rs discriminants 0x06/0x08).
 pub fn allowed_imports_for_scope(scope: &Scope) -> Vec<String> {
-    match (scope.resource, scope.action) {
-        (Resource::Order, Action::Notify) => vec!["notify-telegram".to_string()],
-        // Everything else is denied: zero ambient authority.
-        _ => Vec::new(),
+    // Scope is a SET of (Resource, Action) grants. Notify is granted iff the
+    // (Order, Notify) grant is present; everything else is denied (zero ambient authority).
+    if scope.grants.iter().any(|(r, a)| *r == Resource::Order && *a == Action::Notify) {
+        vec!["notify-telegram".to_string()]
+    } else {
+        Vec::new()
     }
 }
 
@@ -226,7 +228,7 @@ mod tests {
     #[cfg(not(feature = "wasm"))]
     #[test]
     fn stub_returns_wasm_runtime_disabled() {
-        let scope = Scope::new(Resource::Order, Action::Notify);
+        let scope = Scope::new(vec![(Resource::Order, Action::Notify)]);
         let res = instantiate(b"\0asm", &scope);
         assert!(
             matches!(res, Err(HostError::WasmRuntimeDisabled)),
@@ -238,17 +240,17 @@ mod tests {
     fn allowed_imports_matrix_is_deny_by_default() {
         // Order::Notify is the only granted capability.
         assert_eq!(
-            allowed_imports_for_scope(&Scope::new(Resource::Order, Action::Notify)),
+            allowed_imports_for_scope(&Scope::new(vec![(Resource::Order, Action::Notify)])),
             vec!["notify-telegram".to_string()]
         );
         // Any other scope resolves to an EMPTY allow-set (no ambient authority).
         assert!(
-            allowed_imports_for_scope(&Scope::new(Resource::Order, Action::CreateOrder)).is_empty()
+            allowed_imports_for_scope(&Scope::new(vec![(Resource::Order, Action::CreateOrder)])).is_empty()
         );
         assert!(
-            allowed_imports_for_scope(&Scope::new(Resource::Ledger, Action::Append)).is_empty()
+            allowed_imports_for_scope(&Scope::new(vec![(Resource::Ledger, Action::Append)])).is_empty()
         );
-        assert!(allowed_imports_for_scope(&Scope::new(Resource::Route, Action::Send)).is_empty());
+        assert!(allowed_imports_for_scope(&Scope::new(vec![(Resource::Route, Action::Send)])).is_empty());
     }
 
     // R-DK03 (feature ON, real wasmtime): a component granted ONLY `Notify` that
@@ -263,7 +265,7 @@ mod tests {
         let allowed = include_bytes!("testdata/allowed.wasm");
         let evil = include_bytes!("testdata/evil.wasm");
 
-        let notify_scope = Scope::new(Resource::Order, Action::Notify);
+        let notify_scope = Scope::new(vec![(Resource::Order, Action::Notify)]);
 
         // Granted only Notify -> instantiates successfully (host provides exactly
         // the one allowed import).
