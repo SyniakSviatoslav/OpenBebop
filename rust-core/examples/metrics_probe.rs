@@ -39,13 +39,19 @@ fn main() {
         bebop_core::field_spectral(u0.as_ptr(), 5.0, 1.0, 30, out.as_mut_ptr());
     }
 
-    let mut m = [0.0f64; 5];
-    let rc = unsafe { bebop_core::field_metrics(m.as_mut_ptr(), 5) };
+    let mut m = [0.0f64; 8];
+    let rc = unsafe { bebop_core::field_metrics(m.as_mut_ptr(), 8) };
     assert_eq!(rc, 0, "field_metrics failed");
     println!(
-        "metrics: count={} sum_energy={:.6} max_energy={:.6} mean_energy={:.6} nodes={}",
-        m[0] as i64, m[1], m[2], m[3], m[4] as i64
+        "metrics: count={} sum_dU={:.6} max_dU={:.6} mean_dU={:.6} nodes={} E_last={:.6} E0={:.6} stabilize_ratio={:.6}",
+        m[0] as i64, m[1], m[2], m[3], m[4] as i64, m[5], m[6], m[7]
     );
     assert!(m[0] >= 2.0, "expected >=2 propagations recorded");
     assert!(m[1] > 0.0, "expected positive total energy");
+    // ENERGY DOCTRINE: contractive field ⇒ stabilize_ratio ≤ 1 (relaxes toward ZERO ground state)
+    assert!(
+        m[7] <= 1.0 + 1e-9,
+        "stabilize_ratio must be <= 1, got {}",
+        m[7]
+    );
 }

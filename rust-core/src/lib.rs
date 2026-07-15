@@ -138,6 +138,26 @@ fn lambda_max(d: &[f64]) -> f64 {
     2.0 * m
 }
 
+/// ENERGY DOCTRINE (stabilized core ZERO, 2026-07-15): the graph IS a circuit; the Laplacian
+/// `L = D − A` is its conductance matrix. Field energy `E(u) = ½·uᵀL·u = ½·Σ_edges(u_i−u_j)²`
+/// is exactly resistor-network dissipation power (Ohm: P = Σ(ΔV)²/R). The contractive propagator
+/// `exp(−coeff·L·t)` has eigenvalues ∈ (0,1] ⇒ E is NON-INCREASING ⇒ the field relaxes to the
+/// ZERO ground state (uniform u ⇒ ∇u=0 ⇒ E=0). We keep a running energy ledger so the host can
+/// observe stabilization (E_last/E0 ≤ 1, → 0 at equilibrium).
+/// Tuple = (E0 baseline, E_last after most recent propagation, E_cum dissipated).
+static ENERGY: std::sync::Mutex<(f64, f64, f64)> = std::sync::Mutex::new((0.0, 0.0, 0.0));
+
+/// Field energy `E(u) = ½·uᵀ·(L·u)` via one mat-vec (O(nnz), zero alloc). The circuit energy.
+fn field_energy(u: &[f64], rp: &[i32], ci: &[i32], d: &[f64]) -> f64 {
+    let mut lu = vec![0.0f64; u.len()];
+    field_matvec_raw(u, &mut lu, rp, ci, d, None);
+    let mut e = 0.0;
+    for i in 0..u.len() {
+        e += u[i] * lu[i];
+    }
+    0.5 * e
+}
+
 /// Sparse mat-vec: y = L · x  where L = D - A (unnormalized graph Laplacian).
 /// `degrees` is the precomputed D; `mask` (len n, or null) zeroes masked rows (but neighbors are
 /// still touched so the field propagates OUT of the active set). All buffers are caller-owned.
@@ -268,6 +288,17 @@ pub unsafe extern "C" fn field_spectral(
                     }
                     acc.0 += 1;
                 }
+                // ENERGY DOCTRINE: record circuit energy of the field before/after this step.
+                let mut en = ENERGY.lock().unwrap();
+                let e0 = field_energy(xs, rp, ci, d);
+                let e1 = field_energy(&res, rp, ci, d);
+                if acc.0 == 1 {
+                    en.0 = e0; // baseline on first propagation
+                }
+                en.2 += (en.1 - e1).max(0.0); // cumulative dissipated (non-negative by contractive invariant)
+                en.1 = e1;
+                drop(en);
+                drop(acc);
                 os.copy_from_slice(&res);
                 0
             }
@@ -436,26 +467,30 @@ pub unsafe extern "C" fn field_cost(
 /// metaplasticity signal). A node that moves a lot under the field is "critical" → its exposure to
 /// a disruption weighs more in `field_cost`/`field_rank`. Returns 0 on success; the n-vector in
 /// `out` is monotonic-normalized to [0,1] (max node = 1.0) so it is directly usable as `sensitivity`.
-/// OPTION-#1 OBSERVABILITY (2026-07-15 decart): expose kernel numeric state to the host over the
-/// existing C-ABI/linear-memory contract — zero deps, no phone-home, wasm empty-import-safe.
-/// Writes a 5-tuple into `out` (len ≥ 5):
+/// OPTION-#1 OBSERVABILITY (2026-07-15 decart) + ENERGY DOCTRINE: expose kernel numeric + energy
+/// state to the host over the C-ABI/linear-memory contract — zero deps, no phone-home, wasm
+/// empty-import-safe. Writes into `out` (len ≥ 8; values beyond len are skipped):
 ///   [0] propagation count (ACCUM.0)
-///   [1] Σ field_energy       (total |Δu| across all propagations since build)
-///   [2] max per-node energy
-///   [3] mean per-node energy
+///   [1] Σ field_energy       (total |Δu| across propagations since build — sensitivity proxy)
+///   [2] max per-node |Δu|
+///   [3] mean per-node |Δu|
 ///   [4] n (node count)
-/// Returns 0 on success, 1 on empty graph. The host (`tools/telemetry bench_run`) samples this;
-/// the kernel never logs or transmits — sovereign gate preserved.
+///   [5] E_last   circuit energy ½uᵀLu after most recent propagation
+///   [6] E0       baseline circuit energy (first propagation)
+///   [7] stabilize_ratio = E_last/E0  (≤1 contractive; →0 at ZERO ground state)
+/// Returns 0 on success, 1 on empty graph. Host (`tools/telemetry`) samples this; kernel never logs.
 #[no_mangle]
 pub unsafe extern "C" fn field_metrics(out: *mut f64, n: i32) -> i32 {
     let acc = ACCUM.lock().unwrap();
+    let en = ENERGY.lock().unwrap();
     let (count, e) = (&acc.0, &acc.1);
+    let (e0, e_last, _e_cum) = (&en.0, &en.1, &en.2);
     let nn = e.len();
     if nn == 0 {
         return 1;
     }
     if n < 5 {
-        return 1; // caller under-allocated
+        return 1; // caller under-allocated for even the base tuple
     }
     let os = unsafe { core::slice::from_raw_parts_mut(out, n as usize) };
     let sum: f64 = e.iter().sum();
@@ -465,6 +500,11 @@ pub unsafe extern "C" fn field_metrics(out: *mut f64, n: i32) -> i32 {
     os[2] = max_e;
     os[3] = if nn > 0 { sum / nn as f64 } else { 0.0 };
     os[4] = nn as f64;
+    if n >= 8 {
+        os[5] = *e_last;
+        os[6] = *e0;
+        os[7] = if *e0 > 0.0 { *e_last / *e0 } else { 0.0 };
+    }
     0
 }
 
@@ -674,7 +714,7 @@ mod tests {
         let rc0 = unsafe { field_metrics(m0.as_mut_ptr(), 5) };
         assert_eq!(rc0, 0);
         assert_eq!(m0[0], 0.0, "count must start at 0"); // no propagations yet
-        // run two propagations
+                                                         // run two propagations
         let mut u0 = [0.0f64; 20];
         u0[0] = 1.0;
         let mut out = [0.0f64; 20];
@@ -689,6 +729,58 @@ mod tests {
         assert!(m1[1] > m0[1], "Σenergy must grow after propagations");
         assert!(m1[2] >= 0.0, "max energy must be defined");
         assert_eq!(m1[4], 20.0, "n must equal node count");
+    }
+
+    #[test]
+    fn test_field_energy_stabilizes() {
+        // ENERGY DOCTRINE (Verified-by-Math): contractive propagator exp(-cLt) has eigenvalues
+        // in (0,1] => E(u(t)) = ½u(t)ᵀLu(t) is NON-INCREASING. Assert E_after <= E_before.
+        let _g = TEST_LOCK.lock().unwrap();
+        let (rp, ci, nnz) = path_graph(20);
+        unsafe {
+            field_build(rp.as_ptr(), ci.as_ptr(), nnz, 20);
+        }
+        let mut u0 = [0.0f64; 20];
+        u0[0] = 1.0; // impulse -> nonzero gradient -> nonzero energy
+        let mut out = [0.0f64; 20];
+        // baseline energy before any propagation
+        let e_before = unsafe {
+            let mut tmp = [0.0f64; 20];
+            field_matvec(u0.as_ptr(), tmp.as_mut_ptr(), core::ptr::null());
+            let mut s = 0.0;
+            for i in 0..20 {
+                s += u0[i] * tmp[i];
+            }
+            0.5 * s
+        };
+        unsafe {
+            field_spectral(u0.as_ptr(), 50.0, 1.0, 60, out.as_mut_ptr());
+        }
+        let e_after = unsafe {
+            let mut tmp = [0.0f64; 20];
+            field_matvec(out.as_ptr(), tmp.as_mut_ptr(), core::ptr::null());
+            let mut s = 0.0;
+            for i in 0..20 {
+                s += out[i] * tmp[i];
+            }
+            0.5 * s
+        };
+        assert!(
+            e_before > 0.0,
+            "baseline energy must be positive for an impulse"
+        );
+        assert!(
+            e_after <= e_before + 1e-9,
+            "field energy must NOT increase under contractive propagator: before={e_before} after={e_after}"
+        );
+        // sample via field_metrics: stabilize_ratio must be <= 1
+        let mut m = [0.0f64; 8];
+        unsafe { field_metrics(m.as_mut_ptr(), 8) };
+        assert!(
+            m[7] <= 1.0 + 1e-9,
+            "stabilize_ratio must be <= 1, got {}",
+            m[7]
+        );
     }
 
     #[test]
