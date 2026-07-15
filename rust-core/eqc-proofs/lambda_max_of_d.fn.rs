@@ -2,5 +2,5 @@
 /// f64 variant — dynamics path (not bitwise-deterministic across targets on libm calls).
 #[inline(always)]
 pub fn lambda_max_of_d_f64(d: f64) -> f64 {
-    2.0*d
+    2.0 * d
 }

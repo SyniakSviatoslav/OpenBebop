@@ -2,5 +2,5 @@
 /// f64 variant — dynamics path (not bitwise-deterministic across targets on libm calls).
 #[inline(always)]
 pub fn cheby_recur_weight_f64(b: f64) -> f64 {
-    2.0*b.recip()
+    2.0 * b.recip()
 }

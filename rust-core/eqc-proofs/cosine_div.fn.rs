@@ -2,5 +2,5 @@
 /// f64 variant — dynamics path (not bitwise-deterministic across targets on libm calls).
 #[inline(always)]
 pub fn cosine_div_f64(dot: f64, na: f64, nb: f64) -> f64 {
-    dot*(na*nb).sqrt().recip()
+    dot * (na * nb).sqrt().recip()
 }

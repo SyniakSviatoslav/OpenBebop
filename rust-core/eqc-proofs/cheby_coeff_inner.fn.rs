@@ -2,6 +2,8 @@
 /// f64 variant — dynamics path (not bitwise-deterministic across targets on libm calls).
 #[inline(always)]
 pub fn cheby_coeff_inner_f64(b: f64, coeff: f64, t: f64, k: f64, theta: f64, qp: f64) -> f64 {
-    2.0*(-0.5*b*coeff*t - 0.5*b*coeff*t*theta.cos()).exp()*(k*theta).cos()*qp.recip()
+    2.0 * (-0.5 * b * coeff * t - 0.5 * b * coeff * t * theta.cos()).exp()
+        * (k * theta).cos()
+        * qp.recip()
 }
 // function-only companion of cheby_coeff_inner.rs (for tests/ include)
