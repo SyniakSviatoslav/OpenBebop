@@ -39,12 +39,27 @@ fn main() {
         bebop_core::field_spectral(u0.as_ptr(), 5.0, 1.0, 30, out.as_mut_ptr());
     }
 
-    let mut m = [0.0f64; 8];
-    let rc = unsafe { bebop_core::field_metrics(m.as_mut_ptr(), 8) };
+    // also exercise the bridge cargos so their call counters increment (lightweight tallies)
+    let mut rank_out = [0.0f64; 8];
+    unsafe {
+        bebop_core::field_rank(
+            u0.as_ptr(),
+            core::ptr::null(),
+            5.0,
+            1.0,
+            30,
+            rank_out.as_mut_ptr(),
+        );
+        let _ = bebop_core::field_cost(u0.as_ptr(), core::ptr::null(), 5.0, 1.0, 30);
+    }
+
+    let mut m = [0.0f64; 12];
+    let rc = unsafe { bebop_core::field_metrics(m.as_mut_ptr(), 12) };
     assert_eq!(rc, 0, "field_metrics failed");
     println!(
-        "metrics: count={} sum_dU={:.6} max_dU={:.6} mean_dU={:.6} nodes={} E_last={:.6} E0={:.6} stabilize_ratio={:.6}",
-        m[0] as i64, m[1], m[2], m[3], m[4] as i64, m[5], m[6], m[7]
+        "metrics: count={} sum_dU={:.6} max_dU={:.6} mean_dU={:.6} nodes={} E_last={:.6} E0={:.6} stabilize_ratio={:.6} rank={} cost={} spectral={} active={}",
+        m[0] as i64, m[1], m[2], m[3], m[4] as i64, m[5], m[6], m[7],
+        m[8] as i64, m[9] as i64, m[10] as i64, m[11] as i64
     );
     assert!(m[0] >= 2.0, "expected >=2 propagations recorded");
     assert!(m[1] > 0.0, "expected positive total energy");
@@ -54,4 +69,8 @@ fn main() {
         "stabilize_ratio must be <= 1, got {}",
         m[7]
     );
+    // LIGHTWEIGHT COUNTERS: rank/cost were each called once above
+    assert_eq!(m[8] as i64, 1, "rank_calls must be 1");
+    assert_eq!(m[9] as i64, 1, "cost_calls must be 1");
+    assert_eq!(m[10] as i64, 2, "spectral_calls must be 2");
 }

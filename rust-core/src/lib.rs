@@ -73,6 +73,8 @@ pub unsafe extern "C" fn field_build(
     st.n = n;
     let mut acc = ACCUM.lock().unwrap();
     *acc = (0usize, vec![0.0f64; n as usize]); // reset sensitivity accumulation on every build
+    *ENERGY.lock().unwrap() = (0.0, 0.0, 0.0); // reset circuit-energy ledger on rebuild
+    *CALLS.lock().unwrap() = (0u64, 0u64, 0u64, 0u64); // reset per-cargo call tallies on rebuild
     0
 }
 
@@ -103,6 +105,8 @@ pub unsafe extern "C" fn field_build_f32(
     st.n = n;
     let mut acc = ACCUM.lock().unwrap();
     *acc = (0usize, vec![0.0f64; n as usize]); // reset sensitivity accumulation on every build
+    *ENERGY.lock().unwrap() = (0.0, 0.0, 0.0); // reset circuit-energy ledger on rebuild
+    *CALLS.lock().unwrap() = (0u64, 0u64, 0u64, 0u64); // reset per-cargo call tallies on rebuild
     0
 }
 
@@ -146,6 +150,13 @@ fn lambda_max(d: &[f64]) -> f64 {
 /// observe stabilization (E_last/E0 ≤ 1, → 0 at equilibrium).
 /// Tuple = (E0 baseline, E_last after most recent propagation, E_cum dissipated).
 static ENERGY: std::sync::Mutex<(f64, f64, f64)> = std::sync::Mutex::new((0.0, 0.0, 0.0));
+
+/// LIGHTWEIGHT CALL COUNTERS (operator 2026-07-15): per-cargo invocation tallies for telemetry
+/// volume — NOT field-evolution energy (rank/cost are cost-surface READS, not propagations).
+/// Tuple = (rank_calls, cost_calls, spectral_calls, active_calls). Zero deps, lock-free-to-read
+/// via the mutex. Lets the host see query pressure per cargo without double-counting as energy.
+static CALLS: std::sync::Mutex<(u64, u64, u64, u64)> =
+    std::sync::Mutex::new((0u64, 0u64, 0u64, 0u64));
 
 /// Field energy `E(u) = ½·uᵀ·(L·u)` via one mat-vec (O(nnz), zero alloc). The circuit energy.
 fn field_energy(u: &[f64], rp: &[i32], ci: &[i32], d: &[f64]) -> f64 {
@@ -276,6 +287,7 @@ pub unsafe extern "C" fn field_spectral(
     out: *mut f64,
 ) -> i32 {
     let rc = with_graph(|rp, ci, d, n| -> i32 {
+        CALLS.lock().unwrap().2 += 1; // spectral call tally
         let xs = unsafe { core::slice::from_raw_parts(u0, n) };
         let os = unsafe { core::slice::from_raw_parts_mut(out, n) };
         match spectral_propagate(xs, t, coeff, deg, rp, ci, d) {
@@ -325,6 +337,7 @@ pub unsafe extern "C" fn field_active(
     active_count: *mut i32,
 ) -> i32 {
     let rc = with_graph(|rp, ci, d, n| -> i32 {
+        CALLS.lock().unwrap().3 += 1; // active call tally
         if n == 0 {
             return 0;
         }
@@ -416,6 +429,7 @@ pub unsafe extern "C" fn field_rank(
     out: *mut f64,
 ) -> i32 {
     with_graph(|rp, ci, d, n| -> i32 {
+        CALLS.lock().unwrap().0 += 1; // rank call tally
         if n == 0 {
             return 1;
         }
@@ -451,6 +465,7 @@ pub unsafe extern "C" fn field_cost(
     deg: i32,
 ) -> f64 {
     with_graph(|rp, ci, d, n| -> f64 {
+        CALLS.lock().unwrap().1 += 1; // cost call tally
         if n == 0 {
             return -1.0;
         }
@@ -489,13 +504,19 @@ pub unsafe extern "C" fn field_cost(
 ///   [5] E_last   circuit energy ½uᵀLu after most recent propagation
 ///   [6] E0       baseline circuit energy (first propagation)
 ///   [7] stabilize_ratio = E_last/E0  (≤1 contractive; →0 at ZERO ground state)
+///   [8] rank_calls    (field_rank invocations — PDDL cost-surface READS, not energy)
+///   [9] cost_calls    (field_cost invocations — same)
+///   [10] spectral_calls (field_spectral invocations)
+///   [11] active_calls   (field_active invocations)
 /// Returns 0 on success, 1 on empty graph. Host (`tools/telemetry`) samples this; kernel never logs.
 #[no_mangle]
 pub unsafe extern "C" fn field_metrics(out: *mut f64, n: i32) -> i32 {
     let acc = ACCUM.lock().unwrap();
     let en = ENERGY.lock().unwrap();
+    let calls = CALLS.lock().unwrap();
     let (count, e) = (&acc.0, &acc.1);
     let (e0, e_last, _e_cum) = (&en.0, &en.1, &en.2);
+    let (cr, cc, cs, ca) = (&calls.0, &calls.1, &calls.2, &calls.3);
     let nn = e.len();
     if nn == 0 {
         return 1;
@@ -515,6 +536,12 @@ pub unsafe extern "C" fn field_metrics(out: *mut f64, n: i32) -> i32 {
         os[5] = *e_last;
         os[6] = *e0;
         os[7] = if *e0 > 0.0 { *e_last / *e0 } else { 0.0 };
+    }
+    if n >= 12 {
+        os[8] = *cr as f64;
+        os[9] = *cc as f64;
+        os[10] = *cs as f64;
+        os[11] = *ca as f64;
     }
     0
 }
@@ -851,6 +878,56 @@ mod tests {
             "stabilize_ratio must be <= 1, got {}",
             m[7]
         );
+    }
+
+    #[test]
+    fn test_field_call_counters() {
+        // LIGHTWEIGHT COUNTERS: rank/cost (bridge READS) must increment their tallies independently
+        // of energy evolution. Asserts the per-cargo call counts accrue without touching energy.
+        // TEST_LOCK serializes against other kernel tests so the global CALLS counter is deterministic.
+        let _g = TEST_LOCK.lock().unwrap();
+        let (rp, ci, nnz) = path_graph(20);
+        unsafe {
+            field_build(rp.as_ptr(), ci.as_ptr(), nnz, 20);
+        }
+        let u0 = [1.0f64; 20];
+        let mut out = [0.0f64; 20];
+        let mut ac = [0i32; 1];
+        unsafe {
+            field_rank(
+                u0.as_ptr(),
+                core::ptr::null(),
+                1.0,
+                1.0,
+                20,
+                out.as_mut_ptr(),
+            );
+            let _ = field_cost(u0.as_ptr(), core::ptr::null(), 1.0, 1.0, 20);
+            field_rank(
+                u0.as_ptr(),
+                core::ptr::null(),
+                1.0,
+                1.0,
+                20,
+                out.as_mut_ptr(),
+            );
+            field_active(
+                u0.as_ptr(),
+                10,
+                0.1,
+                1.0,
+                1e-4,
+                out.as_mut_ptr(),
+                ac.as_mut_ptr(),
+            );
+        }
+        let mut m = [0.0f64; 12];
+        unsafe { field_metrics(m.as_mut_ptr(), 12) };
+        // rank called twice, cost once, spectral 0, active once
+        assert_eq!(m[8] as i64, 2, "rank_calls");
+        assert_eq!(m[9] as i64, 1, "cost_calls");
+        assert_eq!(m[10] as i64, 0, "spectral_calls (not called here)");
+        assert_eq!(m[11] as i64, 1, "active_calls");
     }
 
     #[test]
