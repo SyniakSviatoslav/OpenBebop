@@ -83,6 +83,62 @@ for (const [script, why] of [
 }
 
 // ---------------------------------------------------------------------------
+// W3 / T7 — per-commit empty-import awareness for the sovereign core.
+//
+// The authoritative gate is the slow wasm-import-count proof in CI
+// (scripts/verify-empty-imports.sh, see .github/workflows/ci.yml sovereign-guards).
+// That build is too slow for a synchronous pre-commit, so here we add a FAST
+// structural proxy: when any file under bebop2-core/src is staged, scan for
+// imports that would break the bare-metal contract if NOT behind a
+// `cfg(feature = "std")` guard — std OS surface, or a C-built crypto backend
+// (ring / aws-lc-rs / getrandom / rand). A hit is ESCALATED (exit 2, tracked),
+// not a HARD block: the authoritative wasm gate in CI is the final word, and a
+// false-positive HARD here would block legitimate commits. This closes T7's
+// "feature-branch commit is not empty-import-gated locally" gap.
+// (T7's no-alloc decide() assertion is a dowiz-kernel contract, not bebop's —
+// intentionally N/A here; tracked as out-of-scope in the wave plan.)
+// ---------------------------------------------------------------------------
+console.log('◆ [sovereign/W3] per-commit empty-import scan on bebop2-core/src (fast proxy; authoritative wasm gate is CI)');
+{
+  const staged = sh('git', ['diff', '--cached', '--name-only', '--diff-filter=ACM']).out
+    .split('\n').filter((f) => /^bebop2\/core\/src\//.test(f));
+  if (staged.length === 0) {
+    console.log('   no bebop2-core/src changes staged — skip');
+  } else {
+    // Forbidden import tokens (would pull OS/C-crypto surface into the
+    // from-scratch core). Only a problem if NOT cfg-gated to the `std` feature.
+    const FORBID = [
+      /^use std\b/m, /^extern crate std\b/m,
+      /^use (ring|aws_lc_rs|aws_lc|getrandom|rand|rand_core|chrono|tokio|std::)\b/m,
+    ];
+    let flagged = 0;
+    for (const f of staged) {
+      const p = ROOT + '/' + f;
+      let src; try { src = readFileSync(p, 'utf8'); } catch { continue; }
+      // Split into cfg-gated blocks; only the non-std blocks must stay clean.
+      // Heuristic: if the whole file is `#![no_std]`-gated or has no `use std`
+      // outside a `cfg(feature = "std")` region, it's fine.
+      const lines = src.split('\n');
+      let inStdCfg = false;
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i];
+        if (/#\[\s*cfg\(\s*.*feature\s*=\s*"std"/.test(ln)) inStdCfg = true;
+        if (/#\[\s*cfg\(\s*not\(/.test(ln)) inStdCfg = false; // not(feature) closes the std-gate
+        if (inStdCfg) continue;
+        for (const re of FORBID) {
+          if (re.test(ln)) {
+            esc(`${f}:${i + 1} — bare-metal import outside cfg(feature=\"std\"): "${ln.trim()}" (W3 empty-import proxy; CI wasm gate is authoritative)`);
+            flagged++;
+            break;
+          }
+        }
+      }
+    }
+    if (flagged === 0) console.log(`   ${staged.length} file(s) scanned — clean (fast proxy)`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // §17 — critical thinking: detectable fallacies in staged DOC/PR text
 // ---------------------------------------------------------------------------
 console.log('◆ [§17] fallacy lint on staged docs/claims (ad hominem, correlation≠causation, appeal-to-authority, false dilemma)');
