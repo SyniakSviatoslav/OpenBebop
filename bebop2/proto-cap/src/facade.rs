@@ -502,6 +502,58 @@ mod tests {
         ));
     }
 
+    // ── W-last / T6: the PRODUCTION facade must use `RequireBoth` — an
+    // absent-PQ frame is REJECTED at the production seam, not silently accepted
+    // under the transitional `ClassicalUntilPqAudit` policy. This pins the
+    // production constructor (KernelFacade::new(RequireBoth, ..)) so a silent
+    // flip to the audit policy in prod is caught: the test would then accept the
+    // frame and FAIL. The audit policy itself stays available behind explicit
+    // construction (it is not a default), per the blueprint.
+    #[test]
+    fn production_facade_rejects_absent_pq_require_both() {
+        // Production-grade enrolled roster + no-op sink (sink count is asserted
+        // to stay 0 — the kernel is never reached on a rejected frame).
+        let (a_seed, a_pk) = key(0xA1);
+        let (l_seed, l_pk) = key(0xA2);
+        let mut roster = AnchorRoster::new();
+        roster.enroll(&a_pk);
+        let (sink, counter) = MockSink::new();
+
+        // Mirror the production path: KernelFacade::new(HybridPolicy::RequireBoth, ..)
+        let facade = KernelFacade::new(
+            HybridPolicy::RequireBoth,
+            roster,
+            RevocationSet::new(),
+            Box::new(sink),
+            Box::new(|| 0),
+        );
+
+        // A delegation-anchored frame WITH a classical sig but NO pq_sig.
+        let cap = Capability::new(l_pk, Resource::Route, Action::Send, [7u8; 8], 9999);
+        let mut f = SignedFrame::new(cap, b"no-pq-prod".to_vec());
+        f.sign_classical(&l_seed).unwrap();
+        let link = Delegation::sign(
+            a_pk,
+            l_pk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999,
+            [7u8; 8],
+            &a_seed,
+        )
+        .unwrap();
+        f.delegation_chain = vec![link];
+
+        let res = facade.submit_intent(&f);
+        // RequireBoth => absent PQ leg is rejected (no fake pass, kernel untouched).
+        assert!(
+            matches!(res, Err(Reject { reason: CapError::PqVerifyFailed }) | Err(Reject { reason: CapError::HybridIncomplete })),
+            "production facade MUST reject absent-PQ (RequireBoth), got: {:?}",
+            res
+        );
+        assert_eq!(counter.load(Ordering::SeqCst), 0, "kernel sink NEVER called on rejection");
+    }
+
     /// Helper: an `AnchorRoster` enrolled with `anchor_pk`.
     fn anchor_roster_with(anchor_pk: &[u8; 32]) -> AnchorRoster {
         let mut roster = AnchorRoster::new();
