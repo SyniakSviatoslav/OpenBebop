@@ -181,7 +181,19 @@ pub struct SpectralKalman {
 
 impl SpectralKalman {
     /// Build from a real diagonalizable A and noises Q, P0 (row-major n×n).
-    pub fn new(a: &[f64], q: &[f64], _p0: &[f64], n: usize) -> Self {
+    /// Fail-closed: the spectral eigenbasis path assumes `A` is real-symmetric
+    /// (Jacobi `real_eig` silently corrupts `P` for non-symmetric `A` — the
+    /// ~26%-wrong red-team flag). Callers with a genuinely non-symmetric `A`
+    /// must use the dense `KalmanFilter` instead.
+    pub fn new(a: &[f64], q: &[f64], _p0: &[f64], n: usize) -> Option<Self> {
+        // symmetry check (with a deterministic tolerance)
+        for i in 0..n {
+            for j in 0..n {
+                if (a[i * n + j] - a[j * n + i]).abs() > 1e-12 {
+                    return None; // non-symmetric → spectral path invalid, caller falls back
+                }
+            }
+        }
         let (eigvals, eigvecs) = real_eig(a, n);
         // V⁻¹ = inverse of eigenvector matrix (V is invertible).
         let v_inv = invert(&eigvecs, n);
@@ -193,13 +205,13 @@ impl SpectralKalman {
         matmul(&v_inv, &qv, n, &mut q_diag);
 
         let lambda: Vec<f64> = eigvals.iter().map(|c| c.re).collect();
-        SpectralKalman {
+        Some(SpectralKalman {
             n,
             v: eigvecs.to_vec(),
             v_inv,
             lambda,
             q_diag,
-        }
+        })
     }
 
     /// Resolvent recurrence in the eigenbasis. Returns P_k = A^k P0 Aᵀ^k + Σ A^j Q Aᵀ^j, assembled
@@ -398,6 +410,19 @@ impl KalmanFilter {
     pub fn n(&self) -> usize {
         self.n
     }
+
+    /// 1-D Kalman step (scalar state, static plant A=1).
+    /// Reconciliation point with the legacy `attic/core-legacy` closed-form
+    /// `kalman_1d`: this is the SAME verified n-D core specialized to n=1,
+    /// not a second divergent implementation. Proven equal to the legacy formula
+    /// to 1e-12 by `kalman_1d_matches_legacy_formula`.
+    /// `z` measurement, `x` prior mean, `p` prior var, `q` process var, `r` meas var.
+    pub fn kalman_1d(z: f64, x: f64, p: f64, q: f64, r: f64) -> (f64, f64) {
+        let mut kf = KalmanFilter::new(&[1.0], &[q], &[x], &[p], 1);
+        kf.predict();
+        kf.update(&[z], &[1.0], &[r]);
+        (kf.state()[0], kf.covariance()[0])
+    }
 }
 
 #[cfg(test)]
@@ -415,7 +440,8 @@ mod tests {
         let steps = 8usize;
 
         let dense = dense_kalman_p(&a, &q, &p0, steps, n);
-        let sk = SpectralKalman::new(&a, &q, &p0, n);
+        let sk = SpectralKalman::new(&a, &q, &p0, n)
+            .expect("symmetric A must build spectral path");
         let spectral = sk.covariance(&p0, steps);
 
         for i in 0..n * n {
@@ -465,6 +491,22 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn spectral_kalman_rejects_nonsymmetric_a() {
+        // RED-TEAM CLOSURE: the Jacobi eigenbasis path is only exact for
+        // real-symmetric A. A genuinely non-symmetric A must be REJECTED
+        // (return None) so callers fall back to the dense KalmanFilter —
+        // never silently produce a ~26%-wrong covariance.
+        let n = 2usize;
+        let a_non_sym = [0.9f64, 0.3, 0.1, 0.8]; // a01 != a10
+        let q = [1.0, 0.0, 0.0, 1.0];
+        let p0 = [1.0, 0.0, 0.0, 1.0];
+        assert!(
+            SpectralKalman::new(&a_non_sym, &q, &p0, n).is_none(),
+            "non-symmetric A must be rejected by the spectral path"
+        );
     }
 
     #[test]
@@ -560,27 +602,56 @@ mod tests {
         );
         assert!(k_late < 0.5, "converged gain should be modest, got {}", k_late);
     }
+}
+
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+
+    /// PARITY GATE: `KalmanFilter::kalman_1d` must agree with the legacy
+    /// `kalman_1d` closed form to 1e-12. The legacy formula (attic/core-legacy):
+    ///   x_pred = x; p_pred = p + q; k = p_pred/(p_pred+r);
+    ///   x_upd = x_pred + k*(z - x_pred); p_upd = (1-k)*p_pred.
+    fn legacy_kalman_1d(z: f64, x: f64, p: f64, q: f64, r: f64) -> (f64, f64) {
+        let x_pred = x;
+        let p_pred = p + q;
+        let k = if (p_pred + r) != 0.0 { p_pred / (p_pred + r) } else { 0.0 };
+        let x_upd = x_pred + k * (z - x_pred);
+        let p_upd = (1.0 - k) * p_pred;
+        (x_upd, p_upd)
+    }
 
     #[test]
-    fn update_follows_predict_state_propagation() {
-        // BP-21: state-mean propagation x ← A x during predict, then correction
-        // via measurement. A ramping plant x_{k+1}=x_k+0.5; observe it noisily.
-        let n = 1usize;
-        let a = [1.0f64];
-        let q = [0.25f64];
-        let x0 = [0.0f64];
-        let p0 = [1.0f64];
-        let h = [1.0f64];
-        let r = [1.0f64];
-        let mut kf = KalmanFilter::new(&a, &q, &x0, &p0, n);
-        // after one predict x should be 0 (A·0); after update with z=0.5 → x≈0.5.
-        kf.predict();
-        assert!((kf.state()[0]).abs() < 1e-12, "predict should propagate x");
-        kf.update(&[0.5], &h, &r);
+    fn kalman_1d_matches_legacy_formula() {
+        // Reconciliation: the single core reproduces the legacy 1-D result exactly.
+        let cases = [
+            (7.3, 0.0, 100.0, 1e-6, 4.0),
+            (5.0, 2.0, 1.0, 0.25, 1.0),
+            (1.0, 0.5, 10.0, 0.1, 0.5),
+            (-3.2, -2.0, 4.0, 0.05, 2.0),
+        ];
+        for &(z, x, p, q, r) in &cases {
+            let (lx, lp) = legacy_kalman_1d(z, x, p, q, r);
+            let (cx, cp) = KalmanFilter::kalman_1d(z, x, p, q, r);
+            assert!(
+                (cx - lx).abs() < 1e-12 && (cp - lp).abs() < 1e-12,
+                "kalman_1d divergence: legacy=({},{}) core=({},{})",
+                lx, lp, cx, cp
+            );
+        }
+    }
+
+    #[test]
+    fn kalman_full_filter_reduces_to_1d() {
+        // The general n=1 KalmanFilter reduces to the classic scalar update.
+        let z = 7.3; let x = 0.0; let p = 100.0; let q = 1e-6; let r = 4.0;
+        let mut kf = KalmanFilter::new(&[1.0], &[q], &[x], &[p], 1);
+        kf.predict(); kf.update(&[z], &[1.0], &[r]);
+        let legacy = legacy_kalman_1d(z, x, p, q, r);
         assert!(
-            (kf.state()[0] - 0.5).abs() < 0.3,
-            "update should pull estimate toward measurement 0.5, got {}",
-            kf.state()[0]
+            (kf.state()[0] - legacy.0).abs() < 1e-12
+                && (kf.covariance()[0] - legacy.1).abs() < 1e-12,
+            "n=1 KalmanFilter must equal scalar kalman_1d"
         );
     }
 }
