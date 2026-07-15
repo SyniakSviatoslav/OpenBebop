@@ -436,6 +436,38 @@ pub unsafe extern "C" fn field_cost(
 /// metaplasticity signal). A node that moves a lot under the field is "critical" → its exposure to
 /// a disruption weighs more in `field_cost`/`field_rank`. Returns 0 on success; the n-vector in
 /// `out` is monotonic-normalized to [0,1] (max node = 1.0) so it is directly usable as `sensitivity`.
+/// OPTION-#1 OBSERVABILITY (2026-07-15 decart): expose kernel numeric state to the host over the
+/// existing C-ABI/linear-memory contract — zero deps, no phone-home, wasm empty-import-safe.
+/// Writes a 5-tuple into `out` (len ≥ 5):
+///   [0] propagation count (ACCUM.0)
+///   [1] Σ field_energy       (total |Δu| across all propagations since build)
+///   [2] max per-node energy
+///   [3] mean per-node energy
+///   [4] n (node count)
+/// Returns 0 on success, 1 on empty graph. The host (`tools/telemetry bench_run`) samples this;
+/// the kernel never logs or transmits — sovereign gate preserved.
+#[no_mangle]
+pub unsafe extern "C" fn field_metrics(out: *mut f64, n: i32) -> i32 {
+    let acc = ACCUM.lock().unwrap();
+    let (count, e) = (&acc.0, &acc.1);
+    let nn = e.len();
+    if nn == 0 {
+        return 1;
+    }
+    if n < 5 {
+        return 1; // caller under-allocated
+    }
+    let os = unsafe { core::slice::from_raw_parts_mut(out, n as usize) };
+    let sum: f64 = e.iter().sum();
+    let max_e = e.iter().cloned().fold(0.0f64, f64::max);
+    os[0] = *count as f64;
+    os[1] = sum;
+    os[2] = max_e;
+    os[3] = if nn > 0 { sum / nn as f64 } else { 0.0 };
+    os[4] = nn as f64;
+    0
+}
+
 /// If no propagations have run, returns uniform 1.0 (no bias). Empty graph → rc 1.
 #[no_mangle]
 pub unsafe extern "C" fn field_sensitivity(out: *mut f64) -> i32 {
@@ -629,6 +661,34 @@ mod tests {
             rp[(i + 1) as usize] = e;
         }
         (rp, ci, e)
+    }
+
+    #[test]
+    fn test_field_metrics_monotonic() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let (rp, ci, nnz) = path_graph(20);
+        unsafe {
+            field_build(rp.as_ptr(), ci.as_ptr(), nnz, 20);
+        }
+        let mut m0 = [0.0f64; 5];
+        let rc0 = unsafe { field_metrics(m0.as_mut_ptr(), 5) };
+        assert_eq!(rc0, 0);
+        assert_eq!(m0[0], 0.0, "count must start at 0"); // no propagations yet
+        // run two propagations
+        let mut u0 = [0.0f64; 20];
+        u0[0] = 1.0;
+        let mut out = [0.0f64; 20];
+        unsafe {
+            field_spectral(u0.as_ptr(), 5.0, 1.0, 30, out.as_mut_ptr());
+            field_spectral(u0.as_ptr(), 5.0, 1.0, 30, out.as_mut_ptr());
+        }
+        let mut m1 = [0.0f64; 5];
+        let rc1 = unsafe { field_metrics(m1.as_mut_ptr(), 5) };
+        assert_eq!(rc1, 0);
+        assert_eq!(m1[0], 2.0, "count must increment per propagation");
+        assert!(m1[1] > m0[1], "Σenergy must grow after propagations");
+        assert!(m1[2] >= 0.0, "max energy must be defined");
+        assert_eq!(m1[4], 20.0, "n must equal node count");
     }
 
     #[test]

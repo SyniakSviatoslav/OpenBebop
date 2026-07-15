@@ -1,0 +1,51 @@
+// rust-core/examples/metrics_probe.rs
+// OPTION-#1 OBSERVABILITY sample: build a small path graph, run a propagation, then read the
+// kernel's numeric state via `field_metrics` (C-ABI). Prints the 5-tuple the host telemetry
+// loop consumes. Doubles as a self-proving smoke test of the metric surface.
+//
+//   cargo run --example metrics_probe
+//
+// Output (single line, space-separated):
+//   metrics: count=<n> sum_energy=<f> max_energy=<f> mean_energy=<f> nodes=<n>
+
+fn main() {
+    // 8-node path graph: edges (i,i+1)
+    let n = 8i32;
+    let mut rp = vec![0i32; (n + 1) as usize];
+    let mut ci = Vec::new();
+    let mut e = 0i32;
+    for i in 0..n {
+        if i > 0 {
+            ci.push(i - 1);
+            e += 1;
+        }
+        if i < n - 1 {
+            ci.push(i + 1);
+            e += 1;
+        }
+        rp[(i + 1) as usize] = e;
+    }
+    unsafe {
+        let rc = bebop_core::field_build(rp.as_ptr(), ci.as_ptr(), e, n);
+        assert_eq!(rc, 0, "field_build failed");
+    }
+
+    let mut u0 = [0.0f64; 8];
+    u0[0] = 1.0;
+    let mut out = [0.0f64; 8];
+    unsafe {
+        // two propagations so count > 0 and energy accrues
+        bebop_core::field_spectral(u0.as_ptr(), 5.0, 1.0, 30, out.as_mut_ptr());
+        bebop_core::field_spectral(u0.as_ptr(), 5.0, 1.0, 30, out.as_mut_ptr());
+    }
+
+    let mut m = [0.0f64; 5];
+    let rc = unsafe { bebop_core::field_metrics(m.as_mut_ptr(), 5) };
+    assert_eq!(rc, 0, "field_metrics failed");
+    println!(
+        "metrics: count={} sum_energy={:.6} max_energy={:.6} mean_energy={:.6} nodes={}",
+        m[0] as i64, m[1], m[2], m[3], m[4] as i64
+    );
+    assert!(m[0] >= 2.0, "expected >=2 propagations recorded");
+    assert!(m[1] > 0.0, "expected positive total energy");
+}
