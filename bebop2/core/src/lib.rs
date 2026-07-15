@@ -332,6 +332,8 @@ pub mod speedometer; // zero-dep bench + entropy gauge (benchmark-as-speedometer
                      // the dual-authority hazard kill.
 #[cfg(any(feature = "std", feature = "host"))]
 pub mod linalg; // the single authoritative eigensolver (Faddeev-LeVerrier + Durand-Kerner)
+#[cfg(any(feature = "std", feature = "host"))]
+pub mod energy; // vectorless graph-energy + spectral_radius (routes through linalg::eigenvalues)
 #[cfg(feature = "host")]
 pub mod vsa; // vector symbolic archive (hyperplane bundling, not dense matrices) // closed-loop controller: generate→reflect→supervise, Lyapunov freeze, rollback-to-best
 
