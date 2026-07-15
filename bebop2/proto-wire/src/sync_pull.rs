@@ -1022,4 +1022,160 @@ mod tests {
         // And it must NOT be the legacy placeholder.
         assert_ne!(cap.grants, vec![(Resource::Ledger, Action::Read)]);
     }
+
+    // ── W1 (T3): N-node convergence is a graph fixed-point under a seeded,
+    // reproducible adversarial schedule (partition + replay + duplicate
+    // delivery). Generalizes the example-only
+    // `two_diverged_nodes_converge_identical_after_pull` into a property test.
+    //
+    // Property (graph fixed-point): after a schedule that ends in a full-mesh
+    // anti-entropy round, EVERY node's Merkle root equals the root of the union
+    // of all authored content-ids, and re-ingesting the union is a pure no-op
+    // (content-id idempotence under replay). Seeded deterministic RNG — no new
+    // dev-dependency (proto-wire stays zero-dep / offline-clean). A failing seed
+    // is logged in the assertion message and reproducible.
+    //
+    // innovate: property fuzzing uses a hand-rolled xorshift because proptest's
+    // transitive dev-tree is unnecessary here; upgrade trigger: if we later need
+    // shrinking of arbitrary structured inputs, adopt proptest (dev-only, guarded
+    // by ci-core-no-ccrypto.sh so it can never enter the shipped graph).
+
+    /// xorshift64 — tiny, zero-dep, deterministic from a u64 seed.
+    fn seeded_rng(mut s: u64) -> impl FnMut() -> u64 {
+        move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        }
+    }
+
+    fn n_node_convergence_run(seed: u64) {
+        let mut rng = seeded_rng(seed);
+
+        let nodes = 3 + (rng() % 4) as usize; // 3..=6
+        let mut keys: Vec<([u8; 32], [u8; 32])> = Vec::new();
+        for i in 0u8..(nodes as u8) {
+            keys.push(actor(i.wrapping_add(1)));
+        }
+        let mut peers: Vec<SyncPeer> = Vec::new();
+        let mut authored: Vec<[u8; 32]> = Vec::new();
+        for (i, (seed_k, pk)) in keys.iter().enumerate() {
+            let mut p = SyncPeer::new();
+            let nev = 1 + (rng() % 4) as u64; // 1..=4 events per node
+            let mut prev = [0u8; 32];
+            for seq in 1..=nev {
+                let payload = format!("n{}-s{}", i, seq).into_bytes();
+                let f = SyncFrame::sign(SyncScope::pull(), prev, *pk, seq, payload, seed_k);
+                prev = f.content_id;
+                authored.push(f.content_id);
+                p.local_commit(f);
+            }
+            peers.push(p);
+        }
+
+        // Adversarial schedule: intermediate rounds drop ~50% of links
+        // (simulated partitions); the FINAL round is a full mesh so convergence
+        // provably holds at the end.
+        let rounds = 2 + (rng() % 4) as usize; // 2..=5
+        for r in 0..rounds {
+            let full_mesh = r + 1 == rounds;
+            for a in 0..nodes {
+                for b in 0..nodes {
+                    if a == b {
+                        continue;
+                    }
+                    if !full_mesh && (rng() & 1) == 1 {
+                        continue; // partition: drop this link this round
+                    }
+                    // A pulls B's delta and folds it (bidirectional pair).
+                    let from_b = peers[b].pull(&peers[a].make_pull_request());
+                    let ra = peers[a].ingest(&from_b);
+                    // Duplicate delivery: re-send the SAME delta — must be a no-op.
+                    let ra_dup = peers[a].ingest(&from_b);
+                    assert_eq!(
+                        ra_dup.added, 0,
+                        "seed {:#x}: duplicate delivery must be a no-op (added={})",
+                        seed, ra_dup.added
+                    );
+                    let from_a = peers[a].pull(&peers[b].make_pull_request());
+                    let rb = peers[b].ingest(&from_a);
+                    let rb_dup = peers[b].ingest(&from_a);
+                    assert_eq!(
+                        rb_dup.added, 0,
+                        "seed {:#x}: duplicate delivery must be a no-op (added={})",
+                        seed, rb_dup.added
+                    );
+                    let _ = (ra, rb);
+                }
+            }
+        }
+
+        // Fixed-point: every node's root == union root; every node holds the
+        // full event universe.
+        let union_root = {
+            let mut m = MerkleLog::new();
+            for id in &authored {
+                m.add(*id);
+            }
+            m.root()
+        };
+        for a in 0..nodes {
+            for b in 0..nodes {
+                assert_eq!(
+                    peers[a].root(),
+                    peers[b].root(),
+                    "seed {:#x}: nodes {}/{} diverge after schedule",
+                    seed, a, b
+                );
+            }
+            assert_eq!(peers[a].root(), union_root, "seed {:#x}: node {} != union", seed, a);
+            assert_eq!(
+                peers[a].len(),
+                authored.len(),
+                "seed {:#x}: node {} missing events (have {}, want {})",
+                seed,
+                a,
+                peers[a].len(),
+                authored.len()
+            );
+        }
+
+        // Re-ingesting the full union (every node's current frames) is a pure
+        // no-op across the board — content-id idempotence under replay.
+        let mut all_frames: Vec<SyncFrame> = Vec::new();
+        for p in &peers {
+            all_frames.extend(p.pull(&PullRequest::new()));
+        }
+        for p in &mut peers {
+            let res = p.ingest(&all_frames);
+            assert_eq!(res.added, 0, "seed {:#x}: re-ingest must be no-op", seed);
+            assert_eq!(
+                res.dup,
+                all_frames.len(),
+                "seed {:#x}: re-ingest must be all dups",
+                seed
+            );
+            assert_eq!(res.rejected, 0, "seed {:#x}: no rejection on legit replays", seed);
+        }
+    }
+
+    #[test]
+    fn n_node_convergence_is_graph_fixed_point() {
+        // Single representative run with a logged seed.
+        n_node_convergence_run(0xC0FFEE_C0DE_1357_9A);
+    }
+
+    #[test]
+    fn n_node_convergence_seed_sweep() {
+        // M reproducible randomized schedules (xorshift-seeded). A well-proven
+        // FAIL (divergent root) is a successful run — this is the RED→GREEN gate.
+        for k in 0..24u64 {
+            n_node_convergence_run(
+                0x9E3779B97F4A7C15u64
+                    .wrapping_mul(k)
+                    .wrapping_add(0xC0FFEE_C0DE_1357_9A),
+            );
+        }
+    }
 }
