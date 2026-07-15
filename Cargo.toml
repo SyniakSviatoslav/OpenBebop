@@ -32,6 +32,10 @@ members = [
 ]
 exclude = [
     "bebop2/ports/telegram",
+    # External-adapter port (std, networked). Excluded like ports/telegram so it does NOT alter
+    # the workspace's feature unification. Tested standalone:
+    #   cargo test -p bebop-port-github   (12 unit + 1 integration, RED→GREEN proven)
+    "bebop2/ports/github",
     # crates/core-legacy moved to attic/ on 2026-07-12 (deprecated ts-era guard kernel).
 ]
 

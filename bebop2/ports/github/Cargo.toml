@@ -1,0 +1,29 @@
+[package]
+name = "bebop-port-github"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Inbound GitHub webhook receiver (external-adapter port). Authenticates each delivery with GitHub's HMAC-SHA256 (X-Hub-Signature-256) over the raw body — fail-closed. Emits a verified GithubEvent to a sink; never forges a SignedFrame."
+
+# This is the std, networked ADAPTER layer (like proto-wire), NOT the zero-dep
+# sovereign core. GitHub is a non-bebop sender that cannot produce SignedFrames,
+# so the trust boundary is the shared webhook secret verified via a constant-time
+# HMAC. We deliberately do NOT depend on `bebop2-core` (its no_std panic lang item
+# collides with std) and never make `bebop2-core` depend on `ring` (that would
+# trip the sovereign-core no-ccrypto / empty-import gates).
+
+[dependencies]
+# Async TCP listener for the HTTP/1.1 webhook endpoint. Same feature set as
+# proto-wire so the workspace resolves one tokio.
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+# Audited, constant-time HMAC-SHA256 for GitHub signature verification. Already in
+# the tree via rustls("ring"); reused here rather than hand-rolling an auth-boundary
+# primitive. bebop2-core stays free of it.
+ring = "0.17"
+
+[dev-dependencies]
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+
+[[bin]]
+name = "bebop-github-webhook"
+path = "src/main.rs"
