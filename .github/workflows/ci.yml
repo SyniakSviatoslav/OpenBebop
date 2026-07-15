@@ -1,33 +1,34 @@
 name: CI
 
+# Post "drop js" (2026-07-15): JS/TS removed from the repo. The testable surface is now
+# Rust-only (cargo test, incl. eqc math proofs) + the shell sovereign-guard scripts.
+# The old `verify` npm job is gone.
+
 on:
   push:
-    branches: [main]
+    branches: [main, feat/verification-harness]
   pull_request:
     branches: [main]
 
 jobs:
-  verify:
+  rust-test:
+    name: Rust cargo test (+ eqc proofs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      # Full install (incl. optional better-auth) so the auth test suite runs and is verified in CI.
-      # better-auth stays optional/lazy-loaded at RUNTIME; this only ensures the test count is real.
-      - run: npm install
-      - name: Guard-OS self-certification
-        run: npm run boot
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Falsifiable tests
-        run: npm test
-      - name: Doc-claim honesty gate
-        run: node scripts/verify-doc-claims.mjs
-      - name: Falsifiable-proof guardrail (every test can go RED)
-        run: node scripts/guardrail-falsifiable-proof.mjs
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - name: Unit + integration tests
+        run: cargo test --workspace
+      - name: eqc math-proof integration test (rust-core)
+        run: cargo test -p bebop-core --test eqc_proofs_test
+      - name: Self-prove every eqc example (exit 0 ⟺ codegen correct)
+        run: |
+          for e in cheby_coeff_inner lambda_max_of_d cheby_recur_weight cosine_div; do
+            cargo run -p bebop-core --example "$e"
+          done
 
   # Hardened / sovereign build: proves the crates compile + pass on the --no-default-features
   # path (no_std crypto core for wasm32, hardened webpki TLS client), which the default build

@@ -1,0 +1,17 @@
+{
+  "//": "OPS/Nanos unikernel config for the GitHub webhook microVM. Boots as a",
+  "//sovereign": "single ELF on a hypervisor (KVM/Firecracker via `-t hvt`) — no OS,",
+  "//shell": "no shell, no SSH. Matches the sovereign-node hardening (config.sovereign.json).",
+  "//secret": "GITHUB_WEBHOOK_SECRET is NOT here on purpose — inject it at instance-create",
+  "//secret2": "time (ops instance create ... -e GITHUB_WEBHOOK_SECRET=... or --envfile). A",
+  "//secret3": "committed secret is a leak; the daemon fail-closes if it is empty/absent.",
+
+  "Program": "target/release/bebop-github-webhook",
+  "Args": ["0.0.0.0:8080"],
+  "ProgramEnv": ["GITHUB_WEBHOOK_PATH=/"],
+  "RunConfig": {
+    "Ports": ["8080"]
+  },
+  "NoSSHEcho": true,
+  "DumpOnExit": false
+}
