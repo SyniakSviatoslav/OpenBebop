@@ -43,17 +43,19 @@ New integration: a property-based-testing crate (W1/W2 need randomized, seeded, 
 | hand-rolled LCG generator | zero dep | no shrinking, we own the RNG | fast | none | we maintain it | trivial | full control but reinvents shrinking |
 | cargo-fuzz (libFuzzer) | separate `fuzz/` crate, nightly | coverage-guided, best for T4 byte-injectivity | slow (long-running) | Apache/MIT | nightly toolchain | isolated crate | best for hostile-bytes |
 
-DECISION: **proptest as a `[dev-dependencies]` entry for W1 (stateful convergence) and W2 (property side).**
-Falsifiable reason: it is the only candidate that gives *seeded reproducibility + automatic shrinking* for
-stateful CRDT schedules, and as a dev-dep it can NEVER enter the shipped graph (the empty-import + no-ccrypto
-guards still hold on the library build). For T4's raw hostile-bytes injectivity, add **cargo-fuzz** in a
-separate `fuzz/` crate (nightly, non-blocking CI) — coverage-guided beats random for that surface.
-Older-as-adapter: n/a (no older tool kept). Reversibility: both are dev-only; deleting the test/fuzz module
-removes them with zero runtime footprint.
-PROBE (strongest argument against): proptest pulls a small transitive tree (rand, bit-set) into the dev-graph
-and its macro DSL is a learning surface; a hand-rolled seeded LCG would be zero-dep. Rebuttal accepted only
-if the dev-tree ever leaks into the lib build — guarded by `ci-core-no-ccrypto.sh` + `verify-empty-imports.sh`
-which run on the library target, not dev-deps, so the leak is structurally impossible.
+DECISION (UPDATED after W1 ground-truth, 2026-07-14): **hand-rolled xorshift64 seeded RNG, zero new
+dependency.** W1 (T3) was implemented WITHOUT proptest — a deterministic, seeded, shrinking-free property
+harness. Falsifiable reason: proto-wire is a zero-dep / offline-clean crate (the sovereign-core gate in
+blueprint §1 forbids a dev-tree leaking into the shipped graph); the convergence property needs only
+*reproducible randomized schedules + a logged failing seed*, which xorshift gives with zero transitive deps.
+proptest's shrinking is unnecessary for this integer/enum schedule space and its `rand`/`bit-set` dev-tree
+is a real cost for no benefit here. The PROBE in the original report was decisive.
+For T4's raw hostile-bytes injectivity, **cargo-fuzz** in a separate `fuzz/` crate (nightly, non-blocking CI)
+remains the right tool — coverage-guided beats random for that surface, and it is fully isolated.
+Older-as-adapter: n/a. Reversibility: the harness is plain `#[test]` + a local fn; removing it is a one-file
+patch with zero footprint.
+upgrade trigger: if a future wave needs shrinking of *arbitrary structured* inputs (not integer/enum
+schedules), adopt proptest as dev-only — still guarded by `ci-core-no-ccrypto.sh`.
 
 ---
 
