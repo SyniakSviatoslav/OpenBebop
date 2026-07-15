@@ -374,6 +374,17 @@ pub unsafe extern "C" fn field_active(
         if acc_ok {
             acc.0 += steps as usize;
         }
+        // ENERGY DOCTRINE: record circuit energy of the evolved field. The active-set diffusion is
+        // a second evolution path (alongside field_spectral); both must feed the same ledger so the
+        // stabilize_ratio reflects ALL propagations, not just spectral ones.
+        let e_last = field_energy(u, rp, ci, d);
+        let mut en = ENERGY.lock().unwrap();
+        if acc.0 == steps as usize {
+            en.0 = field_energy(xs, rp, ci, d); // baseline on first propagation
+        }
+        en.2 += (en.1 - e_last).max(0.0); // cumulative dissipated (non-negative by contractive invariant)
+        en.1 = e_last;
+        drop(en);
         for i in 0..n {
             os[i] = u[i];
         }
@@ -774,6 +785,65 @@ mod tests {
             "field energy must NOT increase under contractive propagator: before={e_before} after={e_after}"
         );
         // sample via field_metrics: stabilize_ratio must be <= 1
+        let mut m = [0.0f64; 8];
+        unsafe { field_metrics(m.as_mut_ptr(), 8) };
+        assert!(
+            m[7] <= 1.0 + 1e-9,
+            "stabilize_ratio must be <= 1, got {}",
+            m[7]
+        );
+    }
+
+    #[test]
+    fn test_field_active_energy_stabilizes() {
+        // ENERGY DOCTRINE for the SECOND evolution path (active-set diffusion). The explicit step
+        // u <- u - dt·coeff·Lu is contractive when dt·coeff·λmax < 2. Assert E_after <= E_before
+        // (the stabilized core must hold for BOTH propagation cargos, not just field_spectral).
+        let _g = TEST_LOCK.lock().unwrap();
+        let (rp, ci, nnz) = path_graph(20);
+        unsafe {
+            field_build(rp.as_ptr(), ci.as_ptr(), nnz, 20);
+        }
+        let mut u0 = [0.0f64; 20];
+        u0[0] = 1.0;
+        let mut out = [0.0f64; 20];
+        let e_before = unsafe {
+            let mut tmp = [0.0f64; 20];
+            field_matvec(u0.as_ptr(), tmp.as_mut_ptr(), core::ptr::null());
+            let mut s = 0.0;
+            for i in 0..20 {
+                s += u0[i] * tmp[i];
+            }
+            0.5 * s
+        };
+        // dt·coeff chosen so dt·coeff·λmax < 2 (λmax ≤ 2·deg = 2·2 = 4 here; pick dt·coeff=0.1)
+        let mut ac = [0i32; 1];
+        unsafe {
+            field_active(
+                u0.as_ptr(),
+                50,
+                0.1,
+                1.0,
+                1e-4,
+                out.as_mut_ptr(),
+                ac.as_mut_ptr(),
+            );
+        }
+        let e_after = unsafe {
+            let mut tmp = [0.0f64; 20];
+            field_matvec(out.as_ptr(), tmp.as_mut_ptr(), core::ptr::null());
+            let mut s = 0.0;
+            for i in 0..20 {
+                s += out[i] * tmp[i];
+            }
+            0.5 * s
+        };
+        assert!(e_before > 0.0, "baseline energy must be positive");
+        assert!(
+            e_after <= e_before + 1e-9,
+            "active-set energy must NOT increase under contractive step: before={e_before} after={e_after}"
+        );
+        // field_metrics must now reflect BOTH cargos fed the ledger
         let mut m = [0.0f64; 8];
         unsafe { field_metrics(m.as_mut_ptr(), 8) };
         assert!(
