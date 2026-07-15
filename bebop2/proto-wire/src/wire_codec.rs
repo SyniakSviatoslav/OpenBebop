@@ -295,6 +295,16 @@ pub fn decode_frame(buf: &[u8]) -> WireResult<SignedFrame> {
 
     let capability =
         capability.ok_or_else(|| WireError::Encode("missing capability field".into()))?;
+    // Canonicality gate (T4): a SignedFrame is a single, self-delimiting unit —
+    // the carrier framing in `framing.rs` does the length-splitting, so any
+    // bytes left over here are malformed/forged, not a second frame. Reject
+    // them fail-closed (no silent acceptance of non-canonical input).
+    if pos != buf.len() {
+        return Err(WireError::Encode(format!(
+            "trailing {} bytes after frame (canonical decode requires exact length)",
+            buf.len() - pos
+        )));
+    }
     Ok(SignedFrame {
         capability,
         payload,
@@ -393,5 +403,104 @@ mod tests {
             back.verify_classical().is_ok(),
             "decoded frame must re-verify"
         );
+    }
+
+    // ── W2 (T4): decode_frame canonicity / injectivity under hostile bytes.
+    // Property (injectivity + fail-closed canonicity): (a) encode is canonical
+    // (byte-identical for equal frames); (b) a well-formed decode round-trips to
+    // the EXACT original bytes, so re-encoding is a fixed point; (c) ANY mutated
+    // / truncated / trailing-padded input either ERRORS or decodes to a frame
+    // whose canonical re-encode equals the input — it is NEVER silently accepted
+    // as a different valid frame. Seeded xorshift, zero new dep (matches W1).
+    //
+    // innovate: hostile-byte checking uses a hand-rolled xorshift because
+    // cargo-fuzz (coverage-guided, nightly) is the upgrade path for unbounded
+    // byte exploration; the deterministic seeded harness is the RED→GREEN gate
+    // and needs no nightly toolchain. Upgrade trigger: add `cargo-fuzz` in a
+    // separate `fuzz/` crate once nightly is wired into CI.
+
+    fn w2_rng(mut s: u64) -> impl FnMut() -> u64 {
+        move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        }
+    }
+
+    /// Assert the canonical decode contract on one wire buffer.
+    fn assert_hostile(buf: &[u8], label: &str) {
+        // A valid decode must round-trip to its OWN canonical bytes: re-encode
+        // equals input. Decode never "accepts" a mutated buffer as a different
+        // valid frame.
+        match decode_frame(buf) {
+            Ok(f) => {
+                let re = encode_frame(&f).expect("re-encode valid frame");
+                assert_eq!(
+                    re, buf,
+                    "{label}: decoded frame must re-encode to byte-identical wire \
+                     (canonical fixed-point)"
+                );
+            }
+            Err(_) => { /* rejection is a valid outcome — fail-closed */ }
+        }
+    }
+
+    #[test]
+    fn w2_canonical_and_injective() {
+        let a = sample_frame();
+        // Build a DISTINCT frame (different payload) to prove injectivity.
+        let mut b = sample_frame();
+        b.payload = b"different payload for injectivity".to_vec();
+        let ea = encode_frame(&a).unwrap();
+        let eb = encode_frame(&b).unwrap();
+        assert_eq!(ea, encode_frame(&a).unwrap(), "encode canonical (byte-identical)");
+        assert_eq!(decode_frame(&ea).unwrap(), a, "roundtrip preserves frame");
+        assert_ne!(ea, eb, "distinct frames encode distinctly (injective)");
+    }
+
+    #[test]
+    fn w2_trailing_bytes_rejected() {
+        let mut buf = encode_frame(&sample_frame()).unwrap();
+        buf.push(0x00);
+        buf.push(0xFF);
+        assert!(
+            matches!(decode_frame(&buf), Err(WireError::Encode(_))),
+            "trailing bytes must be rejected (canonical exact-length)"
+        );
+    }
+
+    #[test]
+    fn w2_hostile_byte_sweep() {
+        let base = encode_frame(&sample_frame()).unwrap();
+        let mut rng = w2_rng(0xBADC0DE_F00D_1357);
+        for k in 0..200u64 {
+            let mut buf = base.clone();
+            // Pick a random byte index and flip 1–8 bits (hostile corruption).
+            let idx = (rng() as usize) % buf.len();
+            let mask = (rng() & 0xFF) as u8;
+            if mask != 0 {
+                buf[idx] ^= mask;
+            } else {
+                buf[idx] = buf[idx].wrapping_add(1);
+            }
+            assert_hostile(&buf, &format!("mutate seed {:#x} idx {}", k, idx));
+        }
+        // Truncation: drop 1..=8 trailing bytes.
+        for drop in 1..=8u64 {
+            if (drop as usize) < base.len() {
+                let buf = &base[..base.len() - drop as usize];
+                assert_hostile(buf, &format!("truncate -{}", drop));
+            }
+        }
+        // Append random padding (non-canonical length).
+        for _ in 0..50u64 {
+            let mut buf = base.clone();
+            let pad = (rng() % 8) as usize + 1;
+            for _ in 0..pad {
+                buf.push((rng() & 0xFF) as u8);
+            }
+            assert_hostile(&buf, "append random padding");
+        }
     }
 }
