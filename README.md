@@ -1,9 +1,9 @@
 # ◈ Bebop
 
-> **Bebop is a local-first coding-agent CLI with its own deterministic Rust/WASM guard kernel, a
-> a living (VSA) memory — that drives any agent you already use.
-> (Claude Code, Codex, OpenCode, Aider, Goose) behind one auditable, free-by-default, offline
-> control plane, and self-evolves via a "freestyle bebop soul" loop.**
+> **Bebop is a local-first coding-agent CLI with its own deterministic Rust/WASM guard kernel and a
+> living (VSA) memory — it drives any agent you already use (Claude Code, Codex, OpenCode, Aider,
+> Goose) behind one auditable, free-by-default, offline control plane, and self-evolves via a
+> "freestyle bebop soul" loop.**
 
 ![Bebop live CLI — luminous helm, radio, boot guard, mission sign-off](docs/footage/bebop-session.gif)
 > *Real output of the built `bebop` binary, rendered from a live PTY capture (no staging, no
@@ -57,14 +57,15 @@ What makes it **not just another wrapper** (verified, not claimed):
 
 ```bash
 git clone https://github.com/SyniakSviatoslav/bebop
-cd bebop && npm install && npm run build   # builds src/bebop_core.wasm (committed; no Rust needed to run)
-bebop boot              # guard self-test — refuses to start if gates can't go RED
-bebop use native        # default: keyless loop, zero config
-bebop dispatch "fix the red ship animation"   # runs behind the guard + copilot
-bebop init              # pick narration + looks (real customization)
+cd bebop && npm run build   # = cargo build --release -p bebop (Rust toolchain required; there is no TS build)
+bin/bebop boot          # guard self-test — refuses to start if gates can't go RED
+bin/bebop use native     # default: keyless loop, zero config
+bin/bebop dispatch "fix the red ship animation"   # runs behind the guard + copilot
+bin/bebop init          # pick narration + looks (real customization)
 ```
 
-`native` needs no key. For the free tier: `export OPENROUTER_API_KEY=… && bebop use free`.
+`native` needs no key. For the free tier: `export OPENROUTER_API_KEY=… && bin/bebop use free`.
+The guard kernel WASM (`bebop_core.wasm`) is a separate target — `cargo build -p bebop-core --target wasm32-unknown-unknown --release`.
 
 ## Commands
 
@@ -137,11 +138,11 @@ universal gate — they extend it, never fork it. Every wiring is RED+GREEN test
 
 | Layer | What it adds | Status |
 |---|---|---|
-| **zkVM `decide()` journal** | Every admitted command gets a tamper-evident digest over `(state, commandHash, seq)`. On by default at the kernel gate. Replay-verifiable. **Scope:** detects *accidental* bit-flips of stored digests (tamper-*detection*); the digest is keyless recomputation, so it is forgeable by anyone who controls the stored state — not a cryptographic signature/MAC (see CHANGELOG 0.3.0 F5). | LIVE (native TS port; RISC Zero STARK *receipt* gated behind `cfg.zkReceipt` when the prover is available) |
-| **TigerBeetle money boundary** | Structural conservation law (`amount>0`, `debit≠credit`, idempotent) composed into the kernel gate via `applyCommandChecked(.., money=true)`. | LIVE (engaged when `money` flag set) |
-| **Active Inference advisor** | FEP policy selector (`adviseLoop`) over `{stuck, progressing, done}` belief, behind `cfg.activeInference`. Advisory; the guard still decides admission. | LIVE (loop.ts) |
-| **Optical field recall** | SVETlANNa/Meep optical primitive re-ranks `recall` candidates by field correlation, behind `opts.opticalRecall`. Advisory only — graph score dominates. | LIVE (knowledge.ts) |
-| **Zenoh mesh** | Drop-in inter-node transport. Ships as an interface; swap in when a peer mesh exists. | INTERFACE (single-node: no-op) |
+| **zkVM `decide()` journal** | Every admitted command gets a tamper-evident digest over `(state, commandHash, seq)`. On by default at the kernel gate. Replay-verifiable. **Scope:** detects *accidental* bit-flips of stored digests (tamper-*detection*); the digest is keyless recomputation, so it is forgeable by anyone who controls the stored state — not a cryptographic signature/MAC (see CHANGELOG F5). | LIVE (Rust — `crates/bebop/src/zkvm.rs`; RISC Zero STARK *receipt* gated behind `cfg.zkReceipt` when the prover is available) |
+| **TigerBeetle money boundary** | Structural conservation law (`amount>0`, `debit≠credit`, idempotent) composed into the kernel gate when the `money` flag is set. | LIVE (engaged when `money` flag set) |
+| **Active Inference advisor** | FEP policy selector over a `{stuck, progressing, done}` belief, behind a config flag. Advisory; the guard still decides admission. | LIVE (Rust — `active_inference.rs`) |
+| **Optical field recall** | SVETlANNa/Meep optical primitive re-ranks `recall` candidates by field correlation, behind a config flag. Advisory only — graph score dominates. | LIVE (Rust — `optical.rs`) |
+| **Peer mesh transport** | `bebop2/proto-wire` carries signed `proto-cap` frames. **WSS + `rustls` (ring)** is the live carrier; the **iroh/QUIC** mesh carrier is deferred and offline-safe (no `iroh` dependency — the sovereign core must build offline). Supersedes the old Zenoh stub. | LIVE (WSS/rustls) · iroh carrier DEFERRED |
 | **FinalSpark wetware** | Bio-safe (50 mV) LIF co-processor research slot. Never in the guard gate. | RESEARCH ONLY |
 
 **Autonomy:** `bebop self evolve` now records each approved corpus mutation as a tamper-evident kernel
@@ -151,8 +152,9 @@ command and exposes `verifySelfEvolution()` — the agent can prove its own evol
 ## Verification
 
 ```bash
-cargo test           # 796 Rust tests, RED+GREEN, 0 fail
-cargo check          # 0 errors (typecheck)
+cargo test              # 802 Rust tests (lib), RED+GREEN, 0 fail
+cargo test --workspace   # 819 Rust tests total, 0 fail (re-verify — don't trust the number, run it)
+cargo check --workspace  # 0 errors (typecheck)
 node scripts/verify-doc-claims.mjs        # doc-claim falsifiability gate
 node scripts/guardrail-falsifiable-proof.mjs   # every #[test] must be falsifiable
 ```
@@ -160,6 +162,15 @@ node scripts/guardrail-falsifiable-proof.mjs   # every #[test] must be falsifiab
 > The native runtime is **Rust/WASM** (no TypeScript in the live path). `cargo test` is the
 > authoritative runner. The legacy TypeScript layer was archived to `archive/` (recoverable) but is
 > no longer built or executed.
+
+**Verification harness** ([`docs/design/BEBOP-VERIFICATION-HARNESS-BLUEPRINT-2026-07-14.md`](docs/design/BEBOP-VERIFICATION-HARNESS-BLUEPRINT-2026-07-14.md)) — the protocol's hardest claims are moving from example tests to *properties*. Landed on `bebop2`:
+
+- **Wire canonicity = injectivity** — `decode_frame` rejects trailing / non-canonical bytes; decode→encode round-trips to one canonical form (property test).
+- **CRDT convergence** — `MerkleLog` proven as a seeded, reproducible graph fixed-point: N nodes under random partition/replay/duplicate schedules reach an identical `root()`; re-ingest is a no-op.
+- **No PQ-strip** — the production facade pins `RequireBoth`; an absent-PQ frame is rejected (the permissive audit policy stays behind a dev-only feature).
+- **Empty-import** — the zero-dep / `no_std+alloc` wasm gate now runs per-commit, not only on PR-to-`main`.
+- **Crypto ground truth** — ML-DSA-65 is **60/60 NIST ACVP** byte-exact; ML-KEM implicit-reject `J(z‖c)=SHAKE256`.
+- **Open (crypto red-line, council-gated):** statistical constant-time (dudect / Welch t-test) for `mod_l`/AEAD/KDF, and collapsing the duplicate ML-KEM impl to one.
 
 Full proof table: [`docs/VERIFICATION-MATRIX.md`](docs/VERIFICATION-MATRIX.md).
 
