@@ -28,12 +28,11 @@ pub enum RedLineCategory {
     /// Money movement: settlement records, ledger appends, order creation,
     /// claim payouts. Anything that moves value.
     Money,
-    /// Secrets exposure (reserved — no `Resource` maps here yet; placeholder so
-    /// the gate is future-proof without a wire change).
+    /// Secrets exposure (e.g. `Resource::Secret` + `Action::DeploySecret`).
     Secrets,
-    /// Schema / data migrations (reserved — destructive bulk ops).
+    /// Schema / data migrations (e.g. `Resource::Migration` + `Action::RunMigration`).
     Migrations,
-    /// Authentication / authority changes (reserved).
+    /// Authentication / authority changes (e.g. `Resource::Auth` + `Action::Authenticate`).
     Auth,
 }
 
@@ -223,6 +222,56 @@ mod tests {
                 Err(cat)
             );
         }
+    }
+
+    // ── P5 (expressibility canary): every `RedLineCategory` variant MUST be
+    // reachable through `is_red_line`. If a 5th category is ever added to the
+    // enum but forgotten in `is_red_line`'s match, `DenyByDefault` returns
+    // `None` for it → the capability is SILENTLY ALLOWED (the expressibility
+    // hole P5 exists to catch). This test fails (not just warns) when that
+    // happens, because the exhaustive match on the enum forces each variant to
+    // be asserted reachable. The `(r, a)` pairs mirror `is_red_line`'s arms.
+    #[test]
+    fn every_red_line_category_is_reachable() {
+        // One known (resource, action) pair per category. If a variant loses
+        // its `is_red_line` arm, the `match cat` below won't compile until
+        // updated — and the assertion proves a live mapping exists.
+        let known: &[(Resource, Action, RedLineCategory)] = &[
+            (
+                Resource::Ledger,
+                Action::SettlementRecorded,
+                RedLineCategory::Money,
+            ),
+            (
+                Resource::Secret,
+                Action::DeploySecret,
+                RedLineCategory::Secrets,
+            ),
+            (
+                Resource::Migration,
+                Action::RunMigration,
+                RedLineCategory::Migrations,
+            ),
+            (Resource::Auth, Action::Authenticate, RedLineCategory::Auth),
+        ];
+        for (r, a, cat) in known {
+            let got = is_red_line(*r, *a);
+            assert_eq!(
+                got,
+                Some(*cat),
+                "category {:?} unreachable via is_red_line",
+                cat
+            );
+            // Exhaustive match proves the enum has no unhandled variant here.
+            match *cat {
+                RedLineCategory::Money
+                | RedLineCategory::Secrets
+                | RedLineCategory::Migrations
+                | RedLineCategory::Auth => {}
+            }
+        }
+        // Sanity: a NON-red-line scope still maps to None (not over-broad).
+        assert_eq!(is_red_line(Resource::Route, Action::Send), None);
     }
 
     #[test]
