@@ -37,7 +37,9 @@ use rustls::SignatureScheme;
 use tokio::io::AsyncWriteExt;
 
 use bebop_proto_cap::roster::AnchorRoster;
-use bebop_proto_cap::{HybridGate, HybridPolicy, RevocationSet, SignedFrame};
+use bebop_proto_cap::{
+    BREACH_ALERT_BYTES, Action, HybridGate, HybridPolicy, Resource, RevocationSet, SignedFrame,
+};
 
 use crate::error::{WireError, WireResult};
 use crate::framing;
@@ -360,6 +362,32 @@ impl Transport for QuicTransport {
             if let Some(env) = framing::decode(&mut self.buf)? {
                 // G1 (2026-07-14): decode the canonical wire codec, not serde_json.
                 let frame: SignedFrame = crate::wire_codec::decode_frame(&env.payload)?;
+
+                // ── Воля АНУ breach: pure-P2P self-signed fail-safe ──────────────
+                // A breach alarm is a legitimate *self-signed* frame: it is signed
+                // by the node's OWN hybrid keys, NOT by an anchor-rooted delegation
+                // chain. It MUST reach peers directly (no hub, no relay, no 3rd
+                // party) even when the broadcaster's standing is in question — that
+                // is the whole point of the alarm. So we bypass the roster/UCAN gate
+                // and verify ONLY the real hybrid signature (Ed25519 + ML-DSA-65):
+                // only the node holding BOTH secret keys can produce a frame that
+                // passes, which makes a forged breach impossible. Domain-separated
+                // by the `BreachAlarm`/`Broadcast` scope so it cannot be abused to
+                // smuggle other capabilities.
+                if frame.capability.scope.grants
+                    == &[(Resource::BreachAlarm, Action::Broadcast)]
+                {
+                    if frame.verify_classical().is_err() || frame.verify_pq().is_err() {
+                        return Err(WireError::HandshakeRejected(
+                            "breach frame failed hybrid verify".into(),
+                        ));
+                    }
+                    if frame.payload.len() != BREACH_ALERT_BYTES {
+                        return Err(WireError::PayloadTooLarge(frame.payload.len()));
+                    }
+                    return Ok(frame);
+                }
+
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
@@ -561,6 +589,75 @@ mod tests {
         frame.payload = b"tampered-by-mitm".to_vec(); // break the signature
         client.send(frame).await.unwrap();
 
+        server.await.unwrap();
+    }
+
+    /// Воля АНУ — pure-P2P breach over REAL QUIC, no hub / no relay / no 3rd
+    /// party. A node signs its own `BreachAlert` with its real hybrid keys and
+    /// sends it DIRECTLY to a peer over a single QUIC stream. The receiver's
+    /// `recv` bypasses the roster/UCAN gate (breach is a self-signed fail-safe)
+    /// and admits the frame after verifying BOTH signature legs — proving the
+    /// alarm crossed the wire P2P and is forge-proof. No shared roster, no
+    /// anchor, no intermediary involved.
+    // insecure-tls only (accept-any client vs self-signed QUIC cert); the P2P
+    // breach-delivery property is independent of the TLS verifier.
+    #[cfg(feature = "insecure-tls")]
+    #[tokio::test]
+    async fn quic_p2p_breach_no_hub_no_roster() {
+        let _lock = QUIC_PORT_LOCK.lock().await;
+        let addr = free_port().await;
+
+        // Broadcaster node: its own hybrid keys (Ed25519 + ML-DSA-65).
+        let ed = [0x77u8; 32];
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&[0x78u8; 32]);
+
+        // Kernel-shaped alert (40 bytes): this node, group of 5, tamper detected.
+        let mut alert = [0u8; BREACH_ALERT_BYTES];
+        alert[..32].copy_from_slice(&[0xABu8; 32]);
+        alert[32..].copy_from_slice(&5u64.to_le_bytes());
+
+        // Sign a real breach frame (BreachAlarm/Broadcast) with BOTH legs.
+        let cap = Capability::new_hybrid(
+            bebop2_core::sign::keygen(&ed).0,
+            pq_pk.bytes,
+            Resource::BreachAlarm,
+            Action::Broadcast,
+            [0x99u8; 8],
+            9_999_999_999,
+        );
+        let mut frame = SignedFrame::new(cap, alert.to_vec());
+        frame.sign_classical(&ed).unwrap();
+        frame.sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
+            .unwrap();
+
+        let (tx, rx) = oneshot::channel();
+        let server_addr = addr.clone();
+        let server_done = std::sync::Arc::new(tokio::sync::Notify::new());
+        let client_done = server_done.clone();
+        let server = tokio::spawn(async move {
+            let _ = tx.send(());
+            let ep = QuicEndpoint::Bind(server_addr);
+            // Note: NO roster set — pure P2P, no enrolled-anchor trust required.
+            let mut t = QuicTransport::accept(&ep).await.unwrap();
+            let got = t.recv().await.expect("peer breach admitted over QUIC P2P");
+            // Receiver re-verifies the breach (hybrid sig, no roster) and checks
+            // it is a breach broadcast with the right payload size.
+            assert_eq!(
+                got.capability.scope.grants,
+                &[(Resource::BreachAlarm, Action::Broadcast)]
+            );
+            assert!(got.verify_classical().is_ok() && got.verify_pq().is_ok());
+            assert_eq!(got.payload.len(), BREACH_ALERT_BYTES);
+            assert_eq!(got.payload, alert, "P2P breach payload matches sender's alert");
+            server_done.notified().await;
+        });
+        rx.await.unwrap();
+
+        let client_ep = QuicEndpoint::Dial(addr);
+        let mut client = QuicTransport::connect(&client_ep).await.unwrap();
+        client.send(frame).await.unwrap();
+
+        client_done.notify_one();
         server.await.unwrap();
     }
 }

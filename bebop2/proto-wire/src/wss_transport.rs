@@ -24,7 +24,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, client_async, WebSocketStream};
 
 use bebop_proto_cap::roster::AnchorRoster;
-use bebop_proto_cap::{HybridGate, HybridPolicy, RevocationSet, SignedFrame};
+use bebop_proto_cap::{
+    BREACH_ALERT_BYTES, Action, HybridGate, HybridPolicy, Resource, RevocationSet, SignedFrame,
+};
 
 use crate::error::{WireError, WireResult};
 use crate::framing;
@@ -572,6 +574,31 @@ impl Transport for WssTransport {
                 let nonce = frame.capability.nonce;
                 if !self.replay.observe(nonce) {
                     return Err(WireError::ReplayDetected(nonce));
+                }
+
+                // ── Воля АНУ breach: pure-P2P self-signed fail-safe ──────────────
+                // A breach alarm is a legitimate *self-signed* frame: it is signed
+                // by the node's OWN hybrid keys, NOT by an anchor-rooted delegation
+                // chain. It MUST reach peers directly (no hub, no relay, no 3rd
+                // party) even when the broadcaster's standing is in question — that
+                // is the whole point of the alarm. So we bypass the roster/UCAN gate
+                // and verify ONLY the real hybrid signature (Ed25519 + ML-DSA-65):
+                // only the node holding BOTH secret keys can produce a frame that
+                // passes, which makes a forged breach impossible. Domain-separated
+                // by the `BreachAlarm`/`Broadcast` scope so it cannot be abused to
+                // smuggle other capabilities.
+                if frame.capability.scope.grants
+                    == &[(Resource::BreachAlarm, Action::Broadcast)]
+                {
+                    if frame.verify_classical().is_err() || frame.verify_pq().is_err() {
+                        return Err(WireError::HandshakeRejected(
+                            "breach frame failed hybrid verify".into(),
+                        ));
+                    }
+                    if frame.payload.len() != BREACH_ALERT_BYTES {
+                        return Err(WireError::PayloadTooLarge(frame.payload.len()));
+                    }
+                    return Ok(frame);
                 }
 
                 // Verify the capability through the hybrid gate: anchor-rooted
@@ -1606,6 +1633,65 @@ mod tests {
             .unwrap();
         let _ = tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         let _ = slow.close().await;
+        srv.await.unwrap();
+    }
+
+    /// Воля АНУ — pure-P2P breach over the WSS carrier too, no hub / no relay /
+    /// no 3rd party. Same property as the QUIC test: a breach frame (signed by
+    /// the node's OWN hybrid keys) is admitted by the receiver's `recv` WITHOUT
+    /// any roster/anchor, after verifying both signature legs. Proves the P2P
+    /// breach path is carrier-agnostic (QUIC and WSS both deliver it directly).
+    #[cfg(feature = "insecure-tls")]
+    #[tokio::test]
+    async fn wss_p2p_breach_no_hub_no_roster() {
+        let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+
+        let ed = [0x77u8; 32];
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&[0x78u8; 32]);
+
+        let mut alert = [0u8; BREACH_ALERT_BYTES];
+        alert[..32].copy_from_slice(&[0xCDu8; 32]);
+        alert[32..].copy_from_slice(&9u64.to_le_bytes());
+
+        let cap = Capability::new_hybrid(
+            bebop2_core::sign::keygen(&ed).0,
+            pq_pk.bytes,
+            Resource::BreachAlarm,
+            Action::Broadcast,
+            [0x88u8; 8],
+            9_999_999_999,
+        );
+        let mut frame = SignedFrame::new(cap, alert.to_vec());
+        frame.sign_classical(&ed).unwrap();
+        frame
+            .sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
+            .unwrap();
+
+        let saddr = addr.to_string();
+        let (tx, rx) = oneshot::channel();
+        let srv = tokio::spawn(async move {
+            let _ = tx.send(());
+            let ep = WssEndpoint::ListenTls(saddr);
+            // NO roster — pure P2P, no enrolled-anchor trust required.
+            let mut t = WssTransport::accept(&ep).await.unwrap();
+            let got = t.recv().await.expect("peer breach admitted over WSS P2P");
+            assert_eq!(
+                got.capability.scope.grants,
+                &[(Resource::BreachAlarm, Action::Broadcast)]
+            );
+            assert!(got.verify_classical().is_ok() && got.verify_pq().is_ok());
+            assert_eq!(got.payload.len(), BREACH_ALERT_BYTES);
+            assert_eq!(got.payload, alert, "P2P breach payload matches sender's alert");
+        });
+        rx.await.unwrap();
+
+        let mut client = WssTransport::connect(&WssEndpoint::Url(format!("wss://{addr}")))
+            .await
+            .unwrap();
+        client.send(frame).await.unwrap();
+        let _ = client.close().await;
         srv.await.unwrap();
     }
 }

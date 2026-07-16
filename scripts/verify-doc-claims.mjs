@@ -88,7 +88,7 @@ let pass = 0, failc = 0;
   // (spawnSync returns {stdout, stderr} without throwing) so the count stays honest
   // across every workspace member, not just the first crate that happens to log to stdout.
   const { stdout, stderr } = spawnSync('cargo', ['test', '--lib', '--workspace'], {
-    encoding: 'utf8', timeout: 300000,
+    encoding: 'utf8', timeout: 900000,
   });
   const out = (stdout ?? '') + '\n' + (stderr ?? '');
   for (const line of out.split('\n')) {

@@ -274,6 +274,7 @@ dependencies = [
  "bebop-proto-cap",
  "bebop-proto-wire",
  "bebop2-core",
+ "dowiz-kernel",
  "futures-util",
  "tokio",
 ]

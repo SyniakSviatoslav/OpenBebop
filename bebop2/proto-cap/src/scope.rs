@@ -7,6 +7,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Length of a kernel `BreachAlert` wire payload (40 bytes):
+/// `node_id (32) || group_size (8, LE)`. Shared by the breach transport
+/// binding so the wire carriers can size-check a breach frame without
+/// depending on the mesh-node crate (which itself depends on proto-wire).
+pub const BREACH_ALERT_BYTES: usize = 40;
+
 /// A protocol resource a capability may target. Closed set so the gate is total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Resource {
@@ -40,6 +46,11 @@ pub enum Resource {
     /// (G3, 2026-07-14) so the sync topic is no longer a parallel placeholder
     /// enum (`SyncResource`) — the topic taxonomy is unified under `Resource`.
     Sync,
+    /// Воля АНУ breach alarm — a tamper/compromise warning broadcast (kernel-
+    /// emitted, node-signed, carries node_id + group_size only, NO executable
+    /// code). Domain-separated from every other resource so a breach frame can
+    /// never be confused with a route/ledger frame. Pinned discriminant 0x0E.
+    BreachAlarm,
 }
 
 /// An action permitted on a [`Resource`]. Closed set.
@@ -87,6 +98,9 @@ pub enum Action {
     /// (mesh event-log sync). Promoted to a canonical `Action` (G3, 2026-07-14)
     /// so the sync verb is no longer a parallel placeholder enum (`SyncAction`).
     Pull,
+    /// Воля АНУ — broadcast a breach alarm to the opted-in hub (unbounded fan-
+    /// out, no per-event consent). Pinned discriminant 0x15.
+    Broadcast,
 }
 
 /// `(resource, action)` pair a capability authorizes. No score, no subject rating.
@@ -158,6 +172,7 @@ impl Resource {
             Resource::Loyalty => 0x0B,
             Resource::Claim => 0x0C,
             Resource::Sync => 0x0D,
+            Resource::BreachAlarm => 0x0E,
         }
     }
 
@@ -178,6 +193,7 @@ impl Resource {
             0x0B => Some(Resource::Loyalty),
             0x0C => Some(Resource::Claim),
             0x0D => Some(Resource::Sync),
+            0x0E => Some(Resource::BreachAlarm),
             _ => None,
         }
     }
@@ -207,6 +223,7 @@ impl Action {
             Action::DeliveryConfirmed => 0x12,
             Action::SettlementRecorded => 0x13,
             Action::Pull => 0x14,
+            Action::Broadcast => 0x15,
         }
     }
 
@@ -234,6 +251,7 @@ impl Action {
             0x12 => Some(Action::DeliveryConfirmed),
             0x13 => Some(Action::SettlementRecorded),
             0x14 => Some(Action::Pull),
+            0x15 => Some(Action::Broadcast),
             _ => None,
         }
     }
@@ -265,8 +283,9 @@ mod tests {
             Resource::Customer,
             Resource::Corpus,
             Resource::Backup,
-            Resource::Loyalty,
             Resource::Claim,
+            Resource::Sync,
+            Resource::BreachAlarm,
         ] {
             for a in [
                 Action::Send,
@@ -288,6 +307,8 @@ mod tests {
                 Action::Pickup,
                 Action::DeliveryConfirmed,
                 Action::SettlementRecorded,
+                Action::Pull,
+                Action::Broadcast,
             ] {
                 let s = Scope::single(r, a);
                 let bytes = s.to_tlv_bytes();
@@ -336,6 +357,8 @@ mod tests {
         assert_eq!(Action::Pickup.discriminant(), 0x11);
         assert_eq!(Action::DeliveryConfirmed.discriminant(), 0x12);
         assert_eq!(Action::SettlementRecorded.discriminant(), 0x13);
+        assert_eq!(Action::Pull.discriminant(), 0x14);
+        assert_eq!(Action::Broadcast.discriminant(), 0x15);
     }
 
     // ── R4 (IP-02): an attenuated capability requesting a Resource/Action

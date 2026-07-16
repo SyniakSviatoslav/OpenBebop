@@ -53,5 +53,5 @@ pub use hybrid_gate::{HybridGate, HybridPolicy};
 pub use port::{check_port_scope, ChannelAdapter, InboundPort, NotificationPort, OutboundPort};
 pub use revocation::{pq_key_id, revocation_hash, RevocationSet};
 pub use roster::{verify_chain, AnchorRoster, Delegation, Effect};
-pub use scope::{Action, Resource, Scope};
+pub use scope::{Action, BREACH_ALERT_BYTES, Resource, Scope};
 pub use signed_frame::SignedFrame;

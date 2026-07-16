@@ -13,7 +13,23 @@ bebop-proto-cap = { path = "../proto-cap", version = "0.1.0", default-features =
 # Async runtime for the concurrent bidirectional loops.
 tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
 futures-util = "0.3"
+# Core crypto (Ed25519 + ML-DSA-65) for signing breach frames.
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std"] }
+# Optional: link the REAL dowiz-kernel so breach-alert payloads can be validated
+# against the kernel's own tamper-evident `BreachAlert` shape (kernel-rlib, like
+# delivery-domain). Off by default — the mesh node is carrier-neutral and does
+# NOT import the kernel's FSM/money core; it only uses `hydra::BreachAlert`'s
+# fixed-layout decode to tie a transport signature back to a real kernel alert.
+dowiz-kernel = { path = "../../../dowiz/kernel", version = "0.1.0", default-features = false, features = ["std"], optional = true }
+
+[features]
+default = []
+# Enables kernel-aware breach-alert content-binding verification (see breach.rs).
+kernel-rlib = ["dep:dowiz-kernel"]
 
 [dev-dependencies]
 bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
 tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+# Dev-only kernel link so the integration test can mint a real kernel BreachAlert
+# and assert the mesh signature binds to it.
+dowiz-kernel = { path = "../../../dowiz/kernel", version = "0.1.0", default-features = false, features = ["std"] }

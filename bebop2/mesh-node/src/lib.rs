@@ -9,8 +9,10 @@
 //! events on DOD; it never derives, consults, or encodes a courier/agent
 //! score.
 
+pub mod breach;
 pub mod dod;
 pub mod node;
 
+pub use breach::{verify as verify_breach, BreachVerifyError};
 pub use dod::{DodFault, DodGate};
 pub use node::{MeshEventSink, MeshNode};
