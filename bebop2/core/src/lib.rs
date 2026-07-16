@@ -358,6 +358,7 @@ pub mod kat;
 // || payload) and the whole chain re-verifies on demand. Reuses crate::hash.
 pub mod event_log; // event-sourcing log + Merkle/hash-chain spine (W3-2)
 pub mod anti_entropy; // pull-based anti-entropy / divergence-diff (W4-3)
+#[cfg(feature = "host")]
 pub mod self_mod; // activated self-modification effector (W5, operator-authorized)
 pub mod deliberate; // adversarial mirroring deliberation (author↔mirror, 2-lap cap)
 
