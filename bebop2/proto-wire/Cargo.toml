@@ -53,6 +53,12 @@ iroh = []
 # hybrid gate is the real auth). Default-ON preserves current behavior; a hardened build
 # (`--no-default-features`) turns it OFF and REFUSES TO COMPILE until a real ServerCertVerifier is wired.
 insecure-tls = []
+# insecure-test (MESH-10): enables the PLAINTEXT `ws://` transport path for local loopback
+# tests only. It is OFF by default, so a production build REQUIRES TLS — `connect`/`accept` reject
+# any `ws://` / plaintext `Listen` endpoint with `WireError::InsecureTransport`. The existing
+# plaintext round-trip tests are gated behind this feature so they do NOT run (and do not regress the
+# production posture) when it is disabled. Enable with `--features insecure-test` for local dev/tests.
+insecure-test = []
 
 [dev-dependencies]
 tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }

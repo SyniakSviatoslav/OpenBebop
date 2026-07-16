@@ -1,0 +1,25 @@
+[package]
+name = "ci-crdt-fence"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "MESH-08 CRDT-periphery compile-fence: a cargo dependency-graph lint that FAILS if any order/money crate depends on a CRDT-merge crate."
+
+# This is a dev/CI tool, NOT part of the production dependency graph. It depends
+# only on serde_json to parse `cargo metadata` output. It intentionally does NOT
+# depend on any CRDT crate itself.
+[dependencies]
+serde_json = "1.0"
+
+# Path to the workspace root so `cargo metadata` runs against the real workspace
+# when invoked as `cargo run -p ci-crdt-fence`. We do NOT link any workspace member.
+
+[lib]
+name = "ci_crdt_fence"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ci-crdt-fence"
+path = "src/main.rs"
+
+[dev-dependencies]

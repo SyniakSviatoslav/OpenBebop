@@ -5,15 +5,21 @@ edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "Layer-B decider-core adapter: re-exports the dowiz-kernel order-machine decide/fold Law for bebop2. Default build is dependency-free and offline-clean; `kernel-rlib` links the real kernel."
 
-# ── Default deps: NONE ──
-# The default build of this crate pulls NO external crates (no serde, no wasm, no
-# serde_json, no browser/transport deps). It is a thin pure-Rust re-export shim
-# so bebop2's default `cargo test --workspace` stays offline-clean.
-[dependencies]
+# ── Features ──
+# `kernel-rlib` (default OFF) links the REAL `dowiz-kernel` as a pure-Rust rlib.
+# It pulls the kernel with `default-features = false, features = ["std"]` so the
+# WASM/serde surface (wasm-bindgen / serde / serde_json / serde_yaml) is EXCLUDED
+# from this crate's native graph. The default (feature-less) build stays
+# dependency-free and offline-clean per MESH-01 R-MESH01a.
+[features]
+default = []
+kernel-rlib = ["dep:dowiz-kernel"]
 
-# NOTE (publish): the optional `dowiz-kernel` link (former `kernel-rlib`
-# feature) is intentionally NOT declared here. It pointed at a sibling path
-# (`../../../dowiz/kernel`) that only exists on the operator's machine and broke
-# `cargo build` from a clean clone. The default build is dependency-free and
-# offline-clean. Operators who want the real kernel link add `dowiz-kernel` as
-# a path/git dep locally and re-enable the cfg-gated re-exports in src/lib.rs.
+[dependencies]
+# Path-link the REAL kernel. `default-features = false` + `features = ["std"]`
+# disables the kernel's `wasm` feature → NO wasm-bindgen / serde_json /
+# serde_yaml in this crate's graph. The kernel's order/money core is
+# feature-independent and byte-identical regardless of how it is linked.
+# (Path is `../../../dowiz/kernel` relative to this file: bebop2/delivery-domain
+# → bebop2 → bebop-repo → /root; kernel lives at /root/dowiz/kernel.)
+dowiz-kernel = { path = "../../../dowiz/kernel", default-features = false, features = ["std"], optional = true }

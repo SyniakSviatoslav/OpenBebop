@@ -16,6 +16,13 @@ pub enum WireError {
     FrameTooLarge(usize),
     /// A frame payload exceeded the transport policy limit (MESH-10 DoS gate).
     PayloadTooLarge(usize),
+    /// A replayed frame was detected: its nonce was already seen by this node's
+    /// shared (node-scoped) replay ledger. MESH-10 — closes B3-F2 (cross-
+    /// connection replay). Distinct from `PayloadTooLarge`/`FrameTooLarge`.
+    ReplayDetected([u8; 8]),
+    /// A receiver stalled past the idle read timeout (MESH-10 Slowloris fix):
+    /// the peer opened a connection but stopped sending, so we drop it.
+    IdleTimeout,
     /// The transport requires a TLS/QUIC channel binding but the frame has none
     /// (MESH-10: plaintext rejected when TLS required).
     InsecureTransport(&'static str),
@@ -43,6 +50,10 @@ impl fmt::Display for WireError {
         match self {
             WireError::FrameTooLarge(n) => write!(f, "frame too large ({n} bytes)"),
             WireError::PayloadTooLarge(n) => write!(f, "payload too large ({n} bytes)"),
+            WireError::ReplayDetected(n) => {
+                write!(f, "replay detected: nonce {:02x?} already seen", n)
+            }
+            WireError::IdleTimeout => write!(f, "idle read timeout (slowloris drop)"),
             WireError::InsecureTransport(s) => write!(f, "insecure transport: {s}"),
             WireError::VersionMismatch(v) => write!(f, "unsupported envelope version {v}"),
             WireError::Encode(s) => write!(f, "frame encode/decode error: {s}"),

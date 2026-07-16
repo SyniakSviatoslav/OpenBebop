@@ -263,6 +263,20 @@ version = "0.2.0"
 [[package]]
 name = "bebop-delivery-domain"
 version = "0.1.0"
+dependencies = [
+ "dowiz-kernel",
+]
+
+[[package]]
+name = "bebop-mesh-node"
+version = "0.1.0"
+dependencies = [
+ "bebop-proto-cap",
+ "bebop-proto-wire",
+ "bebop2-core",
+ "futures-util",
+ "tokio",
+]
 
 [[package]]
 name = "bebop-proto-cap"
@@ -470,6 +484,13 @@ dependencies = [
  "chacha20",
  "cipher",
  "poly1305",
+]
+
+[[package]]
+name = "ci-crdt-fence"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -1138,6 +1159,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
+]
+
+[[package]]
+name = "dowiz-kernel"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

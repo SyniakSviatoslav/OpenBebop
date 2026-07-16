@@ -1,0 +1,19 @@
+[package]
+name = "bebop-mesh-node"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Mesh node runtime — owns a Transport endpoint, runs concurrent bidirectional send/recv, routes KernelFacade Events over the mesh with a per-event Definition-of-Done gate."
+
+[dependencies]
+# Wire transport (WSS, real rustls/ring) + the Transport trait.
+bebop-proto-wire = { path = "../proto-wire", version = "0.1.0" }
+# Authorization line: KernelFacade, EventSink, Event, SignedFrame.
+bebop-proto-cap = { path = "../proto-cap", version = "0.1.0", default-features = false }
+# Async runtime for the concurrent bidirectional loops.
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
