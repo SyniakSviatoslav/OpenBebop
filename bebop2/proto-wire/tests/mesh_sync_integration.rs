@@ -33,7 +33,7 @@
 //!
 //! Run with: `cargo test -p bebop-proto-wire --features insecure-test --test mesh_sync_integration`
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use bebop2_core::anti_entropy::{apply_pull, diff, digest};
 use bebop2_core::event_log::EventLog;
@@ -42,6 +42,7 @@ use bebop2_core::sign::keygen;
 use bebop_proto_cap::roster::{AnchorRoster, Delegation, Effect};
 use bebop_proto_cap::scope::{Action, Resource, Scope};
 use bebop_proto_cap::{Capability, SignedFrame};
+use bebop_proto_wire::discovery::{GossipAgent, PeerDirectory, SignedEndpoint};
 use bebop_proto_wire::iroh_transport::{QuicEndpoint, QuicTransport};
 use bebop_proto_wire::sync_pull::{MerkleLog, SyncFrame, SyncScope};
 use bebop_proto_wire::Transport;
@@ -590,4 +591,131 @@ async fn mesh_sync_converges_3node() {
     // And it matches a freshly built full master chain (content-addressed state).
     let full = seed_log(&master[0..12]);
     assert_eq!(a.root_hash(), full.root_hash(), "converged root == canonical master");
+}
+
+// ── TEST 5 (W14, MESH-02/03): 3-node gossip convergence over real QUIC ──
+//
+// Each node is a `GossipAgent` seeded with ONE distinct anchor endpoint. A
+// background `listen` loop serves inbound rosters; `tick` dials every known
+// peer, pushes the agent's full roster, and merges responses. After enough
+// ticks, all three `PeerDirectory::snapshot_root` are IDENTICAL — full mesh
+// discovery propagated purely by hand-rolled, full-roster anti-entropy gossip
+// over the EXISTING `QuicTransport` (no DHT, no new deps). Real QUIC, no mocks.
+//
+// Note: the gossip layer is independent of the event-log sync layer above; it
+// converges *peer identity/endpoints*, which is the MESH-02/03 surface.
+
+#[cfg(feature = "insecure-tls")]
+#[tokio::test]
+async fn gossip_converges_3node() {
+    let _lock = QUIC_PORT_LOCK.lock().await;
+
+    // One trust anchor vouching for all 3 nodes (anchored allow-list model).
+    let (anchor_seed, anchor_pk) = actor(1);
+
+    // Three distinct node identities + stable loopback QUIC ports.
+    let (a_seed, a_pk) = actor(2);
+    let (b_seed, b_pk) = actor(3);
+    let (c_seed, c_pk) = actor(4);
+    let a_addr = free_port().await;
+    let b_addr = free_port().await;
+    let c_addr = free_port().await;
+
+    // Anchored delegation chain (anchor -> node) scoped to Presence::Send, so
+    // each agent's gossip frame satisfies the RequireBoth hybrid gate.
+    let chain_for = |pk: [u8; 32]| -> Vec<Delegation> {
+        vec![Delegation::sign(
+            anchor_pk,
+            pk,
+            Scope::single(Resource::Presence, Action::Send),
+            Effect::single(Resource::Presence, Action::Send),
+            EXPIRY,
+            [1u8; 8],
+            &anchor_seed,
+        )
+        .expect("anchor delegation must sign")]
+    };
+    let mut roster = AnchorRoster::new();
+    roster.enroll(&anchor_pk);
+
+    // Build the three agents. Each starts EMPTY (MESH-02: discovery via gossip).
+    let a = Arc::new(GossipAgent::new(
+        a_pk,
+        a_addr.clone(),
+        a_seed,
+        [10u8; 32],
+        roster.clone(),
+        chain_for(a_pk),
+    ));
+    let b = Arc::new(GossipAgent::new(
+        b_pk,
+        b_addr.clone(),
+        b_seed,
+        [11u8; 32],
+        roster.clone(),
+        chain_for(b_pk),
+    ));
+    let c = Arc::new(GossipAgent::new(
+        c_pk,
+        c_addr.clone(),
+        c_seed,
+        [12u8; 32],
+        roster.clone(),
+        chain_for(c_pk),
+    ));
+
+    // MESH-02 bootstrap: seed each agent with ONE distinct other anchor.
+    a.add_self();
+    a.seed_peer(b_pk, b_addr.clone());
+    b.add_self();
+    b.seed_peer(c_pk, c_addr.clone());
+    c.add_self();
+    c.seed_peer(a_pk, a_addr.clone());
+
+    // Start the inbound listen loops (each serves its own roster, full duplex).
+    tokio::spawn(a.spawn_listen());
+    tokio::spawn(b.spawn_listen());
+    tokio::spawn(c.spawn_listen());
+
+    // Give the accept loops a moment to bind their stable ports.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // MESH-03: gossip until all three directories converge on the same root.
+    let mut converged = false;
+    for _round in 0..12u32 {
+        // Drive ticks concurrently (each dials its known peers).
+        let _ = tokio::join!(a.tick(), b.tick(), c.tick());
+        let ra = a.dir.lock().unwrap().snapshot_root();
+        let rb = b.dir.lock().unwrap().snapshot_root();
+        let rc = c.dir.lock().unwrap().snapshot_root();
+        if ra == rb && rb == rc && a.dir.lock().unwrap().len() == 3 {
+            converged = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Every node learned all three endpoints via gossip (no central registry).
+    assert!(converged, "3-node gossip must converge to an identical roster");
+    assert_eq!(a.dir.lock().unwrap().len(), 3);
+    assert_eq!(b.dir.lock().unwrap().len(), 3);
+    assert_eq!(c.dir.lock().unwrap().len(), 3);
+
+    // All three snapshot roots identical => full mesh discovery.
+    let ra = a.dir.lock().unwrap().snapshot_root();
+    let rb = b.dir.lock().unwrap().snapshot_root();
+    let rc = c.dir.lock().unwrap().snapshot_root();
+    assert_eq!(ra, rb, "A and B agree on the peer set");
+    assert_eq!(rb, rc, "B and C agree on the peer set");
+
+    // Sanity: the converged set contains exactly the three self-endpoints.
+    fn has(dir: &PeerDirectory, pk: [u8; 32], ep: &str) -> bool {
+        dir.entry(&pk)
+            .map(|e: &SignedEndpoint| e.endpoint == ep)
+            .unwrap_or(false)
+    }
+    let da = a.dir.lock().unwrap();
+    assert!(has(&da, a_pk, &a_addr));
+    assert!(has(&da, b_pk, &b_addr));
+    assert!(has(&da, c_pk, &c_addr));
 }

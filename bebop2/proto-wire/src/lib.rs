@@ -28,6 +28,8 @@
 //! ╚══════════════════════════════════════════════════════════════════════════╝
 //! ─────────────────────────────────────────────────────────────────────────────
 
+/// MESH-02/03 — peer discovery + full-roster gossip over `iroh_transport`.
+pub mod discovery;
 pub mod bpv7;
 pub mod envelope;
 pub mod error;

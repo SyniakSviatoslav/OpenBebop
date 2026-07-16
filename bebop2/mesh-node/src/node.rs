@@ -156,7 +156,7 @@ mod tests {
         let clk = Arc::new(AtomicU64::new(0));
         let c = clk.clone();
         let mut node: MeshNode<TestTransport> =
-            MeshNode::new(TestTransport, Box::new(move || c.load(Ordering::SeqCst)), 0);
+            MeshNode::new(TestTransport, Box::new(move || c.load(Ordering::SeqCst)));
         assert!(node.admit_inbound(&ev(5, b"x"), 0).is_ok());
         assert!(matches!(node.admit_inbound(&ev(5, b"x"), 0), Err(DodFault::Replay)));
         assert_eq!(node.admitted_count(), 1);
@@ -168,13 +168,16 @@ mod tests {
         let clk = Arc::new(AtomicU64::new(100));
         let c = clk.clone();
         let mut node: MeshNode<TestTransport> =
-            MeshNode::new(TestTransport, Box::new(move || c.load(Ordering::SeqCst)), 10);
-        // The event carries its own deadline expires_at=200; node clock now=100
-        // => DOD refuses it as expired.
+            MeshNode::new(TestTransport, Box::new(move || c.load(Ordering::SeqCst)));
+        // DOD semantics (dod.rs): expired iff `expires_at != 0 && now >= expires_at`.
+        // Here expires_at=50, node clock now=100 => 100 >= 50 => refused as Expired.
+        // (Mirror of DOD-4 in dod.rs; the deadline has already elapsed.)
         assert!(matches!(
-            node.admit_inbound(&ev(9, b"z"), 200),
+            node.admit_inbound(&ev(9, b"z"), 50),
             Err(DodFault::Expired)
         ));
+        // Sanity: a still-fresh deadline (expires_at=200 > now=100) is admitted.
+        assert!(node.admit_inbound(&ev(10, b"w"), 200).is_ok());
     }
 
     // ── MeshEventSink: facade-produced events land in the outbox ─────────────

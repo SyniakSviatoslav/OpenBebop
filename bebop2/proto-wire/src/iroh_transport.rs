@@ -27,7 +27,8 @@
 #![allow(dead_code)]
 
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::collections::HashMap;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, ServerConfig};
@@ -41,6 +42,16 @@ use bebop_proto_cap::{HybridGate, HybridPolicy, RevocationSet, SignedFrame};
 use crate::error::{WireError, WireResult};
 use crate::framing;
 use crate::Transport;
+
+/// Cache of already-bound server `Endpoint`s keyed by their bind address.
+///
+/// `accept` is called once per inbound connection; re-binding a fresh UDP
+/// socket on every call drops the previously-bound socket (and any live
+/// connections on it) between calls, which makes a persistent server
+/// (gossip `listen_loop`) lose connections. quinn `Endpoint` is `Clone` and
+/// shares the underlying socket, so we bind once per address and reuse.
+static BOUND_ENDPOINTS: LazyLock<Mutex<HashMap<String, Endpoint>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// ALPN protocol tag shared by every bebop2 wire carrier (QUIC + WSS framing).
 pub const ALPN_BEBOP2_WIRE: &[u8] = b"bebop2/wire/1";
@@ -280,19 +291,32 @@ impl Transport for QuicTransport {
             .ok()
             .and_then(|mut i| i.next())
             .ok_or_else(|| WireError::HandshakeRejected(format!("bad bind addr: {addr}")))?;
-        // Bind our own UDP socket (single bind — no ephemeral-port race) and hand
-        // it to quinn via Endpoint::new + rebind semantics. This is deterministic
-        // unlike Endpoint::server which binds internally to a freshly chosen port.
-        let std_sock = std::net::UdpSocket::bind(bind)
-            .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
-        let server_cfg = ServerConfig::with_crypto(Arc::new(Self::server_crypto()));
-        let endpoint = Endpoint::new(
-            quinn::EndpointConfig::default(),
-            Some(server_cfg),
-            std_sock,
-            Arc::new(quinn::TokioRuntime),
-        )
-        .map_err(|e| WireError::Carrier(e.to_string()))?;
+        // Bind our own UDP socket ONCE per address and reuse it across every
+        // inbound connection. quinn `Endpoint` is `Clone` and shares the
+        // underlying socket, so re-using the cached endpoint does NOT create a
+        // new socket; this keeps a persistent server (`listen_loop`) alive
+        // between accepts instead of dropping the socket (and live connections)
+        // on every `accept` call.
+        let endpoint = {
+            let cache = BOUND_ENDPOINTS.lock().unwrap();
+            if let Some(e) = cache.get(&addr) {
+                e.clone()
+            } else {
+                drop(cache);
+                let std_sock = std::net::UdpSocket::bind(bind)
+                    .map_err(|e| WireError::HandshakeRejected(e.to_string()))?;
+                let server_cfg = ServerConfig::with_crypto(Arc::new(Self::server_crypto()));
+                let e = Endpoint::new(
+                    quinn::EndpointConfig::default(),
+                    Some(server_cfg),
+                    std_sock,
+                    Arc::new(quinn::TokioRuntime),
+                )
+                .map_err(|e| WireError::Carrier(e.to_string()))?;
+                BOUND_ENDPOINTS.lock().unwrap().insert(addr.clone(), e.clone());
+                e
+            }
+        };
 
         // Accept one inbound connection, then open a bi stream for the peer.
         let conn = endpoint
