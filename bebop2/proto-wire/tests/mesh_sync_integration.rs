@@ -442,3 +442,152 @@ async fn mesh_sync_idempotent() {
     // Sanity: the dedup set actually saw the dups (no double-fold happened).
     assert_eq!(b_folded.len(), 5, "exactly 5 distinct content-ids folded");
 }
+
+/// One DIRECTED anti-entropy pull: `receiver` pulls its missing clean-prefix
+/// suffix from `sender` over a single fresh real QUIC connection. A no-op
+/// (no connection) when the receiver is already caught up. Reuses [`sync_missing`]
+/// so the full hybrid-signed frame + roster path is exercised exactly as the
+/// 2-node tests.
+async fn directed_pull(
+    sender_log: &EventLog<()>,
+    receiver_log: &mut EventLog<()>,
+    receiver_folded: &mut MerkleLog,
+    actor_seed: &[u8; 32],
+    actor_pk: &[u8; 32],
+    chain: &[Delegation],
+    roster: &AnchorRoster,
+    nonce: &mut u64,
+) {
+    let plan = diff(&digest(receiver_log), &digest(sender_log));
+    if plan.pull_len == 0 {
+        return; // receiver already caught up — no QUIC connection needed
+    }
+    sync_missing(
+        sender_log,
+        receiver_log,
+        receiver_folded,
+        &plan,
+        actor_seed,
+        actor_pk,
+        chain,
+        roster,
+        nonce,
+    )
+    .await;
+}
+
+// ── TEST 4: 3-node mesh convergence over real QUIC (W11) ──
+//
+// Prove the sync layer converges an N-node (3) mesh: A, B, C each run their own
+// EventLog + anti_entropy over a REAL quinn/QUIC endpoint, and after enough
+// all-pairs anti_entropy sweeps all three hold IDENTICAL (length + root_hash)
+// state. No single node is seeded with the union; node B is the EMPTY relay and
+// is the one that authors the final events, so A and C converge *through* B
+// (transitive mesh, not a star) — the minimal non-trivial mesh property.
+//
+// innovate: real discovery/gossip (MESH-02/03) is out of scope here; this proves
+// the *convergence property* of the sync layer over the real transport with N
+// endpoints. A fork (two nodes with conflicting seq-0 content) cannot be merged
+// by the behind-only `apply_pull` by design — a mesh must therefore share ONE
+// canonical ordered master chain, which is exactly what every node converges to.
+
+#[cfg(feature = "insecure-tls")]
+#[tokio::test]
+async fn mesh_sync_converges_3node() {
+    let _lock = QUIC_PORT_LOCK.lock().await;
+
+    // One canonical ordered master chain of 12 events.
+    let master = master_payloads(12);
+    // Seed: A holds K=4 (a prefix), C holds M=7 DIFFERENT-length prefix, B empty
+    // (the relay). All three are clean prefixes of `master` — no forks.
+    let mut a = seed_log(&master[0..4]);
+    let mut b = seed_log(&master[0..0]);
+    let mut c = seed_log(&master[0..7]);
+    let mut a_folded = MerkleLog::new();
+    let mut b_folded = MerkleLog::new();
+    let mut c_folded = MerkleLog::new();
+
+    let (actor_seed, actor_pk) = actor(2);
+    let (anchor_seed, anchor_pk) = actor(1);
+    let chain = build_chain(&anchor_seed, &anchor_pk, &actor_pk);
+    let mut roster = AnchorRoster::new();
+    roster.enroll(&anchor_pk);
+    let mut nonce = 0u64;
+
+    // One full all-pairs sweep over REAL QUIC (A<->B, B<->C, A<->C, both ways).
+    // Each directed pull opens its own loopback QUIC connection + hybrid frame.
+    async fn sweep(
+        a: &mut EventLog<()>,
+        b: &mut EventLog<()>,
+        c: &mut EventLog<()>,
+        a_folded: &mut MerkleLog,
+        b_folded: &mut MerkleLog,
+        c_folded: &mut MerkleLog,
+        actor_seed: &[u8; 32],
+        actor_pk: &[u8; 32],
+        chain: &[Delegation],
+        roster: &AnchorRoster,
+        nonce: &mut u64,
+    ) {
+        directed_pull(a, b, b_folded, actor_seed, actor_pk, chain, roster, nonce).await;
+        directed_pull(b, &mut *a, a_folded, actor_seed, actor_pk, chain, roster, nonce).await;
+        directed_pull(b, c, c_folded, actor_seed, actor_pk, chain, roster, nonce).await;
+        directed_pull(c, b, b_folded, actor_seed, actor_pk, chain, roster, nonce).await;
+        directed_pull(a, c, c_folded, actor_seed, actor_pk, chain, roster, nonce).await;
+        directed_pull(c, &mut *a, a_folded, actor_seed, actor_pk, chain, roster, nonce).await;
+    }
+
+    // Round 1: propagate the two distinct prefixes through the mesh. B (empty)
+    // receives from both A and C; A catches up to C's deeper prefix.
+    sweep(
+        &mut a, &mut b, &mut c, &mut a_folded, &mut b_folded, &mut c_folded, &actor_seed, &actor_pk,
+        &chain, &roster, &mut nonce,
+    )
+    .await;
+    assert_eq!(a.len(), 7, "A caught up to C's prefix via the mesh");
+    assert_eq!(b.len(), 7, "B relayed both prefixes up to depth 7");
+    assert_eq!(c.len(), 7);
+    assert_eq!(a.root_hash(), c.root_hash(), "A and C agree at depth 7");
+    assert_eq!(b.root_hash(), c.root_hash(), "B agrees at depth 7");
+
+    // The relay node B authors the FINAL events (e7..e11) on top of the shared
+    // prefix. A and C will converge to these ONLY by pulling from B — i.e. they
+    // depend on the mesh relay, not a direct A<->C share of the new content.
+    for p in &master[7..12] {
+        b.append(p);
+    }
+
+    // Round 2: B pushes the new tail to A and C. A<->C over the new events is a
+    // no-op (neither authored them) — the new content flows through B.
+    sweep(
+        &mut a, &mut b, &mut c, &mut a_folded, &mut b_folded, &mut c_folded, &actor_seed, &actor_pk,
+        &chain, &roster, &mut nonce,
+    )
+    .await;
+    assert_eq!(a.len(), 12, "A converged to full master via B");
+    assert_eq!(b.len(), 12);
+    assert_eq!(c.len(), 12, "C converged to full master via B");
+    assert!(a.verify().is_ok());
+    assert!(b.verify().is_ok());
+    assert!(c.verify().is_ok());
+    assert_eq!(a.root_hash(), b.root_hash(), "all three root_hashes identical");
+    assert_eq!(b.root_hash(), c.root_hash(), "all three root_hashes identical");
+
+    // Idempotency: an extra full all-pairs sweep must be a pure no-op.
+    let before = (a.len(), b.len(), c.len(), a.root_hash());
+    sweep(
+        &mut a, &mut b, &mut c, &mut a_folded, &mut b_folded, &mut c_folded, &actor_seed, &actor_pk,
+        &chain, &roster, &mut nonce,
+    )
+    .await;
+    assert_eq!(a.len(), before.0, "extra sweep: A length unchanged");
+    assert_eq!(b.len(), before.1, "extra sweep: B length unchanged");
+    assert_eq!(c.len(), before.2, "extra sweep: C length unchanged");
+    assert_eq!(a.root_hash(), before.3, "extra sweep: A root unchanged");
+    assert_eq!(a.root_hash(), b.root_hash(), "still converged after extra sweep");
+    assert_eq!(b.root_hash(), c.root_hash(), "still converged after extra sweep");
+
+    // And it matches a freshly built full master chain (content-addressed state).
+    let full = seed_log(&master[0..12]);
+    assert_eq!(a.root_hash(), full.root_hash(), "converged root == canonical master");
+}
