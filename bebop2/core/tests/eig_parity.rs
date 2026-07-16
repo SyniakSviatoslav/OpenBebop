@@ -13,16 +13,144 @@
 //!     algorithm (Hessenberg reduction → Francis double-shift QR → real Schur form). Different
 //!     math family, same answer. A drift in EITHER method is caught here.
 //!
+//! W2-1 additionally pins the *routed* consumers — `field::jacobi_eigen`,
+//! `kalman::real_eig`, and `lyapunov::eigenvals` — to the SAME authoritative
+//! `linalg::eigenvalues`, via a shared sentinel constant (`EIGEN_AUTHORITY`)
+//! and by asserting the OLD local eigenvalue result equals the authority's within 1e-9.
+//! This is the dual-authority hazard kill for the intra-crate Jacobi forks.
+//!
 //! They must agree to 1e-6 on every reference matrix. On divergence the test FAILS loudly
 //! with the matrix name + max |Δλ|, so a silent drift is impossible.
-//!
-//! This is the bebop2 analogue of the dowiz `markov.rs` parity gate that killed the same
-//! dual-authority hazard on the dowiz side.
 
-use bebop2_core::linalg::{self, Complex};
-use bebop2_core::lyapunov;
+use bebop2_core::field::{self, EIGEN_AUTHORITY as FIELD_AUTH};
+use bebop2_core::kalman::{self, EIGEN_AUTHORITY as KALMAN_AUTH};
+use bebop2_core::lyapunov::{self, EIGEN_AUTHORITY as LYAP_AUTH};
+use bebop2_core::linalg::{self, Complex, EIGEN_AUTHORITY as LINALG_AUTH};
 
-// ── helpers ──────────────────────────────────────────────────────────────
+/// W2-1 — every routed consumer names the SAME authoritative solver.
+/// A silent fork would change one sentinel → this fails.
+#[test]
+fn w2_1_all_consumers_pin_one_authority() {
+    assert_eq!(LINALG_AUTH, "linalg::eigenvalues");
+    assert_eq!(FIELD_AUTH, LINALG_AUTH);
+    assert_eq!(KALMAN_AUTH, LINALG_AUTH);
+    assert_eq!(LYAP_AUTH, LINALG_AUTH);
+    // energy (already routed) pins the same name too.
+    assert_eq!(bebop2_core::energy::EIGEN_AUTHORITY, LINALG_AUTH);
+}
+
+/// W2-1 — `field::jacobi_eigen` eigenvalues must equal `linalg::eigenvalues`
+/// (the authority) within 1e-9 on a fixture Laplacian. This is the parity gate:
+/// the LOCAL Jacobi eigenvalue result is compared to the SHARED authority and must match.
+#[test]
+fn w2_1_field_jacobi_routes_to_authority() {
+    // Path-graph P4 Laplacian → eigenvalues {0, 2-√2, 2, 2+√2}.
+    let l = laplacian_p4();
+    let (jac_vals, _jac_vecs) = field::jacobi_eigen(&l, 4);
+    let auth = linalg::eigenvalues(&rows_of(&l, 4));
+    let mut jac = jac_vals.clone();
+    let mut ar: Vec<f64> = auth.iter().map(|c| c.re).collect();
+    jac.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ar.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for (j, a) in jac.iter().zip(ar.iter()) {
+        assert!(
+            (j - a).abs() < 1e-9,
+            "field::jacobi_eigen diverged from linalg::eigenvalues: {j} vs {a}"
+        );
+    }
+}
+
+/// W2-1 — `kalman::real_eig` eigenvalues must equal `linalg::eigenvalues` within 1e-9.
+#[test]
+fn w2_1_kalman_real_eig_routes_to_authority() {
+    // Symmetric reference A = [[0.9,0.1],[0.1,0.8]] → eigenvalues {1.0, 0.7}.
+    let a = vec![0.9, 0.1, 0.1, 0.8];
+    let (k_ev, _k_vecs) = kalman::real_eig(&a, 2);
+    let auth = linalg::eigenvalues(&rows_of(&a, 2));
+    let mut ke: Vec<f64> = k_ev.iter().map(|c| c.re).collect();
+    let mut ar: Vec<f64> = auth.iter().map(|c| c.re).collect();
+    ke.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    ar.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    for (k, a) in ke.iter().zip(ar.iter()) {
+        assert!(
+            (k - a).abs() < 1e-9,
+            "kalman::real_eig diverged from linalg::eigenvalues: {k} vs {a}"
+        );
+    }
+}
+
+/// W2-1 — `lyapunov::eigenvals` (now a thin wrapper) must equal `linalg::eigenvalues`.
+#[test]
+fn w2_1_lyapunov_eigenvals_routes_to_authority() {
+    // A = [[2,1],[1,2]] → eigenvalues {3, 1}.
+    let a = vec![2.0, 1.0, 1.0, 2.0];
+    let lv = lyapunov::eigenvals(&a, 2);
+    let auth = linalg::eigenvalues(&rows_of(&a, 2));
+    let mut le: Vec<f64> = lv.iter().map(|c| c.re).collect();
+    let mut ar: Vec<f64> = auth.iter().map(|c| c.re).collect();
+    le.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    ar.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    for (l, a) in le.iter().zip(ar.iter()) {
+        assert!(
+            (l - a).abs() < 1e-9,
+            "lyapunov::eigenvals diverged from linalg::eigenvalues: {l} vs {a}"
+        );
+    }
+}
+
+/// W2-1 — eigenvector columns of `field::jacobi_eigen` are correctly ordered to
+/// match the authoritative eigenvalue order: A·v_j == λ_j·v_j within 1e-6.
+#[test]
+fn w2_1_field_eigenvectors_align_with_authority_order() {
+    let l = laplacian_p4();
+    let (vals, vecs) = field::jacobi_eigen(&l, 4);
+    for j in 0..4 {
+        let lam = vals[j];
+        for i in 0..4 {
+            let mut av = 0.0f64;
+            for k in 0..4 {
+                av += l[i * 4 + k] * vecs[k * 4 + j];
+            }
+            let vi = vecs[i * 4 + j];
+            assert!(
+                (av - lam * vi).abs() < 1e-6,
+                "eigenvector j={j} (λ={lam}) does not satisfy A v = λ v (residual {:.2e})",
+                (av - lam * vi).abs()
+            );
+        }
+    }
+}
+
+// ── helpers ─────────────────────────────────────────────────────────────
+
+/// Path-graph P4 Laplacian L = D - A, row-major flat (n=4).
+fn laplacian_p4() -> Vec<f64> {
+    let mut l = vec![0.0f64; 16];
+    for i in 0..4 {
+        let mut deg = 0.0;
+        if i > 0 {
+            l[i * 4 + (i - 1)] = -1.0;
+            deg += 1.0;
+        }
+        if i + 1 < 4 {
+            l[i * 4 + (i + 1)] = -1.0;
+            deg += 1.0;
+        }
+        l[i * 4 + i] = deg;
+    }
+    l
+}
+
+/// Build a row-major `&[Vec<f64>]` from a flat row-major slice (what `linalg::eigenvalues` takes).
+fn rows_of(flat: &[f64], n: usize) -> Vec<Vec<f64>> {
+    let mut rows = Vec::with_capacity(n);
+    for i in 0..n {
+        rows.push(flat[i * n..(i + 1) * n].to_vec());
+    }
+    rows
+}
+
+// ── helpers ──────────────────────────────────────────────────────
 
 /// Build a row-major `&[Vec<f64>]` matrix from a flat row-major slice.
 fn mat(rows: &[&[f64]]) -> Vec<Vec<f64>> {

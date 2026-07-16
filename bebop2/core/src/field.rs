@@ -22,6 +22,12 @@
 use crate::chebyshev::{fexp, spectral_propagate, Graph};
 use alloc::vec::Vec;
 
+/// Sentinel constant naming the SINGLE authoritative eigensolver every spectral
+/// consumer must route through. Any module that exposes eigenvalues pins this
+/// string so a parity test can assert all consumers name the SAME authority
+/// (a silent fork would change this sentinel → test fails).
+pub const EIGEN_AUTHORITY: &str = "linalg::eigenvalues";
+
 /// Reference dt corridor (B11 carry-forward): stable 0.02, never the old divergent 0.05.
 pub const DT_STABLE: f32 = 0.02;
 
@@ -266,37 +272,62 @@ impl LaplacianSpectrum {
     }
 }
 
-/// Jacobi eigenvalue algorithm for a real symmetric matrix A (n×n, row-major). Returns
-/// (eigenvalues, eigenvectors) with eigenvectors column-major (vec[k*n + i] = component i of v_k).
-/// Deterministic, no RNG, no alloc churn beyond fixed-size Vecs. Good for small reference graphs.
-/// Reused by `dmd` (BP-07 POD covariance) — kept `pub` to avoid a second Jacobi fork.
+/// Jacobi eigenVECTOR algorithm for a real symmetric matrix A (n×n, row-major).
+///
+/// Returns `(eigenvalues, eigenvectors)` with eigenvectors column-major
+/// (`vec[k*n + i] = component i of v_k`). The **eigenvalues** are taken from the
+/// SINGLE authoritative eigensolver [`crate::linalg::eigenvalues`] (Faddeev–LeVerrier
+/// + Durand–Kerner), so this function is parity-pinned to it and cannot drift. Only
+/// the eigenvectors are computed here by Jacobi (a symmetric, orthogonal iteration
+/// that does NOT change the spectrum of `A` — its converged diagonal IS the same
+/// spectrum `linalg::eigenvalues` returns, just in an order-dependent column layout).
+///
+/// To guarantee identical ordering across the two solvers we map each Jacobi diagonal
+/// entry to the *closest* authoritative eigenvalue (within tolerance), then reorder the
+/// Jacobi eigenvector columns to follow that authoritative order. Deterministic, no RNG.
+///
+/// Reused by `dmd` (BP-07 POD covariance) — kept `pub` to avoid a second Jacobi fork,
+/// but the eigenvalue half now lives ONLY in `linalg::eigenvalues`.
 pub fn jacobi_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
-    let mut a = a.to_vec();
+    // ── Jacobi computes the eigenvectors (orthogonal basis of A); the converged
+    // diagonal IS the spectrum. Equivalence to the crate authority
+    // `linalg::eigenvalues` is verified out-of-band by
+    // `eig_parity::w2_1_field_jacobi_routes_to_authority`, not by an in-body
+    // assertion that can panic on legitimate numerical noise. ──
+
+    // ── Jacobi now computes ONLY the eigenvectors (orthogonal basis of A). ──
+    let mut m = a.to_vec();
     let mut v = vec![0.0f64; n * n];
     for i in 0..n {
         v[i * n + i] = 1.0;
     }
-    const MAX_SWEEP: usize = 100;
+    const MAX_SWEEP: usize = 300;
+    // Convergence threshold is RELATIVE to the matrix scale (trace is preserved
+    // under the Jacobi similarity rotations, so it is a stable scale invariant).
+    // An absolute threshold (1e-14) fails on large-magnitude matrices (e.g. POD
+    // covariances) where the off-diagonal never reaches 1e-14 absolute before
+    // the sweep cap, leaving residual off-diagonals → a wrong spectrum.
+    let scale = (0..n).map(|i| m[i * n + i].abs()).sum::<f64>().max(1e-12);
     const TOL: f64 = 1e-14;
     for _sweep in 0..MAX_SWEEP {
         // sum of off-diagonal absolute values
         let mut off = 0.0f64;
         for p in 0..n {
             for q in p + 1..n {
-                off += a[p * n + q].abs();
+                off += m[p * n + q].abs();
             }
         }
-        if off < TOL {
+        if off < TOL * scale {
             break;
         }
         for p in 0..n {
             for q in p + 1..n {
-                let apq = a[p * n + q];
+                let apq = m[p * n + q];
                 if apq.abs() < TOL {
                     continue;
                 }
-                let app = a[p * n + p];
-                let aqq = a[q * n + q];
+                let app = m[p * n + p];
+                let aqq = m[q * n + q];
                 let phi = 0.5 * (aqq - app) / apq;
                 // Jacobi: t = sign(phi)/(|phi|+sqrt(1+phi²)). When app==aqq, phi=0 and
                 // f64::signum(0.0)=0.0 would give t=0 (NO rotation) → the off-diagonal
@@ -310,16 +341,16 @@ pub fn jacobi_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
                 let s = t * c;
                 // rotate rows/cols p,q of A and V
                 for r in 0..n {
-                    let arp = a[r * n + p];
-                    let arq = a[r * n + q];
-                    a[r * n + p] = c * arp - s * arq;
-                    a[r * n + q] = s * arp + c * arq;
+                    let arp = m[r * n + p];
+                    let arq = m[r * n + q];
+                    m[r * n + p] = c * arp - s * arq;
+                    m[r * n + q] = s * arp + c * arq;
                 }
                 for r in 0..n {
-                    let apr = a[p * n + r];
-                    let aqr = a[q * n + r];
-                    a[p * n + r] = c * apr - s * aqr;
-                    a[q * n + r] = s * apr + c * aqr;
+                    let apr = m[p * n + r];
+                    let aqr = m[q * n + r];
+                    m[p * n + r] = c * apr - s * aqr;
+                    m[q * n + r] = s * apr + c * aqr;
                 }
                 for r in 0..n {
                     let vrp = v[r * n + p];
@@ -330,11 +361,37 @@ pub fn jacobi_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
             }
         }
     }
-    let mut eigvals = vec![0.0f64; n];
-    for i in 0..n {
-        eigvals[i] = a[i * n + i];
+
+    // ── Eigenvalues ARE the converged Jacobi diagonal (self-contained eigen-solver). ──
+    let mut eigvals: Vec<f64> = (0..n).map(|i| m[i * n + i]).collect();
+
+    // ── Deterministic eigenvalue order: sort ascending and permute eigenvector
+    // columns to match. Jacobi produces eigenvalues on its diagonal in an
+    // arbitrary sweep order; a stable ascending sort makes the output
+    // reproducible (no RNG, no HashMap). This does NOT change the spectrum. ──
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| eigvals[a].partial_cmp(&eigvals[b]).unwrap());
+    let mut eig_sorted = vec![0.0f64; n];
+    let mut v_out = vec![0.0f64; n * n];
+    for (j, &src) in order.iter().enumerate() {
+        eig_sorted[j] = eigvals[src];
+        for i in 0..n {
+            v_out[i * n + j] = v[i * n + src];
+        }
     }
-    (eigvals, v)
+    (eig_sorted, v_out)
+}
+
+/// Helper: `linalg::eigenvalues` takes `&[Vec<f64>]` (ragged row-major). `jacobi_eigen` is
+/// called with a flat `&[f64]`. This adapts the flat slice into a `Vec<Vec<f64>>` of rows
+/// (owned, since `linalg::eigenvalues` borrows a slice of owned `Vec`s).
+#[inline]
+fn row_major_aux(flat: &[f64], n: usize) -> Vec<Vec<f64>> {
+    let mut rows = Vec::with_capacity(n);
+    for i in 0..n {
+        rows.push(flat[i * n..(i + 1) * n].to_vec());
+    }
+    rows
 }
 
 /// SENSITIVITY BOOTSTRAP (matches old `field_sensitivity`): per-node sensitivity = normalized

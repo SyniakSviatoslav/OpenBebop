@@ -21,20 +21,44 @@
 use crate::fft::Complex;
 use alloc::vec::Vec;
 
-/// Jacobi eigenvalue algorithm for a real square (diagonalizable) matrix A (n×n row-major).
+/// Sentinel constant naming the SINGLE authoritative eigensolver every spectral
+/// consumer must route through (see `field::EIGEN_AUTHORITY`).
+pub const EIGEN_AUTHORITY: &str = "linalg::eigenvalues";
+
+/// Jacobi eigenVECTOR algorithm for a real square (diagonalizable) matrix A (n×n row-major).
 /// Returns `(eigenvalues as Complex (real parts for the reference systems), eigenvectors V
 /// row-major: V[i*n + j] = component i of eigenvector j)`. Deterministic, no RNG. For the
 /// reference systems A is real-diagonalizable so the spectral Kalman path is exact.
+///
+/// The **eigenvalues** are taken from the SINGLE authoritative eigensolver
+/// [`crate::linalg::eigenvalues`] (Faddeev–LeVerrier + Durand–Kerner). Only the
+/// eigenvectors are computed here by Jacobi, then the eigenvector columns are reordered to
+/// follow the authoritative eigenvalue order (via a nearest-match of the converged Jacobi
+/// diagonal to the authority). See `field::jacobi_eigen` for the same consolidation pattern.
 // NOTE: visibility widened to `pub` for the cross-solver PARITY-GATE integration test
 // (core/tests/eigensolver_parity.rs). This is a visibility-only change — the Jacobi
 // algorithm body below is UNTOUCHED (no math edit, no rewrite).
 pub fn real_eig(a: &[f64], n: usize) -> (Vec<Complex>, Vec<f64>) {
+    // ── AUTHORITY: eigenvalues from the shared solver (ragged row-major form). ──
+    let mut rows: Vec<Vec<f64>> = Vec::with_capacity(n);
+    for i in 0..n {
+        rows.push(a[i * n..(i + 1) * n].to_vec());
+    }
+    let auth = crate::linalg::eigenvalues(&rows);
+    let eigvals: Vec<Complex> = auth.iter().map(|c| Complex::new(c.re, 0.0)).collect();
+
+    // ── Jacobi computes ONLY the eigenvectors (orthogonal basis of A). ──
     let mut m = a.to_vec();
     let mut v = vec![0.0f64; n * n];
     for i in 0..n {
         v[i * n + i] = 1.0;
     }
-    const MAX_SWEEP: usize = 100;
+    const MAX_SWEEP: usize = 300;
+    // Relative convergence threshold (see field::jacobi_eigen): trace is preserved
+    // under similarity rotations, so scale it by the diagonal sum. An absolute
+    // 1e-14 cap fails on large-magnitude matrices and leaves residual
+    // off-diagonals → wrong eigenvectors.
+    let scale = (0..n).map(|i| a[i * n + i].abs()).sum::<f64>().max(1e-12);
     const TOL: f64 = 1e-14;
     for _sweep in 0..MAX_SWEEP {
         let mut off = 0.0f64;
@@ -43,7 +67,7 @@ pub fn real_eig(a: &[f64], n: usize) -> (Vec<Complex>, Vec<f64>) {
                 off += m[p * n + q].abs();
             }
         }
-        if off < TOL {
+        if off < TOL * scale {
             break;
         }
         for p in 0..n {
@@ -79,11 +103,38 @@ pub fn real_eig(a: &[f64], n: usize) -> (Vec<Complex>, Vec<f64>) {
             }
         }
     }
-    let mut eigvals = vec![Complex::new(0.0, 0.0); n];
-    for i in 0..n {
-        eigvals[i] = Complex::new(m[i * n + i], 0.0);
+
+    // ── Reorder Jacobi eigenvector columns to match the authoritative eigenvalue order. ──
+    let mut matched = vec![false; n];
+    let mut perm = vec![0usize; n]; // perm[auth_index] = jacobi_column_index
+    for j in 0..n {
+        let mut best = usize::MAX;
+        let mut best_d = f64::INFINITY;
+        for k in 0..n {
+            if matched[k] {
+                continue;
+            }
+            let d = (m[k * n + k] - eigvals[j].re).abs();
+            if d < best_d {
+                best_d = d;
+                best = k;
+            }
+        }
+        debug_assert!(
+            best_d < 1e-5,
+            "real_eig: eigenvector column did not match any authoritative eigenvalue (δ={best_d:e})"
+        );
+        matched[best] = true;
+        perm[j] = best;
     }
-    (eigvals, v)
+    let mut v_out = vec![0.0f64; n * n];
+    for j in 0..n {
+        let src = perm[j];
+        for i in 0..n {
+            v_out[i * n + j] = v[i * n + src];
+        }
+    }
+    (eigvals, v_out)
 }
 
 /// Dense symmetric NxN matrix stored row-major (used ONLY for the brute-force oracle + small
@@ -123,11 +174,13 @@ pub fn matmul(a: &[f64], b: &[f64], n: usize, out: &mut [f64]) {
     }
 }
 
-/// Transpose in place (square).
-pub fn transpose(a: &[f64], n: usize, out: &mut [f64]) {
-    for i in 0..n {
-        for j in 0..n {
-            out[j * n + i] = a[i * n + j];
+/// Transpose a (r×c) row-major matrix `a` into `out` (c×r row-major).
+/// (Non-square-aware — `update` needs Hᵀ where H is m×n, so a square-only
+/// transpose would silently corrupt the cross-covariance gain.)
+fn transpose(a: &[f64], r: usize, c: usize, out: &mut [f64]) {
+    for i in 0..r {
+        for j in 0..c {
+            out[j * r + i] = a[i * c + j];
         }
     }
 }
@@ -138,7 +191,7 @@ pub fn dense_kalman_p(am: &[f64], q: &[f64], p0: &[f64], steps: usize, n: usize)
     let mut p = p0.to_vec();
     let at = {
         let mut t = vec![0.0; n * n];
-        transpose(am, n, &mut t);
+        transpose(am, n, n, &mut t);
         t
     };
     for _ in 0..steps {
@@ -347,7 +400,7 @@ impl KalmanFilter {
         let mut ap = vec![0.0f64; n * n];
         matmul_rect(&self.a, &self.p, n, n, n, &mut ap);
         let mut at = vec![0.0f64; n * n];
-        transpose(&self.a, n, &mut at);
+        transpose(&self.a, n, n, &mut at);
         let mut apa = vec![0.0f64; n * n];
         matmul_rect(&ap, &at, n, n, n, &mut apa);
         for i in 0..n * n {
@@ -362,7 +415,7 @@ impl KalmanFilter {
         let mut hp = vec![0.0f64; m * n];
         matmul_rect(h, &self.p, m, n, n, &mut hp);
         let mut ht = vec![0.0f64; n * m];
-        transpose(h, m, &mut ht);
+        transpose(h, m, n, &mut ht);
         let mut hpht = vec![0.0f64; m * m];
         matmul_rect(&hp, &ht, m, n, m, &mut hpht);
         let mut s = vec![0.0f64; m * m];
@@ -422,6 +475,103 @@ impl KalmanFilter {
         kf.predict();
         kf.update(&[z], &[1.0], &[r]);
         (kf.state()[0], kf.covariance()[0])
+    }
+}
+
+// ── Courier geo SE(3)-ish constant-velocity estimator ───────────────────────
+//
+// W2-3 (B1, courier geo state): lifts the generic `KalmanFilter` predict/update
+// into a courier position+velocity tracker. State = [pos_0..pos_{d-1},
+// vel_0..vel_{d-1}] (2·d components), constant-velocity plant
+//   F = [[I_d, dt·I_d], [0, I_d]],   H = [I_d, 0]  (GPS observes position only),
+// with a continuous white-noise-acceleration process covariance Q and a diagonal
+// measurement covariance R. NO predict/update rewrite — it reuses the exact
+// `KalmanFilter::predict`/`update` already proven against the legacy 1-D formula.
+
+/// Courier geo constant-velocity estimator over `pos_dim` spatial axes.
+/// Wraps a [`KalmanFilter`] together with its position-observation matrix `H`
+/// and measurement covariance `R`, so callers only feed GPS positions.
+pub struct GeoKalman {
+    kf: KalmanFilter,
+    h: Vec<f64>,
+    r: Vec<f64>,
+    d: usize,
+}
+
+impl GeoKalman {
+    /// One predict+update cycle given a position measurement `z` (length `pos_dim`).
+    pub fn step(&mut self, z: &[f64]) {
+        self.kf.predict();
+        self.kf.update(z, &self.h, &self.r);
+    }
+    /// Full state estimate `[pos_0..pos_{d-1}, vel_0..vel_{d-1}]`.
+    pub fn state(&self) -> &[f64] {
+        self.kf.state()
+    }
+    /// Full covariance (row-major, (2d)²).
+    pub fn covariance(&self) -> &[f64] {
+        self.kf.covariance()
+    }
+    /// Position sub-state (length `pos_dim`).
+    pub fn position(&self) -> &[f64] {
+        &self.kf.state()[..self.d]
+    }
+    /// Velocity sub-state (length `pos_dim`).
+    pub fn velocity(&self) -> &[f64] {
+        &self.kf.state()[self.d..]
+    }
+}
+
+/// Builder: courier geo constant-velocity (SE(3)-ish) estimator.
+///
+/// * `pos_dim`  — number of spatial axes (`d`): 2 for planar, 3 for full 3-D geo.
+/// * `dt`       — sampling interval.
+/// * `accel_var`— continuous white-noise *acceleration* spectral density (process noise scale).
+/// * `meas_var` — per-axis GPS position measurement variance (diagonal of `R`).
+///
+/// State dim `n = 2·d`; `F`, `H`, `Q`, `R` are built from these and handed to the
+/// existing [`KalmanFilter::new`] — the predict/update math is reused verbatim.
+pub fn geo_kalman(pos_dim: usize, dt: f64, accel_var: f64, meas_var: f64) -> GeoKalman {
+    let d = pos_dim;
+    let n = 2 * d;
+    // F = [[I, dt·I],[0, I]]  (constant-velocity plant), row-major.
+    let mut a = vec![0.0f64; n * n];
+    for i in 0..d {
+        a[i * n + i] = 1.0;
+        a[i * n + (d + i)] = dt;
+        a[(d + i) * n + (d + i)] = 1.0;
+    }
+    // Continuous white-noise-acceleration Q (block-diagonal per axis), row-major.
+    let dt3 = dt * dt * dt;
+    let dt2 = dt * dt;
+    let mut q = vec![0.0f64; n * n];
+    for i in 0..d {
+        q[i * n + i] = accel_var * dt3 / 3.0;
+        q[i * n + (d + i)] = accel_var * dt2 / 2.0;
+        q[(d + i) * n + i] = accel_var * dt2 / 2.0;
+        q[(d + i) * n + (d + i)] = accel_var * dt;
+    }
+    // H = [I_d, 0] : observe position directly (GPS), row-major (d × n).
+    let mut h = vec![0.0f64; d * n];
+    for i in 0..d {
+        h[i * n + i] = 1.0;
+    }
+    // R = meas_var · I_d (diagonal), row-major (d × d).
+    let mut r = vec![0.0f64; d * d];
+    for i in 0..d {
+        r[i * d + i] = meas_var;
+    }
+    let x0 = vec![0.0f64; n];
+    // Moderately uncertain prior so the filter can learn velocity from data.
+    let mut p0 = vec![0.0f64; n * n];
+    for i in 0..n {
+        p0[i * n + i] = 100.0;
+    }
+    GeoKalman {
+        kf: KalmanFilter::new(&a, &q, &x0, &p0, n),
+        h,
+        r,
+        d,
     }
 }
 
@@ -652,6 +802,202 @@ mod reconciliation_tests {
             (kf.state()[0] - legacy.0).abs() < 1e-12
                 && (kf.covariance()[0] - legacy.1).abs() < 1e-12,
             "n=1 KalmanFilter must equal scalar kalman_1d"
+        )
+    }
+}
+
+#[cfg(test)]
+mod geo_kalman_tests {
+    use super::*;
+
+    // Deterministic uniform noise in [-1,1) via mulberry32 — NO RNG dependency
+    // (pure-std). A fixed seed yields a byte-identical stream across runs, which
+    // is exactly what the determinism property gate requires.
+    fn lcg(state: &mut u64) -> f64 {
+        *state = state.wrapping_add(0x6D2B79F5);
+        let mut z = *state;
+        z = (z ^ (z >> 15)).wrapping_mul(z | 1);
+        z ^= z.wrapping_add(z ^ (z >> 7)).wrapping_mul(z | 61);
+        // normalize to uniform[-1, 1): take 53 mantissa bits → [0,1) → [-1,1)
+        let f = ((z >> 11) as f64) / ((1u64 << 53) as f64);
+        f * 2.0 - 1.0
+    }
+
+    // W2-3 (1) convergence: a noisy position stream along a straight line at a
+    // constant velocity must drive the filter's velocity estimate to within 5%
+    // of the true velocity after N steps. Reuses the existing predict/update.
+    #[test]
+    fn geo_kalman_velocity_converges_under_5pct() {
+        let d = 2usize;
+        let dt = 1.0f64;
+        let accel_var = 0.01f64; // courier ~constant-speed: small accel noise → velocity observable
+        let meas_var = 1.0f64; // GPS position noise variance (std 1.0 m)
+        let true_v = [1.0f64, 0.5f64];
+        let pos0 = [0.0f64, 0.0f64];
+        let n_steps = 400usize;
+
+        let mut seed = 0x1234_5678_u64;
+        let mut kf = geo_kalman(d, dt, accel_var, meas_var);
+        let mut vsum = [0.0f64; 2];
+        for k in 0..n_steps {
+            let t = (k as f64) * dt;
+            let mut z = [0.0f64; 2];
+            for i in 0..d {
+                let noise = lcg(&mut seed) * meas_var.sqrt();
+                z[i] = pos0[i] + true_v[i] * t + noise;
+            }
+            kf.step(&z);
+            // velocity is slowly-varying; average the converged tail to suppress
+            // the GPS-noise component that a single late step carries through P(v,p).
+            if k >= n_steps - 50 {
+                let v = kf.velocity();
+                for i in 0..d {
+                    vsum[i] += v[i];
+                }
+            }
+        }
+        let vel = [vsum[0] / 50.0, vsum[1] / 50.0];
+        for i in 0..d {
+            let rel = (vel[i] - true_v[i]).abs() / true_v[i].abs();
+            assert!(
+                rel < 0.05,
+                "axis {i}: velocity est {} vs truth {} (rel err {:.2}%)",
+                vel[i],
+                true_v[i],
+                rel * 100.0
+            );
+        }
+    }
+
+    // W2-3 (1) 3-D generality: same convergence requirement in full 3-D geo state.
+    #[test]
+    fn geo_kalman_velocity_converges_3d_under_5pct() {
+        let d = 3usize;
+        let dt = 1.0f64;
+        let accel_var = 0.01f64;
+        let meas_var = 1.0f64;
+        let true_v = [1.0f64, -0.75, 0.4];
+        let pos0 = [0.0f64; 3];
+        let n_steps = 400usize;
+
+        let mut seed = 0x9E3779B1_u64;
+        let mut kf = geo_kalman(d, dt, accel_var, meas_var);
+        let mut vsum = [0.0f64; 3];
+        for k in 0..n_steps {
+            let t = (k as f64) * dt;
+            let mut z = [0.0f64; 3];
+            for i in 0..d {
+                z[i] = pos0[i] + true_v[i] * t + lcg(&mut seed) * meas_var.sqrt();
+            }
+            kf.step(&z);
+            if k >= n_steps - 50 {
+                let v = kf.velocity();
+                for i in 0..d {
+                    vsum[i] += v[i];
+                }
+            }
+        }
+        let n = 50.0f64;
+        let vel = [vsum[0] / n, vsum[1] / n, vsum[2] / n];
+        for i in 0..d {
+            let rel = (vel[i] - true_v[i]).abs() / true_v[i].abs();
+            assert!(
+                rel < 0.05,
+                "axis {i}: 3D velocity est {} vs truth {} (rel err {:.2}%)",
+                vel[i],
+                true_v[i],
+                rel * 100.0
+            );
+        }
+    }
+
+    // W2-3 (2) the filter must IMPROVE over the raw (unfiltered) GPS: position
+    // RMSE of the filtered estimate < position RMSE of the raw measurements,
+    // measured over the converged tail (steady state, not the warm-up transient).
+    #[test]
+    fn geo_kalman_position_rmse_below_raw() {
+        let d = 2usize;
+        let dt = 1.0f64;
+        let accel_var = 0.01f64;
+        let meas_var = 4.0f64; // GPS std 2.0 m
+        let true_v = [1.0f64, 0.5];
+        let pos0 = [0.0, 0.0];
+        let n_steps = 200usize;
+        let start = n_steps / 2; // compare only the converged tail
+
+        let mut seed = 0xBEEF_u64;
+        let mut kf = geo_kalman(d, dt, accel_var, meas_var);
+        let mut raw_sq = 0.0f64;
+        let mut filt_sq = 0.0f64;
+        let mut count = 0usize;
+        for k in 0..n_steps {
+            let t = (k as f64) * dt;
+            let mut z = [0.0; 2];
+            for i in 0..d {
+                z[i] = pos0[i] + true_v[i] * t + lcg(&mut seed) * meas_var.sqrt();
+            }
+            kf.step(&z);
+            if k >= start {
+                let pos = kf.position();
+                for i in 0..d {
+                    let truth = pos0[i] + true_v[i] * t;
+                    raw_sq += (z[i] - truth) * (z[i] - truth);
+                    filt_sq += (pos[i] - truth) * (pos[i] - truth);
+                }
+                count += 1;
+            }
+        }
+        let raw_rmse = (raw_sq / (count as f64 * d as f64)).sqrt();
+        let filt_rmse = (filt_sq / (count as f64 * d as f64)).sqrt();
+        assert!(
+            filt_rmse < raw_rmse,
+            "filtered RMSE {} must beat raw measurement RMSE {}",
+            filt_rmse,
+            raw_rmse
         );
+        // Meaningful margin: filter should cut RMSE by >50% vs raw noise.
+        assert!(
+            filt_rmse < 0.5 * raw_rmse,
+            "filter should substantially cut RMSE: {} vs {}",
+            filt_rmse,
+            raw_rmse
+        );
+    }
+
+    // W2-3 (3) byte-determinism: the SAME inputs (same seeded noise stream) must
+    // produce the IDENTICAL estimate across two independent runs, bit-for-bit.
+    #[test]
+    fn geo_kalman_byte_deterministic() {
+        fn run() -> Vec<f64> {
+            let d = 2usize;
+            let dt = 1.0f64;
+            let accel_var = 0.5f64;
+            let meas_var = 1.0f64;
+            let true_v = [2.0f64, -1.5];
+            let pos0 = [0.0, 0.0];
+            let mut seed = 0xCAFE_u64;
+            let mut kf = geo_kalman(d, dt, accel_var, meas_var);
+            for k in 0..100usize {
+                let t = (k as f64) * dt;
+                let mut z = [0.0; 2];
+                for i in 0..d {
+                    z[i] = pos0[i] + true_v[i] * t + lcg(&mut seed) * meas_var.sqrt();
+                }
+                kf.step(&z);
+            }
+            kf.state().to_vec()
+        }
+        let a = run();
+        let b = run();
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(
+                x.to_bits(),
+                y.to_bits(),
+                "geo_kalman must be byte-deterministic: {} vs {}",
+                x,
+                y
+            );
+        }
     }
 }

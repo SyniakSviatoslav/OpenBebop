@@ -26,6 +26,10 @@ use alloc::vec::Vec;
 
 use crate::linalg::{eigenvalues, Complex};
 
+/// Sentinel constant naming the SINGLE authoritative eigensolver every spectral
+/// consumer must route through (matches `field::EIGEN_AUTHORITY`).
+pub const EIGEN_AUTHORITY: &str = "linalg::eigenvalues";
+
 /// Graph energy `E = Σ|λᵢ|` over ALL eigenvalues of the adjacency matrix `adj`.
 ///
 /// `adj` is the row-major `n×n` (unweighted, undirected) adjacency matrix — entry

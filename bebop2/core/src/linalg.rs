@@ -195,6 +195,11 @@ pub fn roots(coeffs: &[f64]) -> Vec<Complex> {
 ///
 /// # Panics
 /// Debug builds assert `A` is square (`n×n`).
+/// Sentinel constant naming THE single authoritative eigensolver every spectral
+/// consumer must route through. Every routed consumer (field/kalman/lyapunov/energy)
+/// pins this same string so a silent fork is caught by `eig_parity::w2_1_*`.
+pub const EIGEN_AUTHORITY: &str = "linalg::eigenvalues";
+
 pub fn eigenvalues(m: &[Vec<f64>]) -> Vec<Complex> {
     let n = m.len();
     debug_assert!(

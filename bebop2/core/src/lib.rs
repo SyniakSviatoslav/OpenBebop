@@ -318,6 +318,8 @@ pub mod kalman; // Kalman filter (trajectory integrals, not vector math)
 #[cfg(feature = "host")]
 pub mod lyapunov; // Lyapunov derivative (stability, not ad-hoc vectors)
 #[cfg(feature = "host")]
+pub mod micrograd; // minimal scalar autograd engine (Value/backprop) + tiny SGD MLP
+#[cfg(feature = "host")]
 pub mod resonator;
 // `speedometer` uses `std::time::Instant` + `f64::log2` (both std-only), so it is gated to
 // the `std` build — the pure no_std crypto core never benchmarks. (No non-std caller exists.)

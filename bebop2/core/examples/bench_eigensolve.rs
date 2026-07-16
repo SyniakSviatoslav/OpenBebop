@@ -1,10 +1,10 @@
 //! bench_eigensolve — the "atomic benchmark" PoC (rewrite-roadmap S0.5).
 //!
-//! Speedometer for the consolidated spectral organ: times the single
-//! authoritative symmetric eigensolver (`field::jacobi_eigen`) against the
-//! general eigensolver (`lyapunov::eigenvalues_general`) on growing graph
-//! Laplacians, prints ns (speed), and asserts they AGREE within 1e-9 (the
-//! cross-authority parity that markov.rs-style drift would break).
+//! Speedometer for the consolidated spectral organ: times the eigenvalue path
+//! (authoritative `linalg::eigenvalues`, as reached via `field::jacobi_eigen`'s
+//! eigenvalue half) against the general eigensolver (`lyapunov::eigenvalues_general`)
+//! on growing graph Laplacians, prints ns (speed), and asserts they AGREE within
+//! 1e-9 (the cross-authority parity that markov.rs-style drift would break).
 //!
 //! Run:  cargo run -p bebop-core --example bench_eigensolve --release
 //! (debug build also works; --release gives the real speedometer numbers.)

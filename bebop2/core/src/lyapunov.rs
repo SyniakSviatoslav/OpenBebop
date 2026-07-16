@@ -13,51 +13,27 @@
 use crate::fft::Complex;
 use alloc::vec::Vec;
 
-/// Eigenvalues of a real square matrix via the Jacobi method (mirrors the kalman path; self-
-/// contained so lyapunov owns its eigen-decomposition). Returns complex eigenvalues (real parts
-/// matter for stability). For the reference real systems these are real.
-fn eigenvals(a: &[f64], n: usize) -> Vec<Complex> {
-    let mut m = a.to_vec();
-    const MAX_SWEEP: usize = 100;
-    const TOL: f64 = 1e-14;
-    for _sweep in 0..MAX_SWEEP {
-        let mut off = 0.0f64;
-        for p in 0..n {
-            for q in p + 1..n {
-                off += m[p * n + q].abs();
-            }
-        }
-        if off < TOL {
-            break;
-        }
-        for p in 0..n {
-            for q in p + 1..n {
-                let apq = m[p * n + q];
-                if apq.abs() < TOL {
-                    continue;
-                }
-                let app = m[p * n + p];
-                let aqq = m[q * n + q];
-                let phi = 0.5 * (aqq - app) / apq;
-                let t = phi.signum() / (phi.abs() + crate::math::fsqrt(1.0 + phi * phi));
-                let c = 1.0 / crate::math::fsqrt(1.0 + t * t);
-                let s = t * c;
-                for r in 0..n {
-                    let arp = m[r * n + p];
-                    let arq = m[r * n + q];
-                    m[r * n + p] = c * arp - s * arq;
-                    m[r * n + q] = s * arp + c * arq;
-                }
-                for r in 0..n {
-                    let apr = m[p * n + r];
-                    let aqr = m[q * n + r];
-                    m[p * n + r] = c * apr - s * aqr;
-                    m[q * n + r] = s * apr + c * aqr;
-                }
-            }
-        }
+/// Sentinel constant naming the SINGLE authoritative eigensolver every spectral
+/// consumer must route through (see `field::EIGEN_AUTHORITY`).
+pub const EIGEN_AUTHORITY: &str = "linalg::eigenvalues";
+
+/// Eigenvalues of a real square matrix.
+///
+/// This is now a THIN WRAPPER over the SINGLE authoritative eigensolver
+/// [`crate::linalg::eigenvalues`] (Faddeev–LeVerrier + Durand–Kerner). The old
+/// in-tree Jacobi copy (`eigenvals`) is deleted — no second, unsupervised eigen-copy
+/// is allowed to drift (dual-authority hazard kill). Returns complex eigenvalues
+/// (real parts matter for stability). For the reference real systems these are real.
+pub fn eigenvals(a: &[f64], n: usize) -> Vec<Complex> {
+    // `linalg::eigenvalues` takes ragged row-major `&[Vec<f64>]`; adapt the flat slice.
+    let mut rows: Vec<Vec<f64>> = Vec::with_capacity(n);
+    for i in 0..n {
+        rows.push(a[i * n..(i + 1) * n].to_vec());
     }
-    (0..n).map(|i| Complex::new(m[i * n + i], 0.0)).collect()
+    crate::linalg::eigenvalues(&rows)
+        .iter()
+        .map(|c| Complex::new(c.re, c.im))
+        .collect()
 }
 
 /// Spectral Lyapunov stability test for ẋ = A x.
