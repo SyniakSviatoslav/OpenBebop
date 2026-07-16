@@ -180,14 +180,20 @@ impl SelfModEffector {
         if (proposed_norm2 - current_norm2).abs() > self.noether_tol {
             self.record(
                 SelfModKind::Rejected,
-                &format!("noether drift {:.3e}", (proposed_norm2 - current_norm2).abs())
-                    .into_bytes(),
+                &format!(
+                    "noether drift {:.3e}",
+                    (proposed_norm2 - current_norm2).abs()
+                )
+                .into_bytes(),
             );
-            return Err(EffectorReject::FloorViolated("noether invariant drift".into()));
+            return Err(EffectorReject::FloorViolated(
+                "noether invariant drift".into(),
+            ));
         }
 
         // ── apply (reversible, in-memory only) ──
-        self.filter.set_q_scaler(candidate / self.accepted_q_scaler.max(1e-9));
+        self.filter
+            .set_q_scaler(candidate / self.accepted_q_scaler.max(1e-9));
         self.accepted_q_scaler = candidate;
         self.record(SelfModKind::Approved, &candidate.to_le_bytes());
         self.record(SelfModKind::Applied, &candidate.to_le_bytes());

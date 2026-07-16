@@ -133,7 +133,10 @@ impl<E> EventLog<E> {
         } else {
             self.entries.len()
         };
-        ReplayIter { log: self, idx: start }
+        ReplayIter {
+            log: self,
+            idx: start,
+        }
     }
 }
 
@@ -180,10 +183,7 @@ mod tests {
         assert!(!log.is_empty());
 
         // Full replay returns every entry, in order.
-        let replayed: Vec<(u64, Vec<u8>)> = log
-            .replay(0)
-            .map(|(s, p)| (s, p.to_vec()))
-            .collect();
+        let replayed: Vec<(u64, Vec<u8>)> = log.replay(0).map(|(s, p)| (s, p.to_vec())).collect();
         assert_eq!(replayed.len(), n as usize);
         for (i, (seq, _)) in replayed.iter().enumerate() {
             assert_eq!(*seq, i as u64, "replay must preserve sequence order");
@@ -239,12 +239,7 @@ mod tests {
     fn event_log_deterministic() {
         let mut a = EventLog::<()>::new();
         let mut b = EventLog::<()>::new();
-        let events: [&[u8]; 4] = [
-            &[1u8, 2, 3],
-            &[4u8, 5],
-            &[6u8, 7, 8, 9],
-            &[0u8, 0, 0, 0, 0],
-        ];
+        let events: [&[u8]; 4] = [&[1u8, 2, 3], &[4u8, 5], &[6u8, 7, 8, 9], &[0u8, 0, 0, 0, 0]];
         for e in &events {
             a.append(e);
             b.append(e);

@@ -15,6 +15,9 @@
 //! This is NOT a self-mod effector: it never mutates kernel state. It is a
 //! decision-protocol gate that returns the adopted `Conclusion`.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 /// One side of the dialogue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
@@ -96,11 +99,7 @@ pub struct Conclusion {
 ///          original). No third lap.
 ///
 /// `MAX_LAPS = 2` is enforced structurally — the loop cannot exceed it.
-pub fn deliberate<A, M>(
-    initial: &str,
-    mirror: &M,
-    mut reconcile: A,
-) -> Conclusion
+pub fn deliberate<A, M>(initial: &str, mirror: &M, mut reconcile: A) -> Conclusion
 where
     A: FnMut(&str, &[String]) -> String,
     M: Mirror,
@@ -109,12 +108,15 @@ where
     let mut transcript = Vec::new();
 
     // ── lap 1 ──
-    transcript.push(Utterance::author(initial.to_string()));
+    transcript.push(Utterance::author(String::from(initial)));
     let obj1 = mirror.critique(initial);
-    transcript.push(Utterance::mirror(format!("lap1 critique: {} open", obj1.len()), obj1.clone()));
+    transcript.push(Utterance::mirror(
+        format!("lap1 critique: {} open", obj1.len()),
+        obj1.clone(),
+    ));
     if obj1.is_empty() {
         return Conclusion {
-            adopted: initial.to_string(),
+            adopted: String::from(initial),
             outcome: Outcome::Agreed,
             laps: 1,
             transcript,
@@ -125,7 +127,10 @@ where
     let revised = reconcile(initial, &obj1);
     transcript.push(Utterance::author(format!("reconciled for lap2")));
     let obj2 = mirror.critique(&revised);
-    transcript.push(Utterance::mirror(format!("lap2 critique: {} open", obj2.len()), obj2.clone()));
+    transcript.push(Utterance::mirror(
+        format!("lap2 critique: {} open", obj2.len()),
+        obj2.clone(),
+    ));
 
     if obj2.is_empty() {
         return Conclusion {
@@ -142,7 +147,7 @@ where
     let (adopted, laps) = if obj2.len() < obj1.len() {
         (revised, 2)
     } else {
-        (initial.to_string(), 2)
+        (String::from(initial), 2)
     };
     Conclusion {
         adopted,
@@ -188,7 +193,7 @@ mod tests {
     // (1) agreement on lap 1 — no dialogue needed.
     #[test]
     fn agreement_lap1_no_objections() {
-        let c = deliberate("idea A", &AgreeingMirror, |p, _| p.to_string());
+        let c = deliberate("idea A", &AgreeingMirror, |p, _| String::from(p));
         assert_eq!(c.outcome, Outcome::Agreed);
         assert_eq!(c.laps, 1);
         assert_eq!(c.adopted, "idea A");
@@ -197,11 +202,9 @@ mod tests {
     // (2) author reconciles, mirror agrees on lap 2.
     #[test]
     fn reconciliation_converges_lap2() {
-        let c = deliberate(
-            "ship it",
-            &SatisfiableMirror,
-            |_, _| "ship it (mitigated)".to_string(),
-        );
+        let c = deliberate("ship it", &SatisfiableMirror, |_, _| {
+            String::from("ship it (mitigated)")
+        });
         assert_eq!(c.outcome, Outcome::Agreed);
         assert_eq!(c.laps, 2);
         assert_eq!(c.adopted, "ship it (mitigated)");
@@ -211,11 +214,9 @@ mod tests {
     //     did NOT reduce objections, the ORIGINAL stands (not the failed revision).
     #[test]
     fn lap_cap_least_friction_original_wins() {
-        let c = deliberate(
-            "original plan",
-            &StubbornMirror,
-            |_, _| "revised plan".to_string(),
-        );
+        let c = deliberate("original plan", &StubbornMirror, |_, _| {
+            String::from("revised plan")
+        });
         assert_eq!(c.outcome, Outcome::LeastFrictionAdopted);
         assert_eq!(c.laps, 2, "must run exactly 2 laps, never a 3rd");
         assert_eq!(c.adopted, "original plan", "failed reconcile must not win");
@@ -235,15 +236,18 @@ mod tests {
                 }
             }
         }
-        let c = deliberate("plan v0", &HalfMirror, |_, _| "plan v2".to_string());
+        let c = deliberate("plan v0", &HalfMirror, |_, _| String::from("plan v2"));
         assert_eq!(c.outcome, Outcome::LeastFrictionAdopted);
-        assert_eq!(c.adopted, "plan v2", "revision with fewer open objections wins");
+        assert_eq!(
+            c.adopted, "plan v2",
+            "revision with fewer open objections wins"
+        );
     }
 
     // (5) structural guarantee: transcript never exceeds the 2-lap exchange count.
     #[test]
     fn never_exceeds_two_laps() {
-        let c = deliberate("x", &StubbornMirror, |p, _| p.to_string());
+        let c = deliberate("x", &StubbornMirror, |p, _| String::from(p));
         // author + mirror (lap1) + author-reconcile + mirror (lap2) = 4 utterances.
         assert!(c.transcript.len() <= 4, "max 4 utterances across 2 laps");
     }

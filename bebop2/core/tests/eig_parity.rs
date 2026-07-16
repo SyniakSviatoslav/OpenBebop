@@ -29,8 +29,8 @@
 
 use bebop2_core::field::{self, EIGEN_AUTHORITY as FIELD_AUTH};
 use bebop2_core::kalman::{self, EIGEN_AUTHORITY as KALMAN_AUTH};
-use bebop2_core::lyapunov::{self, EIGEN_AUTHORITY as LYAP_AUTH};
 use bebop2_core::linalg::{self, Complex, EIGEN_AUTHORITY as LINALG_AUTH};
+use bebop2_core::lyapunov::{self, EIGEN_AUTHORITY as LYAP_AUTH};
 
 /// W2-1 — every routed consumer names the SAME authoritative solver.
 /// A silent fork would change one sentinel → this fails.

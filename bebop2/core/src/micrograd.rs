@@ -209,11 +209,7 @@ impl Value {
 }
 
 /// Post-order (operands-before-result) topological traversal by node identity.
-fn build_topo(
-    node: &Node,
-    topo: &mut Vec<Node>,
-    visited: &mut HashSet<*const RefCell<Inner>>,
-) {
+fn build_topo(node: &Node, topo: &mut Vec<Node>, visited: &mut HashSet<*const RefCell<Inner>>) {
     let ptr = Rc::as_ptr(node);
     if visited.insert(ptr) {
         for child in &node.borrow().prev {
@@ -286,7 +282,12 @@ impl Mlp {
                 params.push(v.clone());
                 bias.push(v);
             }
-            layers.push(Layer { nin, nout, w: weight, b: bias });
+            layers.push(Layer {
+                nin,
+                nout,
+                w: weight,
+                b: bias,
+            });
         }
         Mlp { layers, params }
     }
@@ -357,8 +358,16 @@ mod tests {
         let y = Value::new(3.0);
         let f = x.mul(&y);
         f.backward();
-        assert!((x.grad() - 3.0).abs() < 1e-12, "df/dx = {}, expected 3", x.grad());
-        assert!((y.grad() - 2.0).abs() < 1e-12, "df/dy = {}, expected 2", y.grad());
+        assert!(
+            (x.grad() - 3.0).abs() < 1e-12,
+            "df/dx = {}, expected 3",
+            x.grad()
+        );
+        assert!(
+            (y.grad() - 2.0).abs() < 1e-12,
+            "df/dy = {}, expected 2",
+            y.grad()
+        );
     }
 
     #[test]
@@ -447,9 +456,7 @@ mod tests {
         let sample_idx: Vec<usize> = (0..losses.len())
             .step_by(losses.len() / 10.max(1))
             .collect();
-        eprintln!(
-            "micrograd MLP loss curve (seed=0xBEEF, [1,20,1], lr=0.05, steps=2500):"
-        );
+        eprintln!("micrograd MLP loss curve (seed=0xBEEF, [1,20,1], lr=0.05, steps=2500):");
         eprintln!("  initial = {initial:.6e}");
         for &idx in &sample_idx {
             eprintln!("  step {idx:>4}: {:.6e}", losses[idx]);

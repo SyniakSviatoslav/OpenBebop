@@ -333,9 +333,9 @@ pub mod speedometer; // zero-dep bench + entropy gauge (benchmark-as-speedometer
                      // from the pure no_std crypto build. It is the ONE authoritative eigensolver —
                      // the dual-authority hazard kill.
 #[cfg(any(feature = "std", feature = "host"))]
-pub mod linalg; // the single authoritative eigensolver (Faddeev-LeVerrier + Durand-Kerner)
-#[cfg(any(feature = "std", feature = "host"))]
 pub mod energy; // vectorless graph-energy + spectral_radius (routes through linalg::eigenvalues)
+#[cfg(any(feature = "std", feature = "host"))]
+pub mod linalg; // the single authoritative eigensolver (Faddeev-LeVerrier + Durand-Kerner)
 #[cfg(feature = "host")]
 pub mod vsa; // vector symbolic archive (hyperplane bundling, not dense matrices) // closed-loop controller: generate→reflect→supervise, Lyapunov freeze, rollback-to-best
 
@@ -356,11 +356,11 @@ pub mod kat;
 // Append-only event log with a SHA3-256 hash-chain integrity spine. Money is
 // event-sourced, never CRDT-merged: every entry chains h_i = H(h_{i-1} || seq
 // || payload) and the whole chain re-verifies on demand. Reuses crate::hash.
-pub mod event_log; // event-sourcing log + Merkle/hash-chain spine (W3-2)
 pub mod anti_entropy; // pull-based anti-entropy / divergence-diff (W4-3)
+pub mod deliberate; // adversarial mirroring deliberation (author↔mirror, 2-lap cap)
+pub mod event_log; // event-sourcing log + Merkle/hash-chain spine (W3-2)
 #[cfg(feature = "host")]
 pub mod self_mod; // activated self-modification effector (W5, operator-authorized)
-pub mod deliberate; // adversarial mirroring deliberation (author↔mirror, 2-lap cap)
 #[cfg(feature = "host")]
 pub mod self_mod_loop; // W9 live driver: routes every revision through the mirror dialogue
 

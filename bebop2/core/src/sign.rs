@@ -993,8 +993,14 @@ mod tests {
             c_zeros, c_ones,
             "op-count varies with Hamming weight (0 vs 256 set bits) → secret-bit timing oracle"
         );
-        assert_eq!(c_zeros, c_low, "op-count varies with bit position (low bit)");
-        assert_eq!(c_zeros, c_high, "op-count varies with bit position (high bit)");
+        assert_eq!(
+            c_zeros, c_low,
+            "op-count varies with bit position (low bit)"
+        );
+        assert_eq!(
+            c_zeros, c_high,
+            "op-count varies with bit position (high bit)"
+        );
         // Exactly one addition + one doubling per scalar bit over 256 bits.
         assert_eq!(
             c_zeros, 512,

@@ -33,8 +33,8 @@
 
 use bebop2_core::field::jacobi_eigen;
 use bebop2_core::kalman::real_eig;
-use bebop2_core::lyapunov::eigenvalues_general;
 use bebop2_core::linalg::eigenvalues as linalg_eigenvalues;
+use bebop2_core::lyapunov::eigenvalues_general;
 
 /// Convert the parity-test `&[f64]` row-major layout into the `&[Vec<f64>]`
 /// layout `linalg::eigenvalues` expects, then return sorted real parts.

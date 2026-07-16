@@ -118,10 +118,7 @@ pub fn diff(local: &[(u64, [u8; 32])], remote: &[(u64, [u8; 32])]) -> SyncPlan {
 /// A fork (local already holds entries past `pull_from`) cannot be resolved by
 /// appending, so the first misaligned `seq` yields an error instead of silently
 /// producing a broken chain.
-pub fn apply_pull<E>(
-    log: &mut EventLog<E>,
-    missing: &[(u64, &[u8])],
-) -> Result<(), EventLogError> {
+pub fn apply_pull<E>(log: &mut EventLog<E>, missing: &[(u64, &[u8])]) -> Result<(), EventLogError> {
     for (seq, payload) in missing {
         if *seq != log.len() as u64 {
             return Err(EventLogError {
@@ -155,7 +152,10 @@ mod tests {
         let da = digest(&a);
         let db = digest(&b);
         let plan = diff(&da, &db);
-        assert_eq!(plan.divergence_seq, None, "identical logs must have no divergence");
+        assert_eq!(
+            plan.divergence_seq, None,
+            "identical logs must have no divergence"
+        );
         assert_eq!(plan.pull_len, 0, "identical logs must pull nothing");
         assert_eq!(plan.pull_from, 0);
     }
@@ -169,9 +169,16 @@ mod tests {
         let dl = digest(&local);
         let dr = digest(&remote);
         let plan = diff(&dl, &dr);
-        assert_eq!(plan.divergence_seq, Some(10), "divergence at first missing seq");
+        assert_eq!(
+            plan.divergence_seq,
+            Some(10),
+            "divergence at first missing seq"
+        );
         assert_eq!(plan.pull_from, 10);
-        assert_eq!(plan.pull_len, 7, "must request exactly the 7 missing events");
+        assert_eq!(
+            plan.pull_len, 7,
+            "must request exactly the 7 missing events"
+        );
         assert_eq!(plan.pull_len, remote.len() - local.len());
     }
 
@@ -211,7 +218,11 @@ mod tests {
         let dl = digest(&local);
         let dr = digest(&remote);
         let plan = diff(&dl, &dr);
-        assert_eq!(plan.divergence_seq, Some(8), "fork point must be identified");
+        assert_eq!(
+            plan.divergence_seq,
+            Some(8),
+            "fork point must be identified"
+        );
         assert_eq!(plan.pull_from, 8);
         assert_eq!(plan.pull_len, 2, "remote tail from seq 8..10");
         // Forks are detectable, not silently merged: root hashes differ.

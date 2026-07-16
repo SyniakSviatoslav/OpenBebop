@@ -28,10 +28,12 @@ Build `bebop2` — a from-scratch, **zero-dependency**, post-quantum Rust core f
 - M3 (SHA-512 KAT empty vector was SHA-256 digest) corrected in kat/vectors.rs.
 - V1/V2/V3/fable adversarial audit reports saved under docs/design/.
 
-## OPEN — architecture hardening (NOT blocking current 54-green, but required before "empty-import wasm" claim)
-- **H1** wasm32 ~82–90 compile errors: missing `alloc::Vec` imports, no `#[global_allocator]`/
-  `#[panic_handler]`, `std`-only f64 trig (`sin/cos/sqrt/ln`), `std::mem::swap`. → add `no_std` cfgs,
-  f64 trig shims, allocator.
+## OPEN — math hardening (NOT blocking; core is green + wasm32-empty-import CLOSED)
+- **H1** wasm32 / no_std / empty-import gate — **CLOSED (2026-07-16)**. `bebop2-core`
+  builds for `wasm32-unknown-unknown --no-default-features` with 0 errors (verified:
+  `cargo build -p bebop2-core --target wasm32-unknown-unknown --no-default-features`
+  → Finished). The `no_std` cfg, bump allocator, panic handler, and `alloc::`
+  qualification in `deliberate.rs` are all in place. Headline deliverable REAL.
 - **H3** field.rs builds dense O(n²) Laplacian + O(n³) Jacobi — pillars 1&4 mandate Lanczos/Arnoldi.
 - **H4** kalman.rs::SpectralKalman is dense matrix math in a "spectral" label; needs square-root /
   Potter-Carlson form; Q-transform only correct for symmetric A (masked by tests).
@@ -41,18 +43,20 @@ Build `bebop2` — a from-scratch, **zero-dependency**, post-quantum Rust core f
 - **M4** vsa.rs bind/unbind scratch length silently changes convolution length (F6/V2).
 - **L1–L3** stale architecture prose; dead `fexp` copy in fft.rs.
 
-## Pending agent work (re-dispatched, implement-only)
-- Symmetric crypto (aead/kdf/hash/sign/rng): agent produced ZERO code last attempt (budget burned on
-  research). Re-dispatched with embedded KAT vectors + self-consistency gate. Files still 2-line stubs.
-- pq_dsa.rs (ML-DSA-65): never written. Re-dispatched mirroring pq_kem coefficient-domain approach.
+## Pending agent work
+- Symmetric crypto (aead/kdf/hash/sign/rng) + pq_dsa.rs (ML-DSA-65): **DONE & GREEN**
+  (aead 500 / kdf 620 / hash 450 / sign 1036 / rng 836 / pq_dsa 1286 / pq_kem 1063 lines;
+  NOT 2-line stubs). Replaced the legacy research drift with from-scratch impls gated on KAT vectors.
+- Core crypto is real; remaining work is the math-hardening items above (H3/H4/H5/M1/M4),
+  not crypto implementation.
 
 ## Next actions (ordered)
-1. Await/Land symmetric crypto + pq_dsa → full `cargo test -p bebop2-core` green.
-2. Close H1 wasm32 gate (hard blocker for headline claim).
-3. Close H3/H4/H5 (Lanczos eigensolver, square-root Kalman, asymmetric-matrix lyapunov tests).
-4. Close M1/M4 (B11 CFL bound, vsa scratch-length).
-5. Trilateration integration check once all crates green.
+1. Close H3/H4/H5 (Lanczos eigensolver, square-root Kalman, asymmetric-matrix lyapunov tests).
+2. Close M1/M4 (B11 CFL bound, vsa scratch-length).
+3. Close L1–L3 (stale prose, dead fexp copy).
+4. Trilateration integration check once all crates green.
 
-## Verification ground state (2026-07-10)
-- `cargo test -p bebop2-core --lib` → 54 passed, 0 failed (post schoolbook + F3/M3 fixes).
-- branch: feat/wire-native-core (upstream origin/feat/wire-native-core).
+## Verification ground state (2026-07-16)
+- `cargo test -p bebop2-core --lib` → 232 passed, 0 failed.
+- `cargo build -p bebop2-core --target wasm32-unknown-unknown --no-default-features` → Finished, 0 errors (H1 CLOSED).
+- branch: feat/verification-harness (upstream openbebop/feat/verification-harness).

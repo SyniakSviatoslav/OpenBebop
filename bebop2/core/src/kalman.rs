@@ -628,8 +628,14 @@ impl GeoSe3Kalman {
         let qd2 = 0.5 * (q[0] * w[1] - q[1] * w[2] + q[3] * w[0]);
         let qd3 = 0.5 * (q[0] * w[2] + q[1] * w[1] - q[2] * w[0]);
         let dt = self.dt;
-        let mut qn = [q[0] + dt * qd0, q[1] + dt * qd1, q[2] + dt * qd2, q[3] + dt * qd3];
-        let norm = crate::math::fsqrt(qn[0] * qn[0] + qn[1] * qn[1] + qn[2] * qn[2] + qn[3] * qn[3]);
+        let mut qn = [
+            q[0] + dt * qd0,
+            q[1] + dt * qd1,
+            q[2] + dt * qd2,
+            q[3] + dt * qd3,
+        ];
+        let norm =
+            crate::math::fsqrt(qn[0] * qn[0] + qn[1] * qn[1] + qn[2] * qn[2] + qn[3] * qn[3]);
         for i in 0..4 {
             qn[i] /= norm;
         }
@@ -788,8 +794,7 @@ mod tests {
         let steps = 8usize;
 
         let dense = dense_kalman_p(&a, &q, &p0, steps, n);
-        let sk = SpectralKalman::new(&a, &q, &p0, n)
-            .expect("symmetric A must build spectral path");
+        let sk = SpectralKalman::new(&a, &q, &p0, n).expect("symmetric A must build spectral path");
         let spectral = sk.covariance(&p0, steps);
 
         for i in 0..n * n {
@@ -948,7 +953,11 @@ mod tests {
             k_early,
             k_late
         );
-        assert!(k_late < 0.5, "converged gain should be modest, got {}", k_late);
+        assert!(
+            k_late < 0.5,
+            "converged gain should be modest, got {}",
+            k_late
+        );
     }
 }
 
@@ -963,7 +972,11 @@ mod reconciliation_tests {
     fn legacy_kalman_1d(z: f64, x: f64, p: f64, q: f64, r: f64) -> (f64, f64) {
         let x_pred = x;
         let p_pred = p + q;
-        let k = if (p_pred + r) != 0.0 { p_pred / (p_pred + r) } else { 0.0 };
+        let k = if (p_pred + r) != 0.0 {
+            p_pred / (p_pred + r)
+        } else {
+            0.0
+        };
         let x_upd = x_pred + k * (z - x_pred);
         let p_upd = (1.0 - k) * p_pred;
         (x_upd, p_upd)
@@ -984,7 +997,10 @@ mod reconciliation_tests {
             assert!(
                 (cx - lx).abs() < 1e-12 && (cp - lp).abs() < 1e-12,
                 "kalman_1d divergence: legacy=({},{}) core=({},{})",
-                lx, lp, cx, cp
+                lx,
+                lp,
+                cx,
+                cp
             );
         }
     }
@@ -992,9 +1008,14 @@ mod reconciliation_tests {
     #[test]
     fn kalman_full_filter_reduces_to_1d() {
         // The general n=1 KalmanFilter reduces to the classic scalar update.
-        let z = 7.3; let x = 0.0; let p = 100.0; let q = 1e-6; let r = 4.0;
+        let z = 7.3;
+        let x = 0.0;
+        let p = 100.0;
+        let q = 1e-6;
+        let r = 4.0;
         let mut kf = KalmanFilter::new(&[1.0], &[q], &[x], &[p], 1);
-        kf.predict(); kf.update(&[z], &[1.0], &[r]);
+        kf.predict();
+        kf.update(&[z], &[1.0], &[r]);
         let legacy = legacy_kalman_1d(z, x, p, q, r);
         assert!(
             (kf.state()[0] - legacy.0).abs() < 1e-12
@@ -1236,7 +1257,11 @@ mod geo_kalman_tests {
         }
         let pos = kf.position();
         let vel = kf.velocity();
-        let true_pos = [pos0[0] + true_v[0] * 200.0, pos0[1] + true_v[1] * 200.0, 0.0];
+        let true_pos = [
+            pos0[0] + true_v[0] * 200.0,
+            pos0[1] + true_v[1] * 200.0,
+            0.0,
+        ];
         for i in 0..3 {
             assert!(
                 (pos[i] - true_pos[i]).abs() < 1.0,
@@ -1287,7 +1312,8 @@ mod geo_kalman_tests {
             for i in 0..4 {
                 qq[i] += lcg(&mut seed) * att_meas_var.sqrt() * 0.1;
             }
-            let nrm = crate::math::fsqrt(qq[0] * qq[0] + qq[1] * qq[1] + qq[2] * qq[2] + qq[3] * qq[3]);
+            let nrm =
+                crate::math::fsqrt(qq[0] * qq[0] + qq[1] * qq[1] + qq[2] * qq[2] + qq[3] * qq[3]);
             for i in 0..4 {
                 qm[i] = qq[i] / nrm;
             }
@@ -1296,7 +1322,11 @@ mod geo_kalman_tests {
         }
         let q = kf.orientation();
         let ang = quat_angle_from_identity(&q);
-        assert!(ang < 0.1, "attitude angle from identity = {} (want < 0.1)", ang);
+        assert!(
+            ang < 0.1,
+            "attitude angle from identity = {} (want < 0.1)",
+            ang
+        );
     }
 
     // W2-3 (3) byte-determinism: same seeded noise stream → identical estimate
