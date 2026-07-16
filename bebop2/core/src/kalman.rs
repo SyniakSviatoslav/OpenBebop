@@ -460,6 +460,18 @@ impl KalmanFilter {
     pub fn covariance(&self) -> &[f64] {
         &self.p
     }
+
+    /// Authorized self-mod hook (E3 effector, W5). Scale the process-noise Q by
+    /// `s > 0`, mutating the filter in place. `s` is the parameter the
+    /// `SelfModEffector` adapts under its floor-preserving (noether) gate — this
+    /// is the ONLY kernel-mutating surface the effector drives, and the caller
+    /// MUST have passed the floor gate (see `self_mod::SelfModEffector`).
+    pub fn set_q_scaler(&mut self, s: f64) {
+        assert!(s > 0.0, "self-mod: q-scaler must be > 0");
+        for q in self.q.iter_mut() {
+            *q *= s;
+        }
+    }
     pub fn n(&self) -> usize {
         self.n
     }

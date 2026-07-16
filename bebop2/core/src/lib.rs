@@ -358,6 +358,7 @@ pub mod kat;
 // || payload) and the whole chain re-verifies on demand. Reuses crate::hash.
 pub mod event_log; // event-sourcing log + Merkle/hash-chain spine (W3-2)
 pub mod anti_entropy; // pull-based anti-entropy / divergence-diff (W4-3)
+pub mod self_mod; // activated self-modification effector (W5, operator-authorized)
 
 // ── C8 FIX (carried from fable audit) ───────────────────────────────────────────────
 /// Correct range reduction for exp: `r = x - round(x/ln2)*ln2`, symmetric for ALL signs.
