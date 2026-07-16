@@ -9,8 +9,10 @@
 //!   signed (Ed25519, from `bebop2-core`) statement of *what action on what
 //!   resource, by what key, until what nonce/expiry* — verifiable without a
 //!   central issuer. The classical leg is REAL and verified; the post-quantum
-//!   (ML-DSA-65) leg is a marked TODO pending the `bebop2-core::pq_dsa`
-//!   pack/unpack byte API. No fake signatures are produced.
+//!   (ML-DSA-65) leg is REAL, wire-wired, and ACVP-verified
+//!   (`signed_frame.rs` stores the 3309-byte sig; `mesh-node::breach` signs
+//!   kernel alerts with the node's OWN hybrid key). No fake signatures are
+//!   produced.
 //! - No session-wide bearer token. No trust accumulated from prior behaviour.
 //! - A **hybrid gate** in code: classical (Ed25519) signature must verify, and
 //!   (once wired) the post-quantum (ML-DSA-65) signature must also verify, per
@@ -53,5 +55,5 @@ pub use hybrid_gate::{HybridGate, HybridPolicy};
 pub use port::{check_port_scope, ChannelAdapter, InboundPort, NotificationPort, OutboundPort};
 pub use revocation::{pq_key_id, revocation_hash, RevocationSet};
 pub use roster::{verify_chain, AnchorRoster, Delegation, Effect};
-pub use scope::{Action, BREACH_ALERT_BYTES, Resource, Scope};
+pub use scope::{Action, Resource, Scope, BREACH_ALERT_BYTES};
 pub use signed_frame::SignedFrame;

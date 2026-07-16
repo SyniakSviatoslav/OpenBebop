@@ -547,11 +547,22 @@ mod tests {
         let res = facade.submit_intent(&f);
         // RequireBoth => absent PQ leg is rejected (no fake pass, kernel untouched).
         assert!(
-            matches!(res, Err(Reject { reason: CapError::PqVerifyFailed }) | Err(Reject { reason: CapError::HybridIncomplete })),
+            matches!(
+                res,
+                Err(Reject {
+                    reason: CapError::PqVerifyFailed
+                }) | Err(Reject {
+                    reason: CapError::HybridIncomplete
+                })
+            ),
             "production facade MUST reject absent-PQ (RequireBoth), got: {:?}",
             res
         );
-        assert_eq!(counter.load(Ordering::SeqCst), 0, "kernel sink NEVER called on rejection");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "kernel sink NEVER called on rejection"
+        );
     }
 
     /// Helper: an `AnchorRoster` enrolled with `anchor_pk`.

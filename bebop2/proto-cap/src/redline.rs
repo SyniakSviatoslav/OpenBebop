@@ -62,9 +62,12 @@ impl Default for RedLinePolicy {
 ///
 /// Read-only verbs (`Ledger::Read`, `Order::ReadProjection`, `Route::Send`,
 /// `Order::Notify`) are deliberately NOT red-line — they are sovereign-safe.
-/// Only *mutations* of money/claim/settlement trip. (The `Secrets`/`Migrations`/
-/// `Auth` categories are reserved in [`RedLineCategory`] for future `Resource`
-/// variants; this build maps only the money verbs that actually exist.)
+/// Only *mutations* of money/claim/settlement trip, plus the reserved
+/// operator-gated categories (Auth / Secrets / Migrations) which MUST be
+/// expressible so the fail-closed gate can deny them (P3 §3.5, M12/F26).
+/// Before this mapping, no `Resource` carried an Auth/Secret/Migration
+/// variant, so such a capability could not even be *expressed* — it
+/// slipped past `DenyByDefault` silently. Now every one of them maps.
 pub fn is_red_line(resource: Resource, action: Action) -> Option<RedLineCategory> {
     use RedLineCategory::*;
     match (resource, action) {
@@ -74,6 +77,10 @@ pub fn is_red_line(resource: Resource, action: Action) -> Option<RedLineCategory
         (Resource::Order, Action::CreateOrder) => Some(Money),
         // Claim payouts move value.
         (Resource::Claim, _) => Some(Money),
+        // ── Reserved operator-gated categories (any verb on these resources) ──
+        (Resource::Auth, _) => Some(Auth),
+        (Resource::Secret, _) => Some(Secrets),
+        (Resource::Migration, _) => Some(Migrations),
         _ => None,
     }
 }
@@ -166,6 +173,56 @@ mod tests {
             RedLineGate::check(&mixed, &RedLinePolicy::DenyByDefault),
             Err(RedLineCategory::Money)
         );
+    }
+
+    // ── P3 §3.5 (M12 / F26): the reserved Auth/Secrets/Migrations
+    // categories MUST trip the fail-closed gate. Before this mapping, no
+    // `Resource` carried such a variant, so the capability could not even
+    // be expressed — it slipped past `DenyByDefault`. Now an Auth /
+    // Secret / Migration scoped capability is denied by default, with a
+    // test per category (mirrors `money_mutations_are_red_line`).
+    #[test]
+    fn auth_secret_migration_are_red_line() {
+        // Each reserved category maps regardless of the action verb.
+        assert_eq!(
+            is_red_line(Resource::Auth, Action::Authenticate),
+            Some(RedLineCategory::Auth)
+        );
+        assert_eq!(
+            is_red_line(Resource::Secret, Action::DeploySecret),
+            Some(RedLineCategory::Secrets)
+        );
+        assert_eq!(
+            is_red_line(Resource::Migration, Action::RunMigration),
+            Some(RedLineCategory::Migrations)
+        );
+        // Any verb on these resources trips (gate is verb-agnostic here).
+        assert_eq!(
+            is_red_line(Resource::Auth, Action::Read),
+            Some(RedLineCategory::Auth)
+        );
+    }
+
+    #[test]
+    fn deny_by_default_rejects_reserved_categories() {
+        for (r, a, cat) in [
+            (Resource::Auth, Action::Authenticate, RedLineCategory::Auth),
+            (
+                Resource::Secret,
+                Action::DeploySecret,
+                RedLineCategory::Secrets,
+            ),
+            (
+                Resource::Migration,
+                Action::RunMigration,
+                RedLineCategory::Migrations,
+            ),
+        ] {
+            assert_eq!(
+                RedLineGate::check(&Scope::single(r, a), &RedLinePolicy::DenyByDefault),
+                Err(cat)
+            );
+        }
     }
 
     #[test]

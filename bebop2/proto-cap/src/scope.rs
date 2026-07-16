@@ -51,6 +51,14 @@ pub enum Resource {
     /// code). Domain-separated from every other resource so a breach frame can
     /// never be confused with a route/ledger frame. Pinned discriminant 0x0E.
     BreachAlarm,
+    /// Authentication / authority change (Actor). A capability whose scope names
+    /// an auth effect MUST be expressible so the red-line gate can deny it —
+    /// see `redline::is_red_line` (P3 §3.5, M12/F26). Pinned 0x0F.
+    Auth,
+    /// Secrets exposure (Actor). Pinned 0x10.
+    Secret,
+    /// Schema / data migration — destructive bulk op (Actor). Pinned 0x11.
+    Migration,
 }
 
 /// An action permitted on a [`Resource`]. Closed set.
@@ -101,6 +109,12 @@ pub enum Action {
     /// Воля АНУ — broadcast a breach alarm to the opted-in hub (unbounded fan-
     /// out, no per-event consent). Pinned discriminant 0x15.
     Broadcast,
+    /// Authenticate / change authority on an `Auth` resource (Actor). Pinned 0x16.
+    Authenticate,
+    /// Deploy / expose a secret (Actor). Pinned 0x17.
+    DeploySecret,
+    /// Run a schema / data migration (Actor). Pinned 0x18.
+    RunMigration,
 }
 
 /// `(resource, action)` pair a capability authorizes. No score, no subject rating.
@@ -173,6 +187,9 @@ impl Resource {
             Resource::Claim => 0x0C,
             Resource::Sync => 0x0D,
             Resource::BreachAlarm => 0x0E,
+            Resource::Auth => 0x0F,
+            Resource::Secret => 0x10,
+            Resource::Migration => 0x11,
         }
     }
 
@@ -194,6 +211,9 @@ impl Resource {
             0x0C => Some(Resource::Claim),
             0x0D => Some(Resource::Sync),
             0x0E => Some(Resource::BreachAlarm),
+            0x0F => Some(Resource::Auth),
+            0x10 => Some(Resource::Secret),
+            0x11 => Some(Resource::Migration),
             _ => None,
         }
     }
@@ -224,6 +244,9 @@ impl Action {
             Action::SettlementRecorded => 0x13,
             Action::Pull => 0x14,
             Action::Broadcast => 0x15,
+            Action::Authenticate => 0x16,
+            Action::DeploySecret => 0x17,
+            Action::RunMigration => 0x18,
         }
     }
 
@@ -252,6 +275,9 @@ impl Action {
             0x13 => Some(Action::SettlementRecorded),
             0x14 => Some(Action::Pull),
             0x15 => Some(Action::Broadcast),
+            0x16 => Some(Action::Authenticate),
+            0x17 => Some(Action::DeploySecret),
+            0x18 => Some(Action::RunMigration),
             _ => None,
         }
     }
@@ -286,6 +312,9 @@ mod tests {
             Resource::Claim,
             Resource::Sync,
             Resource::BreachAlarm,
+            Resource::Auth,
+            Resource::Secret,
+            Resource::Migration,
         ] {
             for a in [
                 Action::Send,
@@ -309,6 +338,9 @@ mod tests {
                 Action::SettlementRecorded,
                 Action::Pull,
                 Action::Broadcast,
+                Action::Authenticate,
+                Action::DeploySecret,
+                Action::RunMigration,
             ] {
                 let s = Scope::single(r, a);
                 let bytes = s.to_tlv_bytes();
@@ -359,6 +391,12 @@ mod tests {
         assert_eq!(Action::SettlementRecorded.discriminant(), 0x13);
         assert_eq!(Action::Pull.discriminant(), 0x14);
         assert_eq!(Action::Broadcast.discriminant(), 0x15);
+        assert_eq!(Resource::Auth.discriminant(), 0x0F);
+        assert_eq!(Resource::Secret.discriminant(), 0x10);
+        assert_eq!(Resource::Migration.discriminant(), 0x11);
+        assert_eq!(Action::Authenticate.discriminant(), 0x16);
+        assert_eq!(Action::DeploySecret.discriminant(), 0x17);
+        assert_eq!(Action::RunMigration.discriminant(), 0x18);
     }
 
     // ── R4 (IP-02): an attenuated capability requesting a Resource/Action
