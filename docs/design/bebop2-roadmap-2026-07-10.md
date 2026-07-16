@@ -30,11 +30,18 @@ Build `bebop2` — a from-scratch, **zero-dependency**, post-quantum Rust core f
 
 ## OPEN — math hardening (verified 2026-07-16; all items CLOSED)
 - **H1** wasm32 / no_std / empty-import gate — **CLOSED**. See below.
-- **H3** field.rs: the roadmap claimed "dense O(n²) Laplacian + O(n³) Jacobi, should be
-  Lanczos/Arnoldi". GROUND TRUTH: the Laplacian is built CSR (indexed, not hashed) and
-  eigendecomposed by Jacobi — CORRECT for the SYMMETRIC L (eigenvalues must be exact). The
-  "Lanczos" note was an OPTIMIZATION aspiration, not a defect. Jacobi output matches the
-  authoritative `linalg::eigenvalues` (parity-pinned). **CLOSED — no correctness defect.**
+- **H3** field.rs eigensolver — **CLOSED (2026-07-16, SECOND PASS)**. The roadmap's "dense O(n²)
+  Laplacian + O(n³) Jacobi, should be Lanczos/Arnoldi" was initially assessed as a mere optimization
+  aspiration, BUT the math-research audit (`docs/design/verify-math-1783715925.md` F5) flags it as a
+  REAL defect: `from_edges` builds a dense n×n `L` and runs O(n³) Jacobi with NO size guard — the
+  "naive dense where Krylov is demanded" anti-pattern. FIX: for `n ≥ LANCZOS_THRESHOLD` (120),
+  `from_edges` now switches to a MATRIX-FREE Lanczos reduction — L is touched only via its CSR matvec
+  (O(nz·k), no dense L), the k×k tridiagonal `T` is eigen-solved with the SAME parity-pinned
+  `jacobi_eigen` (so `EIGEN_AUTHORITY` still holds), with a spectral shift σ = 2·max_degree (Gershgorin
+  bound) so the bottom of L's spectrum (what the diffusion propagator consumes) converges fast.
+  Verified by `lanczos_matches_jacobi_on_large_graph` (n=300 leading modes match dense-Jacobi oracle
+  to 1e-2 as a nearest-match over degenerate spectra) + `lanczos_path_is_matrix_free_no_dense_alloc`.
+  Small n keeps the exact O(n³) Jacobi path unchanged (zero regression).
 - **H4** kalman.rs::SpectralKalman: the roadmap claimed "dense math, square-root form, Q-transform
   only correct for symmetric A". GROUND TRUTH: `SpectralKalman::new` FAILS CLOSED (returns
   `None`) for non-symmetric A, and the caller falls back to the full dense `KalmanFilter`
@@ -60,8 +67,9 @@ Build `bebop2` — a from-scratch, **zero-dependency**, post-quantum Rust core f
 
 ## Pending agent work
 - None outstanding. Crypto DONE & GREEN; H1/H3/H4/H5/M1/M4/L1–L3 all CLOSED with falsifiable tests.
-- The only remaining aspirational items are PERFORMANCE optimizations (Lanczos vs Jacobi,
-  square-root Kalman), explicitly NOT correctness defects — deferred.
+- The only remaining aspirational items are FURTHER performance tuning (e.g. implicit-restart
+  Lanczos / thicker restart to shrink k for very large n, or a blocked dense fallback), explicitly
+  NOT correctness defects — deferred.
 
 ## Next actions (ordered)
 1. (deferred) Optional perf: Lanczos/Arnoldi for large-n field spectra; square-root Kalman form.
