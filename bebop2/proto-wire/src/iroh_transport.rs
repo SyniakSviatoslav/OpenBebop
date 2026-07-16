@@ -619,7 +619,7 @@ mod tests {
         // Sign a real breach frame (BreachAlarm/Broadcast) with BOTH legs.
         let cap = Capability::new_hybrid(
             bebop2_core::sign::keygen(&ed).0,
-            pq_pk.bytes,
+            pq_pk.bytes.clone(),
             Resource::BreachAlarm,
             Action::Broadcast,
             [0x99u8; 8],
@@ -659,5 +659,67 @@ mod tests {
 
         client_done.notify_one();
         server.await.unwrap();
+    }
+
+    /// Воля АНУ — BIDIRECTIONAL domain separation (the missing half of the
+    /// forge-proof). A `BreachAlarm/Broadcast` frame MUST be REJECTED by the
+    /// NORMAL UCAN hybrid gate (`HybridGate::check` with an empty roster/chain
+    /// → `UnknownIssuer`): it is a SELF-SIGNED fail-safe, not a delegated
+    /// capability, so it can NEVER be smuggled through the standard
+    /// authorization path. It is admitted ONLY by the dedicated P2P bypass in
+    /// `recv` (which verifies both signature legs directly, no roster). This
+    /// test proves the separation holds BOTH ways — the breach scope is
+    /// neither over-broad (accepted as a normal cap) nor silently dropped.
+    #[test]
+    fn breach_scope_rejected_by_normal_gate_not_smuggled() {
+        // Build a real, fully-signed breach frame (both legs valid).
+        let ed = [0x77u8; 32];
+        let (pq_pk, pq_sk) = bebop2_core::pq_dsa::keygen_derivable(&[0x78u8; 32]);
+        let cap = Capability::new_hybrid(
+            bebop2_core::sign::keygen(&ed).0,
+            pq_pk.bytes.clone(),
+            Resource::BreachAlarm,
+            Action::Broadcast,
+            [0x99u8; 8],
+            9_999_999_999,
+        );
+        let mut frame = SignedFrame::new(cap, vec![0u8; BREACH_ALERT_BYTES]);
+        frame.sign_classical(&ed).unwrap();
+        frame
+            .sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
+            .unwrap();
+
+        // Both signature legs verify — it is a genuinely signed frame.
+        assert!(frame.verify_classical().is_ok() && frame.verify_pq().is_ok());
+
+        // BUT the normal UCAN gate (empty roster, no delegation chain) REJECTS
+        // it. A breach alarm is not a delegated capability; admitting it via
+        // the standard path would be a privilege-escalation / smuggling hole.
+        let gate = HybridGate::new(HybridPolicy::RequireBoth);
+        let empty_roster = AnchorRoster::new();
+        let res = gate.check(&frame, &empty_roster, &[], &RevocationSet::new(), 9_999_999_999);
+        assert!(
+            res.is_err(),
+            "BreachAlarm MUST be rejected by the normal UCAN gate (no roster)"
+        );
+
+        // Sanity: an ordinary delegated scope on the same empty roster is ALSO
+        // rejected (proves we are testing the gate, not a breach-specific path).
+        let normal_cap = Capability::new_hybrid(
+            bebop2_core::sign::keygen(&ed).0,
+            pq_pk.bytes.clone(),
+            Resource::Route,
+            Action::Send,
+            [0x99u8; 8],
+            9_999_999_999,
+        );
+        let mut normal_frame = SignedFrame::new(normal_cap, b"hi".to_vec());
+        normal_frame.sign_classical(&ed).unwrap();
+        normal_frame
+            .sign_pq(&pq_sk.bytes.clone().try_into().unwrap(), &[0u8; 32])
+            .unwrap();
+        assert!(gate
+            .check(&normal_frame, &empty_roster, &[], &RevocationSet::new(), 9_999_999_999)
+            .is_err());
     }
 }
