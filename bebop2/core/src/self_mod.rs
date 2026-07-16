@@ -131,6 +131,13 @@ impl SelfModEffector {
         self.filter.state().iter().map(|x| x * x).sum()
     }
 
+    /// Expose the SAME localized proposal the effector uses inside `tick`, so a
+    /// live driver can route the candidate through the mirror dialogue *before*
+    /// applying. Does NOT fork the math — delegates to `propose_q_scaler`.
+    pub(crate) fn propose(&self, surprise: f64, spectral_radius: f64) -> f64 {
+        propose_q_scaler(surprise, spectral_radius, self.accepted_q_scaler)
+    }
+
     /// HARD-REFUSED human-gated operations. These are the irreversible red-lines:
     /// push-to-main, RLS/migrations, money/auth, dep-install, `.claude/` edits.
     /// Returning `Err(EffectorReject::HumanGated)` keeps them operator-gated.

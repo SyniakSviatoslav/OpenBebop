@@ -361,6 +361,8 @@ pub mod anti_entropy; // pull-based anti-entropy / divergence-diff (W4-3)
 #[cfg(feature = "host")]
 pub mod self_mod; // activated self-modification effector (W5, operator-authorized)
 pub mod deliberate; // adversarial mirroring deliberation (author↔mirror, 2-lap cap)
+#[cfg(feature = "host")]
+pub mod self_mod_loop; // W9 live driver: routes every revision through the mirror dialogue
 
 // ── C8 FIX (carried from fable audit) ───────────────────────────────────────────────
 /// Correct range reduction for exp: `r = x - round(x/ln2)*ln2`, symmetric for ALL signs.
