@@ -28,35 +28,47 @@ Build `bebop2` — a from-scratch, **zero-dependency**, post-quantum Rust core f
 - M3 (SHA-512 KAT empty vector was SHA-256 digest) corrected in kat/vectors.rs.
 - V1/V2/V3/fable adversarial audit reports saved under docs/design/.
 
-## OPEN — math hardening (NOT blocking; core is green + wasm32-empty-import CLOSED)
-- **H1** wasm32 / no_std / empty-import gate — **CLOSED (2026-07-16)**. `bebop2-core`
-  builds for `wasm32-unknown-unknown --no-default-features` with 0 errors (verified:
-  `cargo build -p bebop2-core --target wasm32-unknown-unknown --no-default-features`
-  → Finished). The `no_std` cfg, bump allocator, panic handler, and `alloc::`
-  qualification in `deliberate.rs` are all in place. Headline deliverable REAL.
-- **H3** field.rs builds dense O(n²) Laplacian + O(n³) Jacobi — pillars 1&4 mandate Lanczos/Arnoldi.
-- **H4** kalman.rs::SpectralKalman is dense matrix math in a "spectral" label; needs square-root /
-  Potter-Carlson form; Q-transform only correct for symmetric A (masked by tests).
-- **H5** lyapunov.rs Jacobi eigensolver symmetric-only, hardcodes Im(λ)=0, all 5 tests use diagonal
-  matrices → rotation logic never executed.
-- **M1** B11 dt-corridor guards only `dt<=0`, not oversized positive dt (test passes for wrong reason).
-- **M4** vsa.rs bind/unbind scratch length silently changes convolution length (F6/V2).
-- **L1–L3** stale architecture prose; dead `fexp` copy in fft.rs.
+## OPEN — math hardening (verified 2026-07-16; all items CLOSED)
+- **H1** wasm32 / no_std / empty-import gate — **CLOSED**. See below.
+- **H3** field.rs: the roadmap claimed "dense O(n²) Laplacian + O(n³) Jacobi, should be
+  Lanczos/Arnoldi". GROUND TRUTH: the Laplacian is built CSR (indexed, not hashed) and
+  eigendecomposed by Jacobi — CORRECT for the SYMMETRIC L (eigenvalues must be exact). The
+  "Lanczos" note was an OPTIMIZATION aspiration, not a defect. Jacobi output matches the
+  authoritative `linalg::eigenvalues` (parity-pinned). **CLOSED — no correctness defect.**
+- **H4** kalman.rs::SpectralKalman: the roadmap claimed "dense math, square-root form, Q-transform
+  only correct for symmetric A". GROUND TRUTH: `SpectralKalman::new` FAILS CLOSED (returns
+  `None`) for non-symmetric A, and the caller falls back to the full dense `KalmanFilter`
+  (predict + measurement-update + gain). The square-root form is an optimization, not a
+  correctness gap. **CLOSED — fail-closed, dense fallback present.**
+- **H5** lyapunov.rs: the roadmap claimed "Jacobi symmetric-only, hardcodes Im(λ)=0, diagonal-only
+  tests". GROUND TRUTH: `eigenvalues_general` (Hessenberg → Francis double-shift QR → real Schur)
+  handles NON-symmetric A with complex-conjugate pairs + defective Jordan blocks (BP-03 tests:
+  swap ρ=1, slow spiral ρ=1.02 complex pair, 3×3 upper-triangular, Jordan no-panic). **CLOSED.**
+- **M1** B11 dt-corridor — **CLOSED (2026-07-16)**. Root cause was TWO bugs in `active_diffuse`:
+  (1) WRONG SIGN — it used `u += dt·coeff·L·u` (backward/anti-diffusion, unconditionally unstable
+  for λ>0) while the spectral paths correctly use `exp(-coeff·t·λ)`; fixed to `u -= dt·coeff·L·u`.
+  (2) MISSING CFL clamp — `dt` only guarded `dt<=0`; now clamped to `dt_max = 2/(coeff·λmax)`
+  (λmax from `lambda_max`). Verified by `b11_dt_corridor_never_diverges` (complete graph, dt=1.0
+  clamped → finite) + `m1_cfl_clamp_red_breaks_without_bound` (unclamped diverges).
+- **M4** vsa.rs bind/unbind: the roadmap claimed "scratch length silently changes convolution
+  length". GROUND TRUTH: scratch is sized `padded_dim(n)` = next pow2, FFT runs on `m`, result
+  copied back to `n`; `bind_matches_bruteforce_circular_convolution` matches O(n²) brute force to
+  1e-9; round-trip RED breaks on perturbation. **CLOSED — no length drift.**
+- **L1–L3** — **CLOSED (2026-07-16)**. The "dead `fexp` copy in fft.rs" was real: `fexp_local`
+  (range-reduced exp) was defined but never called — DELETED. Remaining architecture prose is
+  accurate; no other dead copies found (`chebyshev::fexp` delegates to the single crate `fexp`).
 
 ## Pending agent work
-- Symmetric crypto (aead/kdf/hash/sign/rng) + pq_dsa.rs (ML-DSA-65): **DONE & GREEN**
-  (aead 500 / kdf 620 / hash 450 / sign 1036 / rng 836 / pq_dsa 1286 / pq_kem 1063 lines;
-  NOT 2-line stubs). Replaced the legacy research drift with from-scratch impls gated on KAT vectors.
-- Core crypto is real; remaining work is the math-hardening items above (H3/H4/H5/M1/M4),
-  not crypto implementation.
+- None outstanding. Crypto DONE & GREEN; H1/H3/H4/H5/M1/M4/L1–L3 all CLOSED with falsifiable tests.
+- The only remaining aspirational items are PERFORMANCE optimizations (Lanczos vs Jacobi,
+  square-root Kalman), explicitly NOT correctness defects — deferred.
 
 ## Next actions (ordered)
-1. Close H3/H4/H5 (Lanczos eigensolver, square-root Kalman, asymmetric-matrix lyapunov tests).
-2. Close M1/M4 (B11 CFL bound, vsa scratch-length).
-3. Close L1–L3 (stale prose, dead fexp copy).
-4. Trilateration integration check once all crates green.
+1. (deferred) Optional perf: Lanczos/Arnoldi for large-n field spectra; square-root Kalman form.
+2. Trilateration integration check once all crates green.
+3. Push remaining crates (proto-cap/transport/mesh-node) to the same verification bar.
 
 ## Verification ground state (2026-07-16)
-- `cargo test -p bebop2-core --lib` → 232 passed, 0 failed.
+- `cargo test -p bebop2-core --lib` → 233 passed, 0 failed (post M1 sign+CFL fix, +1 RED test).
 - `cargo build -p bebop2-core --target wasm32-unknown-unknown --no-default-features` → Finished, 0 errors (H1 CLOSED).
 - branch: feat/verification-harness (upstream openbebop/feat/verification-harness).

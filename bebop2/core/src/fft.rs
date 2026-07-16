@@ -66,46 +66,6 @@ impl Complex {
     }
 }
 
-#[allow(clippy::approx_constant)] // no_std libm shim: 0.6931… is ln2 the shim computes with
-fn fexp_local(x: f64) -> f64 {
-    // Local copy of the C8-correct range-reduced exp (kept self-contained for no_std fft).
-    let ln2 = 0.6931471805599453_f64;
-    let q = x / ln2;
-    let fl = q as i64;
-    let frac = q - (fl as f64);
-    let k = if frac >= 0.5 {
-        (fl + 1) as i32
-    } else if frac <= -0.5 {
-        (fl - 1) as i32
-    } else {
-        fl as i32
-    };
-    let r = x - (k as f64) * ln2;
-    let mut t = 1.0_f64;
-    let mut term = 1.0_f64;
-    let mut n = 1u32;
-    while n <= 20 {
-        term *= r / (n as f64);
-        t += term;
-        n += 1;
-    }
-    let two_k = if k >= 0 {
-        if k >= 1024 {
-            f64::INFINITY
-        } else {
-            (1u64 << (k as u32)) as f64
-        }
-    } else {
-        let ak = (-k) as i32;
-        if ak >= 1024 {
-            0.0
-        } else {
-            1.0 / ((1u64 << (ak as u32)) as f64)
-        }
-    };
-    two_k * t
-}
-
 /// Convert a real signal to an fft-ready complex buffer (imaginary part = 0).
 #[inline]
 pub fn real_to_complex(x: &[f64], out: &mut [Complex]) {

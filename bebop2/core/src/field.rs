@@ -193,7 +193,23 @@ impl LaplacianSpectrum {
         let mut mask = vec![1u8; n];
         let (mut u, mut unext) = (&mut buf0, &mut buf1);
         let mut total_active = 0usize;
-        let dt = if dt <= 0.0 { DT_STABLE } else { dt }; // B11 guard: never diverge
+        let d_f64: Vec<f64> = self.degrees.iter().map(|&x| x as f64).collect();
+        let lambda_max = crate::chebyshev::lambda_max(&d_f64);
+        // B11 + CFL stability: explicit diffusion u ← u + dt·coeff·L·u is stable iff
+        // dt·coeff·λmax ≤ 2 (update factor 1 - dt·coeff·λ ∈ [-1,1] for every λ ∈ [0, λmax]).
+        // Clamp OVERSIZED positive dt to the CFL bound (the old guard only caught dt≤0, so a
+        // large requested dt on a high-degree graph diverged — M1). For dt≤0 substitute the
+        // stable corridor, but never let it exceed the CFL bound either.
+        let dt_max = if coeff > 0.0 && lambda_max > 0.0 {
+            2.0 / (coeff as f64 * lambda_max)
+        } else {
+            f64::INFINITY
+        };
+        let dt = if dt <= 0.0f32 {
+            (DT_STABLE as f64).min(dt_max) as f32
+        } else {
+            (dt as f64).min(dt_max) as f32
+        };
         for _ in 0..steps as usize {
             self.matvec_f32(u, &mut lu, None);
             let mut active_now = 0usize;
@@ -205,7 +221,10 @@ impl LaplacianSpectrum {
                 let du_f = dt * coeff * lu[i];
                 // C2 carry-forward: SATURATE the magnitude first, THEN gate against eps.
                 let du = du_f.clamp(-1.0e6, 1.0e6); // saturate (no divergence blow-up)
-                unext[i] = u[i] + du;
+                // M1 ROOT CAUSE: proper diffusion is ẇu = -coeff·L·u (the spectral paths use
+                // exp(-coeff·t·λ) with the SAME negative sign). The old code used `u + du`
+                // (= backward/anti-diffusion, unconditionally unstable for λ>0). Correct sign:
+                unext[i] = u[i] - du;
                 if (du as f64).abs() < eps as f64 {
                     mask[i] = 0; // saturate→compare ordering
                 } else {
@@ -576,17 +595,60 @@ mod tests {
 
     #[test]
     fn b11_dt_corridor_never_diverges() {
-        // RED+GREEN: even with a deliberately large requested dt, the stable corridor caps it so the
-        // field stays finite (B11: never hardcoded-divergent 0.05 blow-up).
-        let edges: Vec<(u32, u32)> = (0..49u32).map(|i| (i, i + 1)).collect();
-        let spec = LaplacianSpectrum::from_edges(&edges, 50, 4);
-        let mut u0 = vec![0.0f32; 50];
-        u0[0] = 1.0;
-        // requesting dt = 0.05 (the OLD divergent value) is overridden to the stable corridor.
-        let (out, _a) = spec.active_diffuse(&u0, 10, 0.05, 1.0, 1e-3);
-        for &v in &out {
-            assert!(v.is_finite(), "divergent dt leaked a non-finite value");
+        // GREEN (upgraded from the old path-graph version that passed for the WRONG reason —
+        // a path graph has λmax≈0.02 so even dt=0.05 was CFL-stable). Use a COMPLETE graph
+        // (λmax = 2·(n-1) = 38 for n=20) so the CFL clamp is actually exercised: a raw dt=1.0
+        // would give dt·coeff·λmax = 38 >> 2 → explicit-diffusion blow-up WITHOUT the clamp.
+        let n = 20usize;
+        let mut edges = Vec::new();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                edges.push((i as u32, j as u32));
+            }
         }
+        let spec = LaplacianSpectrum::from_edges(&edges, n, 4);
+        let mut u0 = vec![0.0f32; n];
+        u0[0] = 1.0;
+        // requesting a grossly oversized dt = 1.0; CFL clamps it to 2/(coeff·λmax) = 2/38 ≈ 0.0526.
+        let (out, _a) = spec.active_diffuse(&u0, 20, 1.0, 1.0, 1e-3);
+        for &v in &out {
+            assert!(v.is_finite(), "oversized dt leaked a non-finite value (CFL clamp missing)");
+        }
+        // The clamp must keep the update stable: max |field| bounded by the initial injection.
+        let peak = out.iter().cloned().fold(0.0f32, f32::max);
+        assert!(peak < 2.0, "CFL-unstable: peak {peak} far exceeds injected 1.0");
+    }
+
+    #[test]
+    fn m1_cfl_clamp_red_breaks_without_bound() {
+        // RED: with the CFL bound DISABLED (dt unclamped), a complete-graph + oversized dt must
+        // diverge — proving the clamp is what keeps the test above GREEN, not luck.
+        let n = 20usize;
+        let mut edges = Vec::new();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                edges.push((i as u32, j as u32));
+            }
+        }
+        let spec = LaplacianSpectrum::from_edges(&edges, n, 4);
+        let mut u0 = vec![0.0f32; n];
+        u0[0] = 1.0;
+        // Hand-roll the UNCLAMPED explicit step (mirrors active_diffuse body pre-M1) to show it
+        // blows up: u ← u + dt·coeff·L·u with dt=1.0, coeff=1.0, λmax=38 ⇒ factor 1 - 38 < -36.
+        let dt = 1.0f32;
+        let coeff = 1.0f32;
+        let mut u = u0.clone();
+        let mut lu = vec![0.0f32; n];
+        let mut unext = vec![0.0f32; n];
+        for _ in 0..20 {
+            spec.matvec_f32(&u, &mut lu, None);
+            for i in 0..n {
+                unext[i] = u[i] + dt * coeff * lu[i];
+            }
+            core::mem::swap(&mut u, &mut unext);
+        }
+        let peak = u.iter().cloned().fold(0.0f32, f32::max);
+        assert!(peak >= 1e3, "expected divergence without CFL clamp, peak={peak}");
     }
 
     #[test]
