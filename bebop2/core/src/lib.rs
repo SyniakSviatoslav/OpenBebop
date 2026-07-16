@@ -352,6 +352,12 @@ pub mod sign; // Ed25519 (hybrid classical fallback) // CSPRNG from hardware ent
 // ones in vectors_long.rs). Read by #[cfg(test)] in each crypto module.
 pub mod kat;
 
+// ── Event-sourcing core organ (W3-2) ───────────────────────────────────────────
+// Append-only event log with a SHA3-256 hash-chain integrity spine. Money is
+// event-sourced, never CRDT-merged: every entry chains h_i = H(h_{i-1} || seq
+// || payload) and the whole chain re-verifies on demand. Reuses crate::hash.
+pub mod event_log; // event-sourcing log + Merkle/hash-chain spine (W3-2)
+
 // ── C8 FIX (carried from fable audit) ───────────────────────────────────────────────
 /// Correct range reduction for exp: `r = x - round(x/ln2)*ln2`, symmetric for ALL signs.
 /// The old `|r| <= ln2/2` form was WRONG for negative arguments (hottest spectral path).
