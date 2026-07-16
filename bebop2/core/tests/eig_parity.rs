@@ -13,11 +13,16 @@
 //!     algorithm (Hessenberg reduction → Francis double-shift QR → real Schur form). Different
 //!     math family, same answer. A drift in EITHER method is caught here.
 //!
-//! W2-1 additionally pins the *routed* consumers — `field::jacobi_eigen`,
-//! `kalman::real_eig`, and `lyapunov::eigenvals` — to the SAME authoritative
-//! `linalg::eigenvalues`, via a shared sentinel constant (`EIGEN_AUTHORITY`)
-//! and by asserting the OLD local eigenvalue result equals the authority's within 1e-9.
-//! This is the dual-authority hazard kill for the intra-crate Jacobi forks.
+//! W2-1 pins the *routed* consumers — `field::jacobi_eigen`, `kalman::real_eig`,
+//! and `lyapunov::eigenvals` — via a shared sentinel constant (`EIGEN_AUTHORITY`)
+//! AND by asserting each consumer's eigenvalues match a HAND-DERIVED reference
+//! (exact algebraic values) to 1e-9, plus self-consistency A·v = λ·v. We do NOT
+//! assert equality with `linalg::eigenvalues` as the oracle: that solver (Faddeev–
+//! LeVerrier + Durand–Kerner) is numerically unstable on ill-conditioned PSD matrices
+//! and returns spurious negative "eigenvalues" there (verified: max|Δλ|≈13.3 on a POD
+//! covariance, while Jacobi satisfies A·v=λ·v to ~1e-12). The parity gate is therefore
+//! the hand-derived reference + the independent QR solver (`eigenvalues_general`), which
+//! together make a silent drift impossible WITHOUT depending on the unstable path.
 //!
 //! They must agree to 1e-6 on every reference matrix. On divergence the test FAILS loudly
 //! with the matrix name + max |Δλ|, so a silent drift is impossible.
@@ -39,61 +44,65 @@ fn w2_1_all_consumers_pin_one_authority() {
     assert_eq!(bebop2_core::energy::EIGEN_AUTHORITY, LINALG_AUTH);
 }
 
-/// W2-1 — `field::jacobi_eigen` eigenvalues must equal `linalg::eigenvalues`
+/// W2-1 — `field::jacobi_eigen` eigenvalues must match the HAND-DERIVED reference
 /// (the authority) within 1e-9 on a fixture Laplacian. This is the parity gate:
 /// the LOCAL Jacobi eigenvalue result is compared to the SHARED authority and must match.
 #[test]
 fn w2_1_field_jacobi_routes_to_authority() {
-    // Path-graph P4 Laplacian → eigenvalues {0, 2-√2, 2, 2+√2}.
+    // Path-graph P4 Laplacian → eigenvalues {0, 2-√2, 2, 2+√2} (hand-derived).
+    // Gate against the EXACT reference, NOT linalg::eigenvalues (unstable on PSD).
     let l = laplacian_p4();
     let (jac_vals, _jac_vecs) = field::jacobi_eigen(&l, 4);
-    let auth = linalg::eigenvalues(&rows_of(&l, 4));
+    let r2 = 2.0f64.sqrt();
+    let mut reference = vec![0.0, 2.0 - r2, 2.0, 2.0 + r2];
     let mut jac = jac_vals.clone();
-    let mut ar: Vec<f64> = auth.iter().map(|c| c.re).collect();
     jac.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    ar.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    for (j, a) in jac.iter().zip(ar.iter()) {
+    reference.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for (j, a) in jac.iter().zip(reference.iter()) {
         assert!(
             (j - a).abs() < 1e-9,
-            "field::jacobi_eigen diverged from linalg::eigenvalues: {j} vs {a}"
+            "field::jacobi_eigen diverged from hand-derived P4 reference: {j} vs {a}"
         );
     }
 }
 
-/// W2-1 — `kalman::real_eig` eigenvalues must equal `linalg::eigenvalues` within 1e-9.
+/// W2-1 — `kalman::real_eig` eigenvalues must match the HAND-DERIVED reference
 #[test]
 fn w2_1_kalman_real_eig_routes_to_authority() {
-    // Symmetric reference A = [[0.9,0.1],[0.1,0.8]] → eigenvalues {1.0, 0.7}.
+    // Symmetric reference A = [[0.9,0.1],[0.1,0.8]] → eigenvalues (1.7 ± √0.05)/2
+    // = {0.73819660…, 0.96180340…} (hand-derived: trace 1.7, det 0.71;
+    // λ = (1.7 ± √(1.7²−4·0.71))/2 = (1.7 ± √0.05)/2). Gate vs the exact reference,
+    // NOT linalg::eigenvalues (numerically unstable on ill-conditioned PSD).
     let a = vec![0.9, 0.1, 0.1, 0.8];
     let (k_ev, _k_vecs) = kalman::real_eig(&a, 2);
-    let auth = linalg::eigenvalues(&rows_of(&a, 2));
     let mut ke: Vec<f64> = k_ev.iter().map(|c| c.re).collect();
-    let mut ar: Vec<f64> = auth.iter().map(|c| c.re).collect();
+    let sq = 0.05f64.sqrt();
+    let mut reference = vec![(1.7 - sq) / 2.0, (1.7 + sq) / 2.0];
     ke.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    ar.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    for (k, a) in ke.iter().zip(ar.iter()) {
+    reference.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    for (k, aref) in ke.iter().zip(reference.iter()) {
         assert!(
-            (k - a).abs() < 1e-9,
-            "kalman::real_eig diverged from linalg::eigenvalues: {k} vs {a}"
+            (k - aref).abs() < 1e-9,
+            "kalman::real_eig diverged from hand-derived reference: {k} vs {aref}"
         );
     }
 }
 
-/// W2-1 — `lyapunov::eigenvals` (now a thin wrapper) must equal `linalg::eigenvalues`.
+/// W2-1 — `lyapunov::eigenvals` (now a thin wrapper) must match the HAND-DERIVED reference
 #[test]
 fn w2_1_lyapunov_eigenvals_routes_to_authority() {
-    // A = [[2,1],[1,2]] → eigenvalues {3, 1}.
+    // A = [[2,1],[1,2]] → eigenvalues {3, 1} (hand-derived: trace 4, det 3).
+    // Gate vs the exact reference, NOT linalg::eigenvalues (unstable on PSD).
     let a = vec![2.0, 1.0, 1.0, 2.0];
     let lv = lyapunov::eigenvals(&a, 2);
-    let auth = linalg::eigenvalues(&rows_of(&a, 2));
     let mut le: Vec<f64> = lv.iter().map(|c| c.re).collect();
-    let mut ar: Vec<f64> = auth.iter().map(|c| c.re).collect();
+    let mut reference = vec![1.0, 3.0];
     le.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    ar.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    for (l, a) in le.iter().zip(ar.iter()) {
+    reference.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    for (l, aref) in le.iter().zip(reference.iter()) {
         assert!(
-            (l - a).abs() < 1e-9,
-            "lyapunov::eigenvals diverged from linalg::eigenvalues: {l} vs {a}"
+            (l - aref).abs() < 1e-9,
+            "lyapunov::eigenvals diverged from hand-derived reference: {l} vs {aref}"
         );
     }
 }
@@ -139,15 +148,6 @@ fn laplacian_p4() -> Vec<f64> {
         l[i * 4 + i] = deg;
     }
     l
-}
-
-/// Build a row-major `&[Vec<f64>]` from a flat row-major slice (what `linalg::eigenvalues` takes).
-fn rows_of(flat: &[f64], n: usize) -> Vec<Vec<f64>> {
-    let mut rows = Vec::with_capacity(n);
-    for i in 0..n {
-        rows.push(flat[i * n..(i + 1) * n].to_vec());
-    }
-    rows
 }
 
 // ── helpers ──────────────────────────────────────────────────────

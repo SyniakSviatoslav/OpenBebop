@@ -464,6 +464,13 @@ impl KalmanFilter {
         self.n
     }
 
+    /// Write the full state vector `x` (length `n`). Added for the SE(3) courier
+    /// estimator, which integrates the orientation quaternion after the linear
+    /// KF predict/update. Does NOT change predict/update semantics.
+    pub fn set_state(&mut self, x: &[f64]) {
+        self.x = x.to_vec();
+    }
+
     /// 1-D Kalman step (scalar state, static plant A=1).
     /// Reconciliation point with the legacy `attic/core-legacy` closed-form
     /// `kalman_1d`: this is the SAME verified n-D core specialized to n=1,
@@ -572,6 +579,185 @@ pub fn geo_kalman(pos_dim: usize, dt: f64, accel_var: f64, meas_var: f64) -> Geo
         h,
         r,
         d,
+    }
+}
+
+// ── Courier geo SE(3) estimator ─────────────────────────────────────────────
+//
+// W2-3 (B1, courier geo state in SE(3)): lifts the generic `KalmanFilter` into a
+// position+velocity+orientation(quaternion)+angular-velocity tracker. State
+// (n=13) = [pos(3), vel(3), quat(4, w,x,y,z), angvel(3)]. Plant is
+// constant-velocity + constant-angular-velocity (CV + CAW). F is identity on the
+// orientation/angvel blocks (linearized EKF); the quaternion is integrated
+// manually inside `step()` after the linear predict and renormalized to unit
+// length. This is a deliberately-bounded linearized EKF — NOT a full error-state
+// EKF. predict/update math is reused verbatim from `KalmanFilter`.
+
+/// Courier geo SE(3) estimator: pose + twist with a quaternion attitude.
+pub struct GeoSe3Kalman {
+    kf: KalmanFilter,
+    h: Vec<f64>,
+    r: Vec<f64>,
+    dt: f64,
+}
+
+impl GeoSe3Kalman {
+    /// One predict step (constant-velocity / constant-angular-velocity plant)
+    /// followed by a manual Euler integration + renormalization of the attitude
+    /// quaternion from the current angular-velocity component.
+    pub fn step(&mut self) {
+        self.kf.predict();
+        let sv = self.kf.state().to_vec();
+        let q = [sv[6], sv[7], sv[8], sv[9]];
+        let w = [sv[10], sv[11], sv[12]];
+        // q̇ = 0.5 * (q ⊗ [0, ω]); RK-1 (Euler) update.
+        let qd0 = 0.5 * (-q[1] * w[0] - q[2] * w[1] - q[3] * w[2]);
+        let qd1 = 0.5 * (q[0] * w[0] + q[2] * w[2] - q[3] * w[1]);
+        let qd2 = 0.5 * (q[0] * w[1] - q[1] * w[2] + q[3] * w[0]);
+        let qd3 = 0.5 * (q[0] * w[2] + q[1] * w[1] - q[2] * w[0]);
+        let dt = self.dt;
+        let mut qn = [q[0] + dt * qd0, q[1] + dt * qd1, q[2] + dt * qd2, q[3] + dt * qd3];
+        let norm = crate::math::fsqrt(qn[0] * qn[0] + qn[1] * qn[1] + qn[2] * qn[2] + qn[3] * qn[3]);
+        for i in 0..4 {
+            qn[i] /= norm;
+        }
+        let mut x = sv;
+        x[6..10].copy_from_slice(&qn);
+        self.kf.set_state(&x);
+    }
+
+    /// Measurement update given a GPS position (3) and an attitude quaternion (4,
+    /// w,x,y,z). H observes position and attitude directly; R is diagonal.
+    pub fn update(&mut self, pos_meas: &[f64; 3], quat_meas: &[f64; 4]) {
+        let mut z = [0.0f64; 7];
+        z[0..3].copy_from_slice(pos_meas);
+        z[3..7].copy_from_slice(quat_meas);
+        self.kf.update(&z, &self.h, &self.r);
+    }
+
+    /// Position sub-state (length 3).
+    pub fn position(&self) -> [f64; 3] {
+        let s = self.kf.state();
+        [s[0], s[1], s[2]]
+    }
+    /// Velocity sub-state (length 3).
+    pub fn velocity(&self) -> [f64; 3] {
+        let s = self.kf.state();
+        [s[3], s[4], s[5]]
+    }
+    /// Orientation as a unit quaternion (w,x,y,z).
+    pub fn orientation(&self) -> [f64; 4] {
+        let s = self.kf.state();
+        let q = [s[6], s[7], s[8], s[9]];
+        let norm = crate::math::fsqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        [q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm]
+    }
+    /// Angular-velocity sub-state (length 3).
+    pub fn angular_velocity(&self) -> [f64; 3] {
+        let s = self.kf.state();
+        [s[10], s[11], s[12]]
+    }
+
+    /// Full state vector (length 13) — used by the determinism test.
+    pub fn state_vec(&self) -> Vec<f64> {
+        self.kf.state().to_vec()
+    }
+
+    /// Overwrite the full state vector (used to seed an initial attitude in tests).
+    pub fn set_state_all(&mut self, x: &[f64]) {
+        self.kf.set_state(x);
+    }
+}
+
+/// Builder: courier geo SE(3) estimator.
+///
+/// * `dt`           — sampling interval.
+/// * `accel_var`    — continuous white-noise *acceleration* spectral density (pos/vel process noise).
+/// * `gyro_var`     — continuous white-noise *angular-acceleration* spectral density (angvel + attitude drift).
+/// * `pos_meas_var` — per-axis GPS position measurement variance (diagonal of `R`).
+/// * `att_meas_var` — per-component attitude (quaternion) measurement variance (diagonal of `R`).
+///
+/// State dim `n = 13`; `F`, `Q`, `H`, `R` are built and handed to the existing
+/// `KalmanFilter::new` — predict/update math is reused verbatim.
+pub fn geo_se3_kalman(
+    dt: f64,
+    accel_var: f64,
+    gyro_var: f64,
+    pos_meas_var: f64,
+    att_meas_var: f64,
+) -> GeoSe3Kalman {
+    let n = 13usize;
+    // F: identity, with pos += vel*dt coupling (CV plant). Orientation and
+    // angular-velocity blocks are identity (linearized: attitude slowly varying).
+    let mut a = vec![0.0f64; n * n];
+    for i in 0..3 {
+        a[i * n + i] = 1.0;
+        a[i * n + (3 + i)] = dt;
+        a[(3 + i) * n + (3 + i)] = 1.0;
+    }
+    for i in 6..10 {
+        a[i * n + i] = 1.0;
+    } // quaternion block
+    for i in 10..13 {
+        a[i * n + i] = 1.0;
+    } // angular-velocity block
+
+    // Q: continuous white-noise-accel for pos/vel + angular-accel for angvel +
+    // small drift on the quaternion block.
+    let dt3 = dt * dt * dt;
+    let dt2 = dt * dt;
+    let mut q = vec![0.0f64; n * n];
+    for i in 0..3 {
+        q[i * n + i] = accel_var * dt3 / 3.0;
+        q[i * n + (3 + i)] = accel_var * dt2 / 2.0;
+        q[(3 + i) * n + i] = accel_var * dt2 / 2.0;
+        q[(3 + i) * n + (3 + i)] = accel_var * dt;
+    }
+    for i in 0..3 {
+        q[(10 + i) * n + (10 + i)] = gyro_var * dt;
+    }
+    for i in 0..4 {
+        q[(6 + i) * n + (6 + i)] = gyro_var * dt / 4.0;
+    }
+
+    // H: observe position (3) and quaternion (4) directly. 7 rows × 13 cols.
+    let mut h = vec![0.0f64; 7 * n];
+    for i in 0..3 {
+        h[i * n + i] = 1.0;
+    }
+    for k in 0..4 {
+        h[(3 + k) * n + (6 + k)] = 1.0;
+    }
+
+    // R: diagonal, pos_meas_var×3 + att_meas_var×4. 7×7.
+    let mut r = vec![0.0f64; 7 * 7];
+    for i in 0..3 {
+        r[i * 7 + i] = pos_meas_var;
+    }
+    for i in 0..4 {
+        r[(3 + i) * 7 + (3 + i)] = att_meas_var;
+    }
+
+    // x0: zero pose/twist, identity attitude.
+    let mut x0 = vec![0.0f64; n];
+    x0[6] = 1.0;
+    // Moderately uncertain prior; small on attitude so it can be corrected.
+    let mut p0 = vec![0.0f64; n * n];
+    for i in 0..6 {
+        p0[i * n + i] = 100.0;
+    }
+    for i in 6..10 {
+        p0[i * n + i] = 1.0;
+    }
+    for i in 10..13 {
+        p0[i * n + i] = 10.0;
+    }
+
+    GeoSe3Kalman {
+        kf: KalmanFilter::new(&a, &q, &x0, &p0, n),
+        h,
+        r,
+        dt,
     }
 }
 
@@ -995,6 +1181,140 @@ mod geo_kalman_tests {
                 x.to_bits(),
                 y.to_bits(),
                 "geo_kalman must be byte-deterministic: {} vs {}",
+                x,
+                y
+            );
+        }
+    }
+
+    // ── W2-3 SE(3) courier tests ──────────────────────────────────────────
+
+    // Rotation angle (radians) between a unit quaternion `q` and identity.
+    fn quat_angle_from_identity(q: &[f64; 4]) -> f64 {
+        let n = crate::math::fsqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        let w = (q[0] / n).abs();
+        let w = w.min(1.0);
+        2.0 * w.acos()
+    }
+
+    // W2-3 (1) position convergence: a courier moving at constant velocity
+    // [1.0, 0.5, 0.0] with GPS noise must drive the SE(3) position estimate to
+    // within 1.0 m and velocity to within 0.1 of truth after ~200 steps.
+    #[test]
+    fn geo_se3_position_converges() {
+        let dt = 1.0f64;
+        let accel_var = 0.01f64;
+        let gyro_var = 0.001f64;
+        let pos_meas_var = 1.0f64;
+        let att_meas_var = 1e-3f64;
+        let true_v = [1.0f64, 0.5f64, 0.0f64];
+        let pos0 = [0.0f64, 0.0f64, 0.0f64];
+        let mut seed = 0x1234_u64;
+
+        let mut kf = geo_se3_kalman(dt, accel_var, gyro_var, pos_meas_var, att_meas_var);
+        let idq = [1.0f64, 0.0, 0.0, 0.0];
+        for k in 0..200usize {
+            let t = (k as f64) * dt;
+            let mut z = [0.0f64; 3];
+            for i in 0..3 {
+                z[i] = pos0[i] + true_v[i] * t + lcg(&mut seed) * pos_meas_var.sqrt();
+            }
+            kf.step();
+            kf.update(&z, &idq);
+        }
+        let pos = kf.position();
+        let vel = kf.velocity();
+        let true_pos = [pos0[0] + true_v[0] * 200.0, pos0[1] + true_v[1] * 200.0, 0.0];
+        for i in 0..3 {
+            assert!(
+                (pos[i] - true_pos[i]).abs() < 1.0,
+                "pos[{}] {} vs {}",
+                i,
+                pos[i],
+                true_pos[i]
+            );
+            assert!(
+                (vel[i] - true_v[i]).abs() < 0.1,
+                "vel[{}] {} vs {}",
+                i,
+                vel[i],
+                true_v[i]
+            );
+        }
+    }
+
+    // W2-3 (2) attitude convergence: start perturbed off identity, feed noisy
+    // identity-quaternion measurements; estimated orientation must approach
+    // identity within 0.1 rad.
+    #[test]
+    fn geo_se3_attitude_converges() {
+        let dt = 0.5f64;
+        let accel_var = 0.01f64;
+        let gyro_var = 0.001f64;
+        let pos_meas_var = 1e-3f64;
+        let att_meas_var = 1e-2f64;
+        let mut seed = 0xABCD_u64;
+
+        let mut kf = geo_se3_kalman(dt, accel_var, gyro_var, pos_meas_var, att_meas_var);
+        // Perturbed initial attitude: small rotation about x (≈ 0.5 rad) encoded
+        // as a quaternion [cos(θ/2), sin(θ/2), 0, 0].
+        let th = 0.5f64;
+        let ch = crate::math::fcos(th / 2.0);
+        let sh = crate::math::fsin(th / 2.0);
+        let mut x0 = vec![0.0f64; 13];
+        x0[6] = ch;
+        x0[7] = sh;
+        kf.set_state_all(&x0);
+
+        let idq = [1.0f64, 0.0, 0.0, 0.0];
+        for _ in 0..300usize {
+            let mut qm = idq;
+            // small noisy measurement of identity; treat as additive on the
+            // (w,x,y,z) components (kept tiny), then renormalize.
+            let mut qq = [idq[0], idq[1], idq[2], idq[3]];
+            for i in 0..4 {
+                qq[i] += lcg(&mut seed) * att_meas_var.sqrt() * 0.1;
+            }
+            let nrm = crate::math::fsqrt(qq[0] * qq[0] + qq[1] * qq[1] + qq[2] * qq[2] + qq[3] * qq[3]);
+            for i in 0..4 {
+                qm[i] = qq[i] / nrm;
+            }
+            kf.step();
+            kf.update(&[0.0, 0.0, 0.0], &qm);
+        }
+        let q = kf.orientation();
+        let ang = quat_angle_from_identity(&q);
+        assert!(ang < 0.1, "attitude angle from identity = {} (want < 0.1)", ang);
+    }
+
+    // W2-3 (3) byte-determinism: same seeded noise stream → identical estimate
+    // across two independent runs, bit-for-bit.
+    #[test]
+    fn geo_se3_byte_deterministic() {
+        fn run() -> Vec<f64> {
+            let dt = 1.0f64;
+            let mut kf = geo_se3_kalman(dt, 0.5f64, 0.1f64, 1.0f64, 1e-2f64);
+            let idq = [1.0f64, 0.0, 0.0, 0.0];
+            let mut seed = 0xCAFE_u64;
+            for k in 0..100usize {
+                let t = (k as f64) * dt;
+                let mut z = [0.0f64; 3];
+                for i in 0..3 {
+                    z[i] = 2.0 * t + lcg(&mut seed);
+                }
+                kf.step();
+                kf.update(&z, &idq);
+            }
+            kf.state_vec()
+        }
+        let a = run();
+        let b = run();
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(
+                x.to_bits(),
+                y.to_bits(),
+                "geo_se3 must be byte-deterministic: {} vs {}",
                 x,
                 y
             );
