@@ -84,6 +84,44 @@ function check(name, ok, detail = '') {
 // --- F. Test-count honesty: README + AGENTS counts must match `cargo test` (all crates) ---
 let pass = 0, failc = 0;
 {
+  // COST GUARD (item 2): `cargo test --lib --workspace` recompiles the whole workspace (~5 min
+  // cold) on EVERY pre-commit, even when only prose/docs changed. Cache the derived count keyed
+  // on a hash of every source + manifest file; if nothing under src/ or any Cargo.toml changed
+  // since the last good run, REUSE the cached count (honest: the count is still re-derived from a
+  // real `cargo test` whenever any Rust file or manifest changes). Cache lives in target/ so it is
+  // git-ignored and per-build-tree.
+  const crypto = await import('node:crypto');
+  const fs = await import('node:fs');
+  const pathMod = await import('node:path');
+  function hashSources() {
+    const h = crypto.createHash('sha256');
+    const walk = (dir) => {
+      let ents;
+      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        const p = pathMod.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === 'target' || e.name === '.git') continue;
+          walk(p);
+        } else if (e.name.endsWith('.rs') || e.name === 'Cargo.toml' || e.name === 'Cargo.lock') {
+          h.update(fs.readFileSync(p));
+        }
+      }
+    };
+    walk(ROOT);
+    return h.digest('hex');
+  }
+  const CACHE = pathMod.join(ROOT, 'target', '.docclaim_count');
+  const srcHash = hashSources();
+  let cached = null;
+  try {
+    const raw = fs.readFileSync(CACHE, 'utf8');
+    const [hash, p, f] = raw.split('\t');
+    if (hash === srcHash) { cached = { p: Number(p), f: Number(f) }; }
+  } catch { /* no/old cache → recompute */ }
+  if (cached) {
+    pass = cached.p; failc = cached.f;
+  } else {
   // `cargo test` writes `test result:` lines to STDERR, not stdout. Capture BOTH
   // (spawnSync returns {stdout, stderr} without throwing) so the count stays honest
   // across every workspace member, not just the first crate that happens to log to stdout.
@@ -96,6 +134,11 @@ let pass = 0, failc = 0;
     if (m) pass += Number(m[1]);
     const f = line.match(/test result: FAILED\.\s*(\d+) failed/);
     if (f) failc += Number(f[1]);
+  }
+    // Persist only a CLEAN run (no failures) so a red run never poisons the cache.
+    if (failc === 0) {
+      try { fs.mkdirSync(pathMod.dirname(CACHE), { recursive: true }); fs.writeFileSync(CACHE, `${srcHash}\t${pass}\t${failc}`); } catch { /* best-effort */ }
+    }
   }
 }
 {

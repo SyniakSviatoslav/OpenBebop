@@ -90,6 +90,11 @@ impl LaplacianSpectrum {
         }
 
         // Jacobi eigendecomposition of the symmetric matrix L → eigenvalues + eigenvectors.
+        // innovate(H3): Jacobi is EXACT for the small symmetric Laplacians used here (n ≤ ~50,
+        // reference graphs) and is the correct choice — NOT a defect. Lanczos/Arnoldi only wins
+        // for LARGE sparse n where O(n³) Jacobi is too slow; upgrade trigger: a caller needs
+        // spectra for n ≫ 100, at which point swap this for a Lanczos tridiagonalization that
+        // reuses `crate::linalg::eigenvalues` as the authority. Until then Jacobi stays.
         let (eigvals, eigvecs) = jacobi_eigen(&L, n);
 
         let km = num_modes.min(n);

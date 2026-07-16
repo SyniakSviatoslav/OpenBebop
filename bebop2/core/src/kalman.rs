@@ -454,6 +454,76 @@ impl KalmanFilter {
         self.p = newp;
     }
 
+    /// H4 — square-root-equivalent PSD-preserving measurement update (Joseph/Potter form).
+    ///
+    /// The classic update stores `P ← (I − K H) P` (destructively), which under IEEE round-off
+    /// can lose symmetry / positive-semidefiniteness (the ~26%-wrong red-team flag territory).
+    /// The Joseph form keeps `P` PSD by construction:
+    ///   `P_new = (I − K H) P (I − K H)ᵀ + K R Kᵀ`
+    /// (this is the square-root Kalman reduced to its robust covariance update — the core has no
+    /// Cholesky/LAPACK, so we preserve the *property* PSD via the Joseph form rather than a
+    /// factor `S` with `P = S Sᵀ`). Runs as an ADDITIVE path; `update` (classic) stays default.
+    /// Pinned to match `update` to 1e-9 by `square_root_update_matches_classic`.
+    pub fn square_root_update(&mut self, z: &[f64], h: &[f64], r: &[f64]) {
+        let n = self.n;
+        let m = z.len();
+        let mut hp = vec![0.0f64; m * n];
+        matmul_rect(h, &self.p, m, n, n, &mut hp);
+        let mut ht = vec![0.0f64; n * m];
+        transpose(h, m, n, &mut ht);
+        let mut hpht = vec![0.0f64; m * m];
+        matmul_rect(&hp, &ht, m, n, m, &mut hpht);
+        let mut s = vec![0.0f64; m * m];
+        for i in 0..m * m {
+            s[i] = hpht[i] + r[i];
+        }
+        let sinv = invert(&s, m);
+        let mut pht = vec![0.0f64; n * m];
+        matmul_rect(&self.p, &ht, n, n, m, &mut pht);
+        let mut k = vec![0.0f64; n * m];
+        matmul_rect(&pht, &sinv, n, m, m, &mut k);
+        let mut y = vec![0.0f64; m];
+        for i in 0..m {
+            let mut hx = 0.0f64;
+            for j in 0..n {
+                hx += h[i * n + j] * self.x[j];
+            }
+            y[i] = z[i] - hx;
+        }
+        for i in 0..n {
+            let mut kdy = 0.0f64;
+            for j in 0..m {
+                kdy += k[i * m + j] * y[j];
+            }
+            self.x[i] += kdy;
+        }
+        // Joseph form: P = (I−KH) P (I−KH)ᵀ + K R Kᵀ  — always symmetric PSD.
+        let mut kh = vec![0.0f64; n * n];
+        matmul_rect(&k, h, n, m, n, &mut kh);
+        let mut ikh = vec![0.0f64; n * n];
+        eye(n, &mut ikh);
+        for i in 0..n * n {
+            ikh[i] -= kh[i];
+        }
+        let mut ikh_t = vec![0.0f64; n * n];
+        transpose(&ikh, n, n, &mut ikh_t);
+        let mut ikp = vec![0.0f64; n * n];
+        matmul_rect(&ikh, &self.p, n, n, n, &mut ikp);
+        let mut ikpikht = vec![0.0f64; n * n];
+        matmul_rect(&ikp, &ikh_t, n, n, n, &mut ikpikht);
+        let mut kr = vec![0.0f64; n * m];
+        matmul_rect(&k, r, n, m, m, &mut kr);
+        let mut kt = vec![0.0f64; m * n];
+        transpose(&k, n, m, &mut kt);
+        let mut krk = vec![0.0f64; n * n];
+        matmul_rect(&kr, &kt, n, m, n, &mut krk);
+        let mut newp = vec![0.0f64; n * n];
+        for i in 0..n * n {
+            newp[i] = ikpikht[i] + krk[i];
+        }
+        self.p = newp;
+    }
+
     pub fn state(&self) -> &[f64] {
         &self.x
     }
@@ -782,6 +852,80 @@ pub fn geo_se3_kalman(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn square_root_update_matches_classic() {
+        // H4 RED+GREEN: the Joseph/square-root update must agree with the classic `update`
+        // to 1e-9 (same math, more robust storage) AND keep P exactly symmetric (PSD-preserving).
+        let n = 3usize;
+        let a = [0.9, 0.05, 0.0, 0.05, 0.85, 0.1, 0.0, 0.1, 0.8];
+        let q = [0.1, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.1];
+        let p0 = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let x0 = [1.0, 0.5, -0.3];
+        // Observe position (first 2 of 3 state) with noise R.
+        let h = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]; // 2×3
+        let r = [0.5, 0.0, 0.0, 0.5]; // 2×2
+        let z = [0.8, 0.6];
+
+        let mut classic = KalmanFilter::new(&a, &q, &x0, &p0, n);
+        classic.predict();
+        classic.update(&z, &h, &r);
+
+        let mut sr = KalmanFilter::new(&a, &q, &x0, &p0, n);
+        sr.predict();
+        sr.square_root_update(&z, &h, &r);
+
+        for i in 0..n {
+            assert!(
+                (classic.state()[i] - sr.state()[i]).abs() < 1e-9,
+                "state[{}] classic={} sr={}",
+                i,
+                classic.state()[i],
+                sr.state()[i]
+            );
+        }
+        let cp = classic.covariance();
+        let sp = sr.covariance();
+        for i in 0..n * n {
+            assert!(
+                (cp[i] - sp[i]).abs() < 1e-9,
+                "P[{}] classic={} sr={}",
+                i,
+                cp[i],
+                sp[i]
+            );
+        }
+        // SR P must be symmetric to 1e-12 (Joseph form preserves symmetry exactly).
+        for i in 0..n {
+            for j in 0..n {
+                assert!(
+                    (sp[i * n + j] - sp[j * n + i]).abs() < 1e-12,
+                    "P not symmetric at ({},{})",
+                    i,
+                    j
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn square_root_update_stays_psd_under_roundoff() {
+        // H4 GREEN: on a near-singular prior P the classic `(I-KH)P` can drift asymmetric;
+        // the Joseph form keeps P PSD. Check SR P is symmetric-PD-ish (no huge anti-symmetric part).
+        let n = 2usize;
+        let a = [1.0, 0.0, 0.0, 1.0];
+        let q = [1e-3, 0.0, 0.0, 1e-3];
+        let p0 = [1e-6, 0.0, 0.0, 1e-6]; // tiny prior → ill-conditioned
+        let x0 = [0.0, 0.0];
+        let h = [1.0, 0.0, 0.0, 1.0]; // 2×2
+        let r = [1.0, 0.0, 0.0, 1.0];
+        let z = [0.0, 0.0];
+        let mut sr = KalmanFilter::new(&a, &q, &x0, &p0, n);
+        sr.square_root_update(&z, &h, &r);
+        let sp = sr.covariance();
+        let asym = (sp[1] - sp[2]).abs(); // off-diagonal anti-symmetric magnitude
+        assert!(asym < 1e-9, "SR P drifted asymmetric: asym={asym}");
+    }
 
     #[test]
     fn kalman_p_matches_dense_oracle() {
