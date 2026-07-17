@@ -43,6 +43,10 @@ pub mod transport_policy;
 /// (replaces the prior `serde_json` wire serialization). See module docs.
 pub mod wire_codec;
 pub mod wss_transport;
+/// §7 (P09) — stdio carrier behind the existing `Transport` trait. Reuses the
+/// SAME strict `wire_codec` + `framing` envelope (F11 guard: no lenient parse
+/// path), zero new dependencies. HTTP is deferred (see module `innovate:` note).
+pub mod stdio_transport;
 
 pub use error::{WireError, WireResult};
 
