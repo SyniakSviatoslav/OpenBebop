@@ -23,6 +23,10 @@ members = [
     "bebop2/proto-crypto",  # H — crypto ladder stub (Wycheproof→FIPS, ct marker)
     "bebop2/delivery-domain", # Layer-B decider-core adapter (default: no kernel dep; kernel-rlib feature opt-in)
     "bebop2/mesh-node",     # MESH runtime: owns Transport, concurrent bidir send/recv, DOD event gate
+    # ── B4 crypto ground-truth bench (bench-only; never shipped) ──────────────
+    # Isolated bench crate so core/proto-cap Cargo.toml stay byte-identical /
+    # zero-dep (M6 trust boundary). criterion is a DEV-dep here only.
+    "bebop2/bench",
     # ── MESH-08 CI lint crate ──────────────────────────────────────────────
     # `ci-crdt-fence`: a cargo dependency-graph lint (DEV TOOL, not production
     # code) that FAILS the build if any order/money-adjacent crate (bebop2-core,

@@ -1,0 +1,36 @@
+# B4 — crypto ground-truth bench crate (DECART: isolated, never-shipped bench-only
+# crate so `core`/`proto-cap` Cargo.toml stay byte-identical / zero-dep — the M6
+# trust boundary is untouched). criterion is a DEV-dependency here only; the durable
+# ledger row is produced by the zero-dep `record-ledger` bin (std::time::Instant),
+# because the p99 field the ledger schema + B1/B2/B3 citations require is not exposed
+# by criterion's estimates output.
+[package]
+name = "bebop2-bench"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "B4 — crypto ground-truth bench + Ed25519 batch verify + durable ledger. Bench-only, never shipped."
+
+[lib]
+name = "bebop2_bench"
+path = "src/lib.rs"
+
+[dependencies]
+# test_keygen: the deterministic constant-seed keygen entry points (already the
+# proto-cap test convention) so the bench can mint fixtures. Never a prod feature.
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
+bebop-proto-cap = { path = "../proto-cap", version = "0.1.0" }
+
+[dev-dependencies]
+# The DECART-chosen statistical harness (offline-available; in-family precedent:
+# crates/bebop, dowiz/kernel, dowiz/llm-adapters). Only needed for `cargo bench`.
+criterion = "0.5"
+
+[[bin]]
+name = "record-ledger"
+path = "src/bin/record-ledger.rs"
+
+[[bench]]
+name = "crypto"
+harness = false

@@ -320,6 +320,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bebop2-bench"
+version = "0.1.0"
+dependencies = [
+ "bebop-proto-cap",
+ "bebop2-core",
+ "criterion",
+]
+
+[[package]]
 name = "bebop2-core"
 version = "0.1.0"
 dependencies = [

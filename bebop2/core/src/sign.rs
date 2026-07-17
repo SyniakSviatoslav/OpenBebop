@@ -875,6 +875,243 @@ const B_ENCODED: [u8; 32] = [
     0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// B4 — Ed25519 batch verification (cofactored, deterministic SHAKE256 coeffs)
+// ─────────────────────────────────────────────────────────────────────────────
+// The single, cofactor-LESS [`verify`] (RFC 8032 §5.1.7, accept iff P == O) is the
+// SOLE acceptance authority. Batch verify is a fast-path over the classical leg
+// only (no PQ analogue exists).
+//
+// THE SSR-2020 PITFALL, AND WHY THE COFACTORED BATCH EQUATION ALONE IS UNSAFE.
+// ("Taming the Many EdDSAs", Chalkias–Garillot–Nikolaenko.) A COFACTORED batch
+// (accept iff 8·P == O) and the COFACTORLESS single verify (accept iff P == O)
+// DISAGREE exactly on residuals with a nonzero torsion component. A mixed-order
+// R = R0 + T (R0 prime-order, T = (0,-1) order 2) yields a residual E = −T with
+// 8·E == O but E != O: the cofactored batch ACCEPTS while single verify REJECTS.
+// A small-order filter (`is_small_order`: 8·A == O / 8·R == O) does NOT close this
+// gap, because a mixed-order R has 8·R = 8·R0 != O and so is never flagged. (An
+// earlier version of this code relied on that filter and claimed the divergence was
+// "pinned"; it was not — a mixed-order forgery slipped straight through. See the
+// `batch_rejects_ssr2020_mixed_order_forgery` regression test.)
+//
+// THE FIX (see `verify_batch_inner`): the batch equation `8·P == O` is treated as a
+// necessary-but-not-sufficient accept-HINT and a sound fast-REJECT, never as an
+// accept. Every batch-accept is CONFIRMED frame-by-frame by the cofactorless single
+// `verify`. Because `all(verify) => P == O => batch_ok`, this makes verify_batch's
+// accept-set EQUAL to verify's on every input (torsion included): batch-accept can
+// no longer admit a frame the single path would reject. Coefficients z_i are still
+// DETERMINISTIC (SHAKE256 over the batch transcript, Fiat–Shamir): the path consumes
+// ZERO randomness and verdicts are reproducible.
+//
+// `verify_batch_no_fallback` returns the RAW cofactored verdict with the confirmation
+// step removed. It is for the negative/mutation tests ONLY: a naive cofactored batch
+// ACCEPTS both a small-order AND a mixed-order SSR-2020 forgery — which is precisely
+// what the confirmation step exists to reject.
+
+/// Fiat–Shamir domain tag for the batch-coefficient transcript.
+const BATCH_COEFF_DOMAIN: &[u8] = b"bebop2/ed25519-batch-verify/v1";
+
+/// Point negation on twisted Edwards (a = -1): -(X:Y:Z:T) = (-X:Y:Z:-T).
+fn point_neg(p: &Point) -> Point {
+    Point {
+        x: fe_neg(&p.x),
+        y: p.y,
+        z: p.z,
+        t: fe_neg(&p.t),
+    }
+}
+
+/// Multiply a point by the curve cofactor 8 (three doublings).
+fn point_mul8(p: &Point, d2: &Fe) -> Point {
+    let p2 = point_double(p, d2);
+    let p4 = point_double(&p2, d2);
+    point_double(&p4, d2)
+}
+
+/// Whether `p == identity` (projective comparison).
+fn point_is_identity(p: &Point) -> bool {
+    point_eq(p, &point_identity())
+}
+
+/// Whether `p` has order dividing the cofactor 8 (i.e. `8·p == O`) — the SSR-2020
+/// small-order / torsion class. Honest values (`R = r·B`, `A = a·B`) live in the
+/// prime-order subgroup, so `8·p != O` and this returns false for them.
+fn is_small_order(p: &Point, d2: &Fe) -> bool {
+    point_is_identity(&point_mul8(p, d2))
+}
+
+/// Deterministic 128-bit per-signature batch coefficients, SHAKE256-derived from
+/// the full transcript. RNG-free and reproducible. A 128-bit `z_i` is `< L`, so
+/// it is already a canonical scalar mod L.
+fn batch_coeffs(items: &[(&[u8; 32], &[u8], &[u8; 64])]) -> Vec<[u8; 32]> {
+    let mut transcript: Vec<u8> = Vec::new();
+    transcript.extend_from_slice(BATCH_COEFF_DOMAIN);
+    transcript.extend_from_slice(&(items.len() as u64).to_le_bytes());
+    for &(pk, msg, sig) in items {
+        transcript.extend_from_slice(&pk[..]);
+        transcript.extend_from_slice(&sig[..]);
+        transcript.extend_from_slice(&(msg.len() as u64).to_le_bytes());
+        transcript.extend_from_slice(msg);
+    }
+    let mut squeezed: Vec<u8> = Vec::new();
+    squeezed.resize(16 * items.len(), 0u8);
+    crate::pq_kem::shake256(&transcript, &mut squeezed);
+    let mut out: Vec<[u8; 32]> = Vec::with_capacity(items.len());
+    for i in 0..items.len() {
+        let mut z = [0u8; 32];
+        z[..16].copy_from_slice(&squeezed[16 * i..16 * i + 16]);
+        out.push(z);
+    }
+    out
+}
+
+/// Cofactored batch verification with the SSR-2020 safety fallback ARMED.
+/// Returns true iff EVERY signature is accepted by the sole authority (single
+/// [`verify`]). Each item is `(pubkey, message, signature)`.
+pub fn verify_batch(items: &[(&[u8; 32], &[u8], &[u8; 64])]) -> bool {
+    verify_batch_inner(items, true)
+}
+
+/// Mutation/vacuity-guard variant with the SSR-2020 fallback DISABLED — trusts
+/// the naive cofactored batch equation alone. NEVER use outside the negative
+/// test: a naive cofactored batch accepts SSR-2020 small-order forgeries that the
+/// cofactorless single [`verify`] rejects. Exists solely to prove the pin in
+/// `verify_batch` is load-bearing, not decorative.
+pub fn verify_batch_no_fallback(items: &[(&[u8; 32], &[u8], &[u8; 64])]) -> bool {
+    verify_batch_inner(items, false)
+}
+
+fn verify_batch_inner(items: &[(&[u8; 32], &[u8], &[u8; 64])], fallback: bool) -> bool {
+    if items.is_empty() {
+        return true;
+    }
+    let d2 = fe_mul(&fe_d(), &fe_2());
+    let b_pt = match point_decompress(&B_ENCODED) {
+        Some(p) => p,
+        None => return false,
+    };
+
+    struct Dec {
+        a_pt: Point,
+        r_pt: Point,
+        s_le: [u8; 32],
+        k: [u8; 32],
+    }
+    let mut decoded: Vec<Dec> = Vec::with_capacity(items.len());
+    let mut suspicious = false;
+    for &(pk, msg, sig) in items {
+        let r_enc: [u8; 32] = match sig[0..32].try_into() {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let s_le: [u8; 32] = match sig[32..64].try_into() {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        // Canonical-S (RFC 8032 §5.1.7 — same gate single verify applies).
+        if cmp_be(&be(&s_le), &l_be()) != core::cmp::Ordering::Less {
+            suspicious = true;
+        }
+        let a_pt = match point_decompress(pk) {
+            Some(p) => p,
+            None => {
+                suspicious = true;
+                point_identity()
+            }
+        };
+        let r_pt = match point_decompress(&r_enc) {
+            Some(p) => p,
+            None => {
+                suspicious = true;
+                point_identity()
+            }
+        };
+        // Small-order A or R is a KNOWN SSR-2020 divergence sub-case -> route to
+        // the fast-path fallback. NOTE: this is a redundant early-out, NOT the
+        // safety boundary — it catches only order-dividing-8 points and is blind to
+        // mixed-order R = R0 + T (8·R != O). Soundness is guaranteed unconditionally
+        // by the confirm-every-accept step in the batch tail below (F1 fix), which
+        // holds whether or not this filter fires.
+        if is_small_order(&a_pt, &d2) || is_small_order(&r_pt, &d2) {
+            suspicious = true;
+        }
+        let mut k_input = Vec::with_capacity(64 + msg.len());
+        k_input.extend_from_slice(&r_enc);
+        k_input.extend_from_slice(&pk[..]);
+        k_input.extend_from_slice(msg);
+        let k = scalar_from_hash(&k_input);
+        decoded.push(Dec { a_pt, r_pt, s_le, k });
+    }
+
+    // Redundant fast-path: KNOWN-divergent (non-canonical / small-order) inputs go
+    // straight to per-frame single verify instead of computing the batch equation
+    // first. This does not carry soundness on its own (it misses mixed-order R —
+    // that is the F1 fix's job, below); it only skips wasted work for the sub-case
+    // we can cheaply detect. Disabled by the mutation/vacuity guard (`!fallback`).
+    if suspicious && fallback {
+        return items.iter().all(|&(pk, msg, sig)| verify(pk, msg, sig));
+    }
+
+    let zs = batch_coeffs(items);
+
+    // P = (Σ z_i·S_i)·B  −  Σ z_i·R_i  −  Σ (z_i·k_i)·A_i ; accept iff 8·P == O.
+    let mut s_acc = [0u8; 32];
+    for i in 0..decoded.len() {
+        let zs_i = scalar_mul_mod_l(&zs[i], &decoded[i].s_le);
+        s_acc = scalar_add_mod_l(&s_acc, &zs_i);
+    }
+    let lhs = scalar_mul(&b_pt, &s_acc);
+    let mut rhs = point_identity();
+    for i in 0..decoded.len() {
+        let zr = scalar_mul(&decoded[i].r_pt, &zs[i]);
+        rhs = point_add(&rhs, &zr, &d2);
+        let zk = scalar_mul_mod_l(&zs[i], &decoded[i].k);
+        let zka = scalar_mul(&decoded[i].a_pt, &zk);
+        rhs = point_add(&rhs, &zka, &d2);
+    }
+    let p = point_add(&lhs, &point_neg(&rhs), &d2);
+    let batch_ok = point_is_identity(&point_mul8(&p, &d2));
+
+    if !fallback {
+        // Mutation/vacuity guard ONLY (`verify_batch_no_fallback`): return the RAW
+        // naive cofactored verdict. This is UNSOUND on purpose — `8·P == O` accepts
+        // any residual of order dividing 8, i.e. BOTH small-order (R = T) AND
+        // mixed-order (R = R0 + T) torsion forgeries that cofactorless single verify
+        // rejects. Never a production accept path; exists solely so the negative
+        // tests can prove the safe path's confirmation step (below) is load-bearing.
+        return batch_ok;
+    }
+
+    // ── F1 FIX (SSR-2020 cofactor/cofactorless divergence) ─────────────────────
+    // The cofactored batch equation `8·P == O` is NECESSARY but NOT SUFFICIENT for
+    // acceptance. A MIXED-order residual — R = R0 + T with R0 prime-order and T the
+    // order-2 point (0,-1) — makes `8·P == O` (the torsion component dies under the
+    // cofactor 8) while `P != O`, so the cofactorLESS single `verify` (`P == O`)
+    // REJECTS the very frame a cofactored batch ACCEPTS. The small-order filter
+    // (`is_small_order`: 8·A/8·R == O) cannot catch it because 8·R = 8·R0 != O.
+    //
+    // Therefore `batch_ok` is only an accept-HINT, never an accept. Every accept is
+    // confirmed by the SOLE cofactorless authority, single `verify`. This makes
+    // verify_batch's accept-set EQUAL to verify's on EVERY input (torsion included):
+    //   • all members pass single verify  =>  every E_i = O  =>  P = Σ z_i·E_i = O
+    //     =>  batch_ok, and the `all(verify)` below is true  =>  ACCEPT;
+    //   • batch_ok is false  =>  Σ z_i·E_i != O  =>  some E_j != O  =>  member j
+    //     fails single verify  =>  correct answer is REJECT (sound fast reject);
+    //   • batch_ok is true but some member fails single verify (the F1 torsion
+    //     case)  =>  `all(verify)` is false  =>  REJECT.
+    // So `batch_ok && all(verify)` == `all(verify)` exactly — the batch equation can
+    // only fast-REJECT, never fast-accept. (Batching a probabilistic random-linear-
+    // combination accept can never guarantee the per-signature accept-set as a
+    // *subset* without confirming each frame; see the bench notes — with this repo's
+    // naive scalar_mul the confirmation makes the batch path no faster than, and in
+    // the all-valid case slower than, verifying each signature individually. Safety
+    // over throughput: correctness is not negotiable here.)
+    if !batch_ok {
+        return false;
+    }
+    items.iter().all(|&(pk, msg, sig)| verify(pk, msg, sig))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1005,6 +1242,215 @@ mod tests {
         assert_eq!(
             c_zeros, 512,
             "expected exactly 2 point_add calls per scalar bit (1 add + 1 double)"
+        );
+    }
+
+    // ── B4: Ed25519 batch verification — positive (RFC-style valid batch) ──────
+    // A batch of genuine signatures accepts under BOTH the fallback-armed path
+    // and the raw cofactored equation (the equation is correct, not just masked
+    // by the fallback). Tampering any member rejects the whole batch. Two runs on
+    // identical input yield identical verdicts (deterministic SHAKE256 coeffs).
+    #[test]
+    fn batch_verify_accepts_valid_rejects_tampered_and_is_deterministic() {
+        let mk = |sb: u8, m: &[u8]| {
+            let seed = [sb; 32];
+            let (pk, _) = keygen(&seed);
+            let sig = sign(&seed, m);
+            (pk, sig)
+        };
+        let m0 = b"batch frame zero".to_vec();
+        let m1 = b"batch frame one, a little longer".to_vec();
+        let m2 = b"batch frame two".to_vec();
+        let (pk0, s0) = mk(0x10, &m0);
+        let (pk1, s1) = mk(0x11, &m1);
+        let (pk2, s2) = mk(0x12, &m2);
+
+        let good: [(&[u8; 32], &[u8], &[u8; 64]); 3] = [
+            (&pk0, &m0[..], &s0),
+            (&pk1, &m1[..], &s1),
+            (&pk2, &m2[..], &s2),
+        ];
+        assert!(verify_batch(&good), "valid batch must accept (fallback path)");
+        assert!(
+            verify_batch_no_fallback(&good),
+            "cofactored batch equation itself must accept clean valid sigs (non-vacuous)"
+        );
+        assert_eq!(
+            verify_batch(&good),
+            verify_batch(&good),
+            "deterministic coefficients => identical verdicts on identical input"
+        );
+
+        // Tamper one member's signature -> the whole batch must reject.
+        let mut s1_bad = s1;
+        s1_bad[5] ^= 0xff;
+        let bad: [(&[u8; 32], &[u8], &[u8; 64]); 3] = [
+            (&pk0, &m0[..], &s0),
+            (&pk1, &m1[..], &s1_bad),
+            (&pk2, &m2[..], &s2),
+        ];
+        assert!(!verify_batch(&bad), "a tampered member must reject the batch");
+    }
+
+    // ── B4: SSR-2020 NEGATIVE cofactor vector (BLOCKING / non-negotiable) ──────
+    // Construct a forged frame whose single-verify residual E = S·B − R − k·A is a
+    // NONZERO small-order point. Here R := T (the order-2 torsion point (0,-1)) and
+    // S := k·a mod L, so S·B = k·A and E = −T (order 2, != identity). Therefore:
+    //   • the cofactorLESS single verify REJECTS  (E != O  =>  S·B != R + k·A);
+    //   • a naive COFACTORED batch (8·E == O since 8·T == O) would ACCEPT.
+    // The pin (single verify = sole authority) requires the safe batch to REJECT.
+    // The mutation guard (fallback disabled) proves a fallback-less naive cofactored
+    // batch WOULD accept it — so the pin is load-bearing, not decorative.
+    // A wrong pin here means a forged signature is admitted as authentic: a total
+    // soundness break of the trust plane. Treated as blocking.
+    #[test]
+    fn batch_rejects_ssr2020_small_order_forgery() {
+        let d2 = fe_mul(&fe_d(), &fe_2());
+
+        // T = (0, -1): the order-2 torsion point, canonical encoding.
+        let t_pt = Point {
+            x: fe_0(),
+            y: fe_neg(&fe_1()),
+            z: fe_1(),
+            t: fe_0(),
+        };
+        let t_enc = point_compress(&t_pt);
+        let t_dec = point_decompress(&t_enc).expect("torsion point must decode canonically");
+        assert!(!point_is_identity(&t_dec), "torsion point must be nonzero");
+        assert!(
+            is_small_order(&t_dec, &d2),
+            "T must be small-order (8·T == identity)"
+        );
+
+        // Real keypair; recover the clamped secret scalar `a` from the seed.
+        let seed = [0x5Au8; 32];
+        let (pk, _) = keygen(&seed);
+        let az = crate::hash::sha512(&seed);
+        let mut a = [0u8; 32];
+        a.copy_from_slice(&az[0..32]);
+        a[0] &= 248;
+        a[31] = (a[31] & 0x7f) | 0x40;
+
+        // Forge: R := T, S := k·a mod L, k = H(R_enc || A || msg).
+        let msg = b"ssr-2020 small-order divergence vector";
+        let mut k_input = Vec::new();
+        k_input.extend_from_slice(&t_enc);
+        k_input.extend_from_slice(&pk);
+        k_input.extend_from_slice(msg);
+        let k = scalar_from_hash(&k_input);
+        let s = scalar_mul_mod_l(&k, &a);
+        let mut sig = [0u8; 64];
+        sig[0..32].copy_from_slice(&t_enc);
+        sig[32..64].copy_from_slice(&s);
+
+        // Cofactorless single verify MUST reject (E = −T != O).
+        assert!(
+            !verify(&pk, msg, &sig),
+            "cofactorless single verify must reject the small-order forgery"
+        );
+
+        // Non-vacuity: a naive cofactored batch (fallback disabled) ACCEPTS it.
+        let batch: [(&[u8; 32], &[u8], &[u8; 64]); 1] = [(&pk, &msg[..], &sig)];
+        assert!(
+            verify_batch_no_fallback(&batch),
+            "naive cofactored batch must (wrongly) ACCEPT the SSR-2020 forgery — proves the pin is load-bearing"
+        );
+
+        // BLOCKING: the safe batch (fallback armed) REJECTS it. Single verify is
+        // the sole acceptance authority.
+        assert!(
+            !verify_batch(&batch),
+            "cofactored batch with the SSR-2020 fallback MUST reject the small-order forgery"
+        );
+    }
+
+    // ── B4/F1: SSR-2020 MIXED-order forgery (the REAL gap — BLOCKING) ───────────
+    // The small-order test above (R := T) is caught by the `is_small_order` filter
+    // (8·T == O). The DANGEROUS case the filter CANNOT see is a MIXED-order
+    // R := R0 + T, where R0 = r0·B is a genuine prime-order point and T = (0,-1) is
+    // the order-2 torsion point. Then 8·R = 8·R0 != O, so R is NOT small-order and
+    // does NOT trip the filter. Forge S := (r0 + k·a) mod L with k = H(R_enc||A||msg)
+    // so S·B = R0 + k·A. The single-verify residual is
+    //     E = S·B − R − k·A = (R0 + k·A) − (R0 + T) − k·A = −T   (order 2, != O)
+    //   • cofactorLESS single verify REJECTS  (E != O  =>  S·B != R + k·A);
+    //   • naive COFACTORED batch ACCEPTS      (8·E == O since 8·T == O).
+    // This is the exact confusable-forgery the reviewer built. It FAILS against the
+    // pre-fix code (verify_batch wrongly returns true) and PASSES after F1's fix,
+    // which confirms every batch-accept via the cofactorless single authority so
+    // verify_batch's accept-set equals verify's on every input (torsion included).
+    #[test]
+    fn batch_rejects_ssr2020_mixed_order_forgery() {
+        let d2 = fe_mul(&fe_d(), &fe_2());
+        let b_pt = point_decompress(&B_ENCODED).expect("base point decodes");
+
+        // T = (0,-1): the order-2 torsion point.
+        let t_pt = Point {
+            x: fe_0(),
+            y: fe_neg(&fe_1()),
+            z: fe_1(),
+            t: fe_0(),
+        };
+
+        // Honest keypair; recover the clamped secret scalar `a` from the seed.
+        let seed = [0x5Au8; 32];
+        let (pk, _) = keygen(&seed);
+        let az = crate::hash::sha512(&seed);
+        let mut a = [0u8; 32];
+        a.copy_from_slice(&az[0..32]);
+        a[0] &= 248;
+        a[31] = (a[31] & 0x7f) | 0x40;
+
+        // Genuine prime-order point R0 = r0·B with a known discrete log r0 (a real
+        // reduced scalar nonce). This is the "R0 from a real signature" component.
+        let r0 = scalar_from_hash(b"mixed-order forgery: honest prime-order nonce r0");
+        let r0_pt = scalar_mul(&b_pt, &r0);
+
+        // R := R0 + T  (mixed order = prime-order R0 + order-2 torsion T).
+        let r_pt = point_add(&r0_pt, &t_pt, &d2);
+        let r_enc = point_compress(&r_pt);
+        let r_dec = point_decompress(&r_enc).expect("mixed-order R must decode canonically");
+
+        // The whole point of F1: R is NOT small-order (8·R = 8·R0 != O), so the
+        // is_small_order filter does NOT flag it — unlike the small-order test above.
+        assert!(!point_is_identity(&r_dec), "R must be nonzero");
+        assert!(
+            !is_small_order(&r_dec, &d2),
+            "mixed-order R must NOT be small-order (8·R = 8·R0 != O) — the filter's blind spot"
+        );
+
+        // Forge: k = H(R_enc || A || msg), S = (r0 + k·a) mod L  =>  S·B = R0 + k·A.
+        let msg = b"ssr-2020 MIXED-order divergence vector (R = R0 + T)";
+        let mut k_input = Vec::new();
+        k_input.extend_from_slice(&r_enc);
+        k_input.extend_from_slice(&pk);
+        k_input.extend_from_slice(msg);
+        let k = scalar_from_hash(&k_input);
+        let ka = scalar_mul_mod_l(&k, &a);
+        let s = scalar_add_mod_l(&r0, &ka);
+        let mut sig = [0u8; 64];
+        sig[0..32].copy_from_slice(&r_enc);
+        sig[32..64].copy_from_slice(&s);
+
+        // Cofactorless single verify MUST reject (E = −T != O).
+        assert!(
+            !verify(&pk, msg, &sig),
+            "cofactorless single verify must reject the mixed-order forgery"
+        );
+
+        // Non-vacuity / the REAL gap: the naive cofactored batch (fallback OFF)
+        // ACCEPTS it — the filter never saw it, so this is the F1 divergence, not
+        // the small-order sub-case the prior test already covered.
+        let batch: [(&[u8; 32], &[u8], &[u8; 64]); 1] = [(&pk, &msg[..], &sig)];
+        assert!(
+            verify_batch_no_fallback(&batch),
+            "naive cofactored batch must (wrongly) ACCEPT the mixed-order forgery — proves the F1 gap is real and unfiltered"
+        );
+
+        // BLOCKING (F1): the safe batch confirms every accept via single verify, so
+        // it MUST reject — accept-set == verify's. Pre-fix this returned true.
+        assert!(
+            !verify_batch(&batch),
+            "F1: safe verify_batch MUST reject the mixed-order forgery (matching single verify's reject)"
         );
     }
 
