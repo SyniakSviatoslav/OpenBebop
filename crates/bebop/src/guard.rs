@@ -66,6 +66,17 @@ pub fn io_guard(policy: &GuardPolicy, field_stable: bool, proposed_delta: f64) -
 /// vote yes — no single node can kill another (no central off-button), and a
 /// peer cannot suspend itself unilaterally (self-vote ignored for the count
 /// unless it's the only node, which is a degenerate single-node net).
+///
+/// DEPRECATED (P10/M9): this ≥2/3 CONSENSUS registry is NOT the operator
+/// kill-switch. The M9 kill-switch is the UNILATERAL, anchor-signed
+/// `bebop_mesh_node::kill_switch::KillSequence` (one genesis kill-anchor
+/// signature halts the hub after a confirmed COLD snapshot; no quorum). This
+/// type remains only as a peer-suspension helper and must NOT be wired into the
+/// operator kill path.
+#[deprecated(
+    since = "0.1.0",
+    note = "P10/M9: not the operator kill-switch. Use bebop_mesh_node::kill_switch::KillSequence (unilateral, anchor-signed, no quorum)."
+)]
 #[derive(Clone, Debug, Default)]
 pub struct KillSwitch {
     /// Known (honest) node ids in the network.
@@ -76,6 +87,7 @@ pub struct KillSwitch {
     suspended: std::collections::HashSet<String>,
 }
 
+#[allow(deprecated)]
 impl KillSwitch {
     pub fn new(known_nodes: Vec<String>) -> Self {
         KillSwitch {
@@ -123,6 +135,7 @@ impl KillSwitch {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

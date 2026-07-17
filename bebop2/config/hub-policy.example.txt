@@ -1,0 +1,25 @@
+# bebop2 HUB policy (P10 §2) — EXAMPLE. Copy to config/hub-policy.txt and edit.
+#
+# DENY-BY-DEFAULT: an ABSENT file yields a deny-all policy (no listeners, no
+# bridges, red-line deny-all). A present-but-MALFORMED file is rejected and the
+# last-good revision stays live (a bad edit never takes the hub down).
+#
+# HOT-RELOAD: edits are picked up by an mtime poll (no restart). A revision that
+# WIDENS a red-line scope (adds a `redline_allow` not already live) is REFUSED
+# by the floor-gate and logged REJECTED.
+#
+# Directives (one per line; `#` comments and blanks ignored):
+#   listener <bind> <true|false>                     # F2 dynamic listener
+#   bridge   <id> <endpoint> <require_both|classical_until_pq_audit>  # F8
+#   model    <url> <sha3-hex>                         # M5 model endpoint ref
+#   redline_allow <category>                          # M12 red-line allow (floor-gated)
+#   rate_limits <new_listener_cap> <new_listener_refill> <accept_cap> <accept_refill>
+
+listener 0.0.0.0:9443 true
+listener 0.0.0.0:9444 false
+
+# A classical_until_pq_audit bridge raises the insecure-bridge telemetry flag
+# (F8, never silent). Prefer require_both in production.
+bridge edge-a wss://peer-a.example:443 require_both
+
+rate_limits 4 1 32 8

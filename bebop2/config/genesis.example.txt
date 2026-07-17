@@ -1,0 +1,19 @@
+# bebop2 HUB genesis (P10 §4) — EXAMPLE. Copy to config/genesis.txt and edit.
+#
+# FAIL-CLOSED: the hub REFUSES to start if this file is missing, empty (no
+# `anchor` lines), or malformed. There is no wide-open fallback.
+#
+# Format (one directive per line; `#` comments and blank lines ignored):
+#   anchor      <64-hex ed25519 public key>   # delegation-chain trust root
+#   kill_anchor <64-hex ed25519 public key>   # UNILATERAL M9 halt authority
+#
+# The keys below are ILLUSTRATIVE placeholders (all-zero-ish). Generate real
+# keys with the ceremony in KEY-CEREMONY.md — never ship these.
+
+# --- delegation-chain anchors (proto-cap AnchorRoster) ---
+anchor 0000000000000000000000000000000000000000000000000000000000000001
+
+# --- kill anchors (M9 unilateral kill-switch authority, §3/§4) ---
+# A single valid kill-anchor signature HALTS the hub (after COLD backup). No
+# quorum is consulted (this is the OPPOSITE of the legacy consensus KillSwitch).
+kill_anchor 0000000000000000000000000000000000000000000000000000000000000002

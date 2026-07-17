@@ -9,10 +9,26 @@
 //! events on DOD; it never derives, consults, or encodes a courier/agent
 //! score.
 
+pub mod boot;
 pub mod breach;
 pub mod dod;
+pub mod hot_reload;
+pub mod hub_policy;
+pub mod kill_switch;
+pub mod listener_reconcile;
 pub mod node;
 
+pub use boot::{boot, load_genesis, parse_genesis, BootError, BootedHub, Genesis, RevocationDecider};
 pub use breach::{verify as verify_breach, BreachVerifyError};
 pub use dod::{DodFault, DodGate};
+pub use hot_reload::PolicyWatcher;
+pub use hub_policy::{
+    ApplyOutcome, BridgeSpec, HubPolicy, ListenerSpec, ModelEndpoint, PolicyError, PolicyStore,
+    RateLimitConfig, RedLinePolicyData,
+};
+pub use kill_switch::{
+    KillAnchors, KillOrder, KillReject, KillSequence, KillState, ReplayLedger, SnapshotConfirmer,
+    SnapshotReceipt,
+};
+pub use listener_reconcile::{reconcile, ListenerAction};
 pub use node::{MeshEventSink, MeshNode};

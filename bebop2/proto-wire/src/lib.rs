@@ -33,6 +33,8 @@ pub mod discovery;
 pub mod bpv7;
 pub mod envelope;
 pub mod error;
+/// P9-owned wire frame-kind registry; P10 requests `FrameKind::OperatorKill`.
+pub mod frame_kind;
 pub mod framing;
 pub mod handshake;
 pub mod iroh_transport;
