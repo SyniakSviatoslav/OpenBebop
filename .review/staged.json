@@ -1,0 +1,11 @@
+{
+  "builder": "hermes-p10-builder",
+  "reviewer": {
+    "agent": "hermes-p10-rev1",
+    "findings": "OperatorKill frame reuses existing bebop2-core Ed25519 (RFC 8032, from-scratch) over a fixed-layout, domain-separated input (BEBOP2/OPERATOR-KILL/v1 || anchor || nonce || len(reason) || reason) — no serde on signed path. Verification requires signing key to be an enrolled genesis kill anchor (deny-by-default when empty) plus SHA3-256 replay-id ledger. Unilateral M9 authority: one valid kill-anchor signature suffices, NO quorum (opposite of legacy guard.rs::KillSwitch, which is removed from the kill path). COLD-snapshot-THEN-halt sequencing verified by does_not_halt_when_snapshot_not_confirmed; tampered_kill_order_is_refused proves reason/nonce binding. Zero new deps (std mtime-poll + RwLock<Arc<>>)."
+  },
+  "overlap": {
+    "agent": "hermes-p10-ovl",
+    "findings": "HubPolicy-as-data (file-backed, deny-by-default, hot-reload via mtime poll, RwLock<Arc<>> atomic swap, red-line floor-gate) and boot() fail-closed genesis wiring reviewed for overlap with M5/M9/M11 + SCOPE RULE. Confirmed no implicit ports, no quorum in kill path, no new crates. Revocation decision path (F5) mutates RevocationSet locally + hands delta to P9 gossip seam. Dynamic listener reconcile (F2) + insecure-bridge telemetry flag (F8) verified never-silent. 914 tests pass, doc-claim GREEN."
+  }
+}
