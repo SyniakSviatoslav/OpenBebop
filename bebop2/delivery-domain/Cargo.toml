@@ -13,7 +13,7 @@ description = "Layer-B decider-core adapter: re-exports the dowiz-kernel order-m
 # dependency-free and offline-clean per MESH-01 R-MESH01a.
 [features]
 default = []
-kernel-rlib = ["dep:dowiz-kernel", "dep:bebop-proto-cap"]
+kernel-rlib = ["dep:dowiz-kernel", "dep:bebop-proto-cap", "dep:bebop-mesh-node", "dep:bebop2-core"]
 
 [dependencies]
 # Path-link the REAL kernel. `default-features = false` + `features = ["std"]`
@@ -27,6 +27,15 @@ dowiz-kernel = { path = "../../../dowiz/kernel", default-features = false, featu
 # the WIRE→LAW→MONEY chain; it is gated on `kernel-rlib` so the default build
 # stays dependency-free (MESH-01/02). `proto-cap` is pure-Rust, no transport.
 bebop-proto-cap = { path = "../proto-cap", optional = true }
+# Mesh node runtime (P13 spine): the Definition-of-Done gate `DodGate` the
+# receiver runs on every carried event. Gated on `kernel-rlib` so the default
+# build stays dependency-free. `mesh-node`'s transport deps (tokio/rustls/quinn)
+# are NOT used by the spine — only its pure `dod` module's gate type.
+bebop-mesh-node = { path = "../mesh-node", version = "0.1.0", optional = true }
+# Core crypto (Ed25519 + ML-DSA-65 + SHA3) for signing frames, PoD claims, and
+# the F46 hash-chain. Reused VERBATIM — zero new crypto dependency. Gated on
+# `kernel-rlib` so the default build stays offline-clean.
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"], optional = true }
 
 [dev-dependencies]
 # Real keygen for building signed frames in the MESH-02 RED test (no crypto dep leak).

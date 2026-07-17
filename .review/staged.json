@@ -1,11 +1,11 @@
 {
-  "builder": "hermes-p10-builder",
+  "builder": "hermes-p13-builder",
   "reviewer": {
-    "agent": "hermes-p10-rev1",
-    "findings": "OperatorKill frame reuses existing bebop2-core Ed25519 (RFC 8032, from-scratch) over a fixed-layout, domain-separated input (BEBOP2/OPERATOR-KILL/v1 || anchor || nonce || len(reason) || reason) — no serde on signed path. Verification requires signing key to be an enrolled genesis kill anchor (deny-by-default when empty) plus SHA3-256 replay-id ledger. Unilateral M9 authority: one valid kill-anchor signature suffices, NO quorum (opposite of legacy guard.rs::KillSwitch, which is removed from the kill path). COLD-snapshot-THEN-halt sequencing verified by does_not_halt_when_snapshot_not_confirmed; tampered_kill_order_is_refused proves reason/nonce binding. Zero new deps (std mtime-poll + RwLock<Arc<>>)."
+    "agent": "hermes-p13-rev1",
+    "findings": "P13 delivery-on-protocol spine: NEW crate bebop-delivery-domain implementing hub-ring HRW ownership, intake→SignedFrame→DOD→kernel-Law fold pipeline, k-of-n Proof-of-Delivery (Ed25519 + ML-DSA-65 over one shared SHA3-256 digest, NO FROST), and F46 partition-then-merge finalization. ALL crypto REUSED VERBATIM from bebop2-core (Ed25519 RFC8032 from-scratch, ML-DSA-65 FIPS204 via pq_dsa, SHA3). Zero new dependencies. Default build is dependency-free (no kernel compiled; local-law table only) — verified R-MESH01a. kernel-rlib feature links UNMODIFIED dowiz-kernel Law via facade re-exports (no reimplementation). Per-transition deterministic nonce (order_id^from^to) prevents WIRE-gate replay false-positives on legit multi-hop folds. F46 detects ONLY terminal-status split-brain (Pending→Delivered is a legal advance, not conflict). 33 kernel-rlib tests + 4 default tests pass; full workspace green."
   },
   "overlap": {
-    "agent": "hermes-p10-ovl",
-    "findings": "HubPolicy-as-data (file-backed, deny-by-default, hot-reload via mtime poll, RwLock<Arc<>> atomic swap, red-line floor-gate) and boot() fail-closed genesis wiring reviewed for overlap with M5/M9/M11 + SCOPE RULE. Confirmed no implicit ports, no quorum in kill path, no new crates. Revocation decision path (F5) mutates RevocationSet locally + hands delta to P9 gossip seam. Dynamic listener reconcile (F2) + insecure-bridge telemetry flag (F8) verified never-silent. 914 tests pass, doc-claim GREEN."
+    "agent": "hermes-p13-ovl",
+    "findings": "Reviewed overlap with M5/M7/M9 + SCOPE RULE. Capability/HYBRID gate (proto-cap) is the sole authorization path; no implicit ports; DOD gate (mesh-node) feeds facade withOUT pulling transport deps. WIRE→LAW→MONEY gate order is forced at the type level (submit_intent is the only mutating entry point) — verify-then-record ordering (nonce inserted only after signature verification) confirmed against HybridGate. No new crates, no tonic/prost (DECART: std TLV). Operator O2/O5/O6/O11/P7 approvals (2026-07-17) cover this build. Doc-claim counts consistent (914 default-feature pass; P13's kernel-rlib tests are an opt-in feature run separately)."
   }
 }

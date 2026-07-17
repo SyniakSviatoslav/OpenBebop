@@ -106,8 +106,11 @@ impl OrderTransition {
         b
     }
 
-    /// Fail-closed decode.
-    pub fn from_bytes(b: &[u8; 10]) -> Option<OrderTransition> {
+    /// Fail-closed decode. Accepts any byte slice; requires >= 10 bytes.
+    pub fn from_bytes(b: &[u8]) -> Option<OrderTransition> {
+        if b.len() < 10 {
+            return None;
+        }
         let from = DeliveryStatus::from_discriminant(b[0])?;
         let to = DeliveryStatus::from_discriminant(b[1])?;
         let mut id = [0u8; 8];
@@ -355,6 +358,26 @@ pub mod facade {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P13 · DELIVERY-ON-PROTOCOL SPINE (gated on `kernel-rlib`).
+//
+// The modules below implement the P13 spine: hub-ring ownership (HRW), the
+// order-intake → SignedFrame → DOD → kernel-Law fold pipeline, the k-of-n
+// Proof-of-Delivery port, and the F46 partition-then-merge finalization rule.
+// All are gated behind `kernel-rlib` so the DEFAULT build of this crate stays
+// dependency-free and offline-clean (MESH-01a); the `mesh-node` `DodGate` is
+// pulled in only under the feature (its transport deps are never used by the
+// spine — only the pure `dod` gate type).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(feature = "kernel-rlib")]
+pub mod hub_ring;
+#[cfg(feature = "kernel-rlib")]
+pub mod intake;
+#[cfg(feature = "kernel-rlib")]
+pub mod pod;
+#[cfg(feature = "kernel-rlib")]
+pub mod finalization;
 
 #[cfg(all(feature = "kernel-rlib", test))]
 mod facade_tests {

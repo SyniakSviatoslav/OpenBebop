@@ -264,6 +264,7 @@ version = "0.2.0"
 name = "bebop-delivery-domain"
 version = "0.1.0"
 dependencies = [
+ "bebop-mesh-node",
  "bebop-proto-cap",
  "bebop2-core",
  "dowiz-kernel",
