@@ -8,6 +8,11 @@ description = "From-scratch zero-dep post-quantum core for bebop2. Pure core+all
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# BLUEPRINT-P-E §3.2 DoD bench — zero-dep std::time harness (not criterion).
+[[bench]]
+name = "verify_lane"
+harness = false
+
 # INTENTIONALLY NO DEPENDENCIES. core+alloc only. Builds offline (air-gapped).
 # Every primitive must compile to wasm with an EMPTY import section.
 

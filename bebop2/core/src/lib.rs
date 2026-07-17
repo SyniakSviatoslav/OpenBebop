@@ -343,6 +343,10 @@ pub mod vsa; // vector symbolic archive (hyperplane bundling, not dense matrices
 pub mod aead; // XChaCha20-Poly1305 (RFC 8439)
 pub mod hash; // SHA-512 + SHA3
 pub mod kdf; // Argon2id
+// BLUEPRINT-P-E Mode 1 (verify-only AVX2 lane). x86_64+std ONLY — cfg'd out of
+// no_std/wasm entirely so the empty-import gate is structurally untouched.
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+pub mod keccak_x4_avx2; // AVX2 lane-parallel Keccak-f[1600] (4-way SHAKE)
 pub mod pq_dsa; // ML-DSA-65 (FIPS 204)
 pub mod pq_kem; // ML-KEM-768 (FIPS 203)
 pub mod rng; // CSPRNG from hardware entropy (in-tree, no getrandom dep)
