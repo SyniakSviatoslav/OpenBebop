@@ -345,8 +345,9 @@ pub mod hash; // SHA-512 + SHA3
 pub mod kdf; // Argon2id
 pub mod pq_dsa; // ML-DSA-65 (FIPS 204)
 pub mod pq_kem; // ML-KEM-768 (FIPS 203)
-pub mod rng;
-pub mod sign; // Ed25519 (hybrid classical fallback) // CSPRNG from hardware entropy (in-tree, no getrandom dep)
+pub mod rng; // CSPRNG from hardware entropy (in-tree, no getrandom dep)
+pub mod sign; // Ed25519 (hybrid classical fallback)
+pub mod x25519; // X25519 (RFC 7748) classical KEM leg — M2 classical-fallback (§3.6)
 
 // KAT vectors (committed; parent-embedded short ones in vectors.rs, agent-fetched long
 // ones in vectors_long.rs). Read by #[cfg(test)] in each crypto module.
