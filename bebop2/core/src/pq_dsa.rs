@@ -1083,11 +1083,18 @@ pub struct MlDsa65Sig {
 /// KeyGen (FIPS 204). seed = 32 bytes.
 ///
 /// **GATED** like `sign::keygen`: a constant-seed ML-DSA keygen is reachable ONLY in
-/// tests or under an explicit `dangerous_deterministic` / `test_keygen` feature. A
-/// normal (feature-off, non-test) production build CANNOT mint a key from an arbitrary
-/// 32-byte seed — this closes C3 (constant-seed keygen was previously `pub` + ungated).
-/// The legitimate production hybrid-identity path uses [`keygen_derivable`] instead.
-#[cfg(any(test, feature = "dangerous_deterministic", feature = "test_keygen"))]
+/// tests, under `dangerous_deterministic`, or under the `ceremony` feature. A normal
+/// (feature-off, non-test) production build CANNOT mint a key from an arbitrary 32-byte
+/// seed — this closes C3 (constant-seed keygen was previously `pub` + ungated). The
+/// operator keygen ceremony enables `ceremony`; `test_keygen` implies it so the KAT/
+/// test_keygen suites keep exercising the deterministic keygen. The legitimate
+/// production hybrid-identity path uses [`keygen_derivable`] instead.
+#[cfg(any(
+    test,
+    feature = "dangerous_deterministic",
+    feature = "ceremony",
+    feature = "test_keygen"
+))]
 pub fn keygen(seed: &[u8; SEEDBYTES]) -> (MlDsa65Pk, MlDsa65Sk) {
     let (pk, sk) = keygen_bytes(seed);
     (MlDsa65Pk { bytes: pk }, MlDsa65Sk { bytes: sk })

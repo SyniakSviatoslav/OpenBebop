@@ -348,6 +348,7 @@ pub mod kdf; // Argon2id
 #[cfg(all(feature = "std", target_arch = "x86_64"))]
 pub mod keccak_x4_avx2; // AVX2 lane-parallel Keccak-f[1600] (4-way SHAKE)
 pub mod pq_dsa; // ML-DSA-65 (FIPS 204)
+pub mod key_v_verifier; // BOUNDED E2: key_V ML-DSA-65 split-identity verdict verify-leg
 pub mod pq_kem; // ML-KEM-768 (FIPS 203)
 pub mod rng; // CSPRNG from hardware entropy (in-tree, no getrandom dep)
 pub mod sign; // Ed25519 (hybrid classical fallback)

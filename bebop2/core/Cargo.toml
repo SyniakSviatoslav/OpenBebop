@@ -51,4 +51,11 @@ dangerous_deterministic = []
 # entry points to mint deterministic keys in their own `#[cfg(test)]` code. This is the
 # same surface as `dangerous_deterministic` but named for test use only. Production code
 # must NOT enable this.
-test_keygen = []
+test_keygen = ["ceremony"]
+# C3 hygiene (BLUEPRINT-P06 §1/§2): the operator keygen ceremony mints the K/V anchor
+# keys. Gating `pq_dsa::keygen(seed)` behind `ceremony` means a plain `cargo build`
+# (no feature) CANNOT mint an anchor key from an arbitrary seed. `test_keygen` implies
+# `ceremony` so the existing KAT/test_keygen suites keep exercising the deterministic
+# keygen without weakening the gate. Production code must use `keygen_derivable` /
+# `keygen_from_entropy` instead (neither is behind `ceremony`).
+ceremony = []
