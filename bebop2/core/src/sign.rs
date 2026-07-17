@@ -972,6 +972,35 @@ const B_ENCODED: [u8; 32] = [
     0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 ];
 
+// ── BLUEPRINT-P-E §2.2/§2.3 — lane-parallel INDEPENDENT-verify batch API ─────────
+// Mode 1 (verify-only speedup). NOT batch-accept (§2.1): every request is verified
+// fully and independently; out[i] is a pure function of reqs[i] alone.
+
+/// One independent Ed25519 verification request. Borrowed, zero-copy.
+pub struct VerifyReq<'a> {
+    pub pubkey: &'a [u8; 32],
+    pub msg: &'a [u8],
+    pub sig: &'a [u8; 64],
+}
+
+/// The scalar single-verify reference (RFC 8032 §5.1.7) as the parity anchor for
+/// the batch path (§2.6). Thin wrapper over the UNCHANGED `verify`.
+pub(crate) fn verify_scalar(req: &VerifyReq<'_>) -> bool {
+    verify(req.pubkey, req.msg, req.sig)
+}
+
+/// Verify N Ed25519 signatures, EACH fully and independently (RFC 8032 §5.1.7 per
+/// item). `out[i]` is a pure function of `reqs[i]` alone; changing any other batch
+/// element can never change verdict `i` (the property batch-accept cannot have,
+/// BLUEPRINT-P-E §2.1). For N==1 this is exactly the scalar `verify`.
+///
+/// Ed25519's verify hashes with SHA-512 (not Keccak), so this lane is a
+/// parallel-independent loop over the constant-time scalar verify; the accept/
+/// reject decision is byte-identical to `verify` for every element on every host.
+pub fn verify_many(reqs: &[VerifyReq<'_>]) -> Vec<bool> {
+    reqs.iter().map(verify_scalar).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1111,6 +1140,51 @@ mod tests {
             s.push_str(&format!("{:02x}", x));
         }
         s
+    }
+
+    // ── BLUEPRINT-P-E §2.3/§3.3 — Ed25519 verify_many parity + no-cross-contam ─────
+    #[test]
+    fn ed25519_verify_many_parity_and_isolation() {
+        let mut triples: Vec<([u8; 32], Vec<u8>, [u8; 64])> = Vec::new();
+        for i in 0..5u8 {
+            let seed = [0x50 + i; 32];
+            let (pk, _sk) = keygen(&seed);
+            let msg = alloc::vec![i; 3 + i as usize];
+            let sig = sign(&seed, &msg);
+            triples.push((pk, msg, sig));
+        }
+        // All-valid parity vs scalar verify.
+        let reqs: Vec<VerifyReq> = triples
+            .iter()
+            .map(|(pk, m, s)| VerifyReq { pubkey: pk, msg: m, sig: s })
+            .collect();
+        let out = verify_many(&reqs);
+        for (i, r) in reqs.iter().enumerate() {
+            assert!(out[i], "ed25519 batch lane {i} rejected valid sig");
+            assert_eq!(out[i], verify(r.pubkey, r.msg, r.sig), "parity mismatch {i}");
+        }
+        // T4: forge each index in turn.
+        for k in 0..triples.len() {
+            let mut forged = triples.clone();
+            forged[k].2[10] ^= 0xff;
+            let reqs: Vec<VerifyReq> = forged
+                .iter()
+                .map(|(pk, m, s)| VerifyReq { pubkey: pk, msg: m, sig: s })
+                .collect();
+            let out = verify_many(&reqs);
+            for (i, v) in out.iter().enumerate() {
+                assert_eq!(*v, i != k, "cross-contamination: forged {k}, index {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn ed25519_verify_many_n1_equals_scalar() {
+        let seed = [0x9a; 32];
+        let (pk, _) = keygen(&seed);
+        let sig = sign(&seed, b"n1");
+        let out = verify_many(&[VerifyReq { pubkey: &pk, msg: b"n1", sig: &sig }]);
+        assert_eq!(out, alloc::vec![verify(&pk, b"n1", &sig)]);
     }
 }
 

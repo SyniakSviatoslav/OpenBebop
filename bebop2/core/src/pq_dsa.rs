@@ -408,6 +408,76 @@ fn poly_matrix_expand(rho: &[u8; SEEDBYTES]) -> [PolyVecL; K] {
     mat
 }
 
+/// Build the 34-byte ExpandA seed (rho ‖ nonce_le) for matrix cell (i,j).
+#[inline]
+fn expand_a_seed(rho: &[u8; SEEDBYTES], nonce: u16) -> [u8; SEEDBYTES + 2] {
+    let mut seed = [0u8; SEEDBYTES + 2];
+    seed[..SEEDBYTES].copy_from_slice(rho);
+    seed[SEEDBYTES] = (nonce & 0xff) as u8;
+    seed[SEEDBYTES + 1] = (nonce >> 8) as u8;
+    seed
+}
+
+/// AVX2 lane-parallel ExpandA (BLUEPRINT-P-E §2.3 Mode 1). The K×L = 30 matrix
+/// cells are INDEPENDENT SHAKE128 streams; here we squeeze them 4 lanes at a time
+/// in one interleaved Keccak×4 state, then run the SAME scalar `rej_uniform` per
+/// cell. Every cell is a pure function of (rho, its own nonce) — no stream crosses
+/// a lane. Byte-identical to `poly_matrix_expand` (parity-pinned, §2.6).
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+fn poly_matrix_expand_avx2(rho: &[u8; SEEDBYTES]) -> [PolyVecL; K] {
+    use crate::keccak_x4_avx2 as kx4;
+    let mut mat = [[poly_zero(); L]; K];
+
+    // Flatten (i,j) into a linear list of 30 nonces, process in chunks of 4.
+    let mut cells: Vec<(usize, usize, u16)> = Vec::with_capacity(K * L);
+    for i in 0..K {
+        for j in 0..L {
+            cells.push((i, j, ((i as u16) << 8) + j as u16));
+        }
+    }
+    let buf_len = SHAKE128_RATE * 12; // 2016 bytes, exactly the scalar poly_uniform budget
+
+    let mut idx = 0usize;
+    while idx + 4 <= cells.len() {
+        let seeds: [[u8; SEEDBYTES + 2]; 4] = [
+            expand_a_seed(rho, cells[idx].2),
+            expand_a_seed(rho, cells[idx + 1].2),
+            expand_a_seed(rho, cells[idx + 2].2),
+            expand_a_seed(rho, cells[idx + 3].2),
+        ];
+        let refs: [&[u8]; 4] = [&seeds[0], &seeds[1], &seeds[2], &seeds[3]];
+        let outs = kx4::shake128_x4(&refs, buf_len);
+        for l in 0..4 {
+            let (i, j, _) = cells[idx + l];
+            let mut a = [0i32; N];
+            let ctr = rej_uniform(&mut a, &outs[l]);
+            assert!(ctr == N, "poly_matrix_expand_avx2: rejection underflow");
+            mat[i][j] = a;
+        }
+        idx += 4;
+    }
+    // Remainder cells (30 % 4 == 2): scalar path, identical result.
+    while idx < cells.len() {
+        let (i, j, nonce) = cells[idx];
+        mat[i][j] = poly_uniform(rho, nonce);
+        idx += 1;
+    }
+    mat
+}
+
+/// Dispatching ExpandA: AVX2 lane when detected at runtime, else scalar. Both
+/// paths produce a byte-identical matrix (§2.6 parity guarantee).
+#[inline]
+fn poly_matrix_expand_dispatch(rho: &[u8; SEEDBYTES]) -> [PolyVecL; K] {
+    #[cfg(all(feature = "std", target_arch = "x86_64"))]
+    {
+        if crate::keccak_x4_avx2::avx2_available() {
+            return poly_matrix_expand_avx2(rho);
+        }
+    }
+    poly_matrix_expand(rho)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Bit-packing (poly.c / packing.c) — FIPS 204 §7
 // ─────────────────────────────────────────────────────────────────────────────
@@ -908,6 +978,14 @@ pub fn sign_internal_bytes(sk: &[u8], msg: &[u8], rnd: &[u8; RNDBYTES]) -> Vec<u
 
 /// ML-DSA.Verify_internal (FIPS 204 Alg 8). pre empty (internal interface).
 pub fn verify_internal_bytes(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
+    // N==1 default path: unchanged scalar ExpandA (the reference semantics).
+    verify_internal_bytes_impl(pk, msg, sig, false)
+}
+
+/// Shared verify body. `avx2_expand` selects the lane-parallel ExpandA (used only
+/// by the N>=2 batch path); the rest of Alg 8 is identical. Each call is a fully
+/// independent verification — no state crosses signatures (BLUEPRINT-P-E §2.1).
+fn verify_internal_bytes_impl(pk: &[u8], msg: &[u8], sig: &[u8], avx2_expand: bool) -> bool {
     if pk.len() != PUBLICKEYBYTES {
         return false;
     }
@@ -933,7 +1011,11 @@ pub fn verify_internal_bytes(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     }
 
     let mut cp = poly_challenge(&c_tilde);
-    let mat = poly_matrix_expand(&rho);
+    let mat = if avx2_expand {
+        poly_matrix_expand_dispatch(&rho)
+    } else {
+        poly_matrix_expand(&rho)
+    };
 
     // w = A·NTT(z) - c·(t1·2^d)
     let mut zn = z;
@@ -972,6 +1054,19 @@ pub fn verify_internal_bytes(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     c2 == c_tilde
 }
 
+/// BLUEPRINT-P-E §2.3 Mode 1 — verify N ML-DSA-65 signatures, EACH fully and
+/// INDEPENDENTLY (FIPS 204 Alg 8 per item). `out[i]` is a pure function of
+/// `reqs[i]` alone. When N>=2 and AVX2 is present, the ExpandA matrix expansion
+/// runs on the lane-parallel Keccak×4 path; every other arithmetic step and the
+/// accept/reject decision are byte-identical to `verify_internal_bytes`. This is
+/// NOT batch-accept: no cross-signature algebra, one verdict per input (§2.1).
+pub fn verify_internal_bytes_many(reqs: &[(&[u8], &[u8], &[u8])]) -> Vec<bool> {
+    let use_avx2 = reqs.len() >= 2;
+    reqs.iter()
+        .map(|(pk, msg, sig)| verify_internal_bytes_impl(pk, msg, sig, use_avx2))
+        .collect()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Struct-oriented convenience API (byte-backed; unchanged external shape)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -988,11 +1083,18 @@ pub struct MlDsa65Sig {
 /// KeyGen (FIPS 204). seed = 32 bytes.
 ///
 /// **GATED** like `sign::keygen`: a constant-seed ML-DSA keygen is reachable ONLY in
-/// tests or under an explicit `dangerous_deterministic` / `test_keygen` feature. A
-/// normal (feature-off, non-test) production build CANNOT mint a key from an arbitrary
-/// 32-byte seed — this closes C3 (constant-seed keygen was previously `pub` + ungated).
-/// The legitimate production hybrid-identity path uses [`keygen_derivable`] instead.
-#[cfg(any(test, feature = "dangerous_deterministic", feature = "test_keygen"))]
+/// tests, under `dangerous_deterministic`, or under the `ceremony` feature. A normal
+/// (feature-off, non-test) production build CANNOT mint a key from an arbitrary 32-byte
+/// seed — this closes C3 (constant-seed keygen was previously `pub` + ungated). The
+/// operator keygen ceremony enables `ceremony`; `test_keygen` implies it so the KAT/
+/// test_keygen suites keep exercising the deterministic keygen. The legitimate
+/// production hybrid-identity path uses [`keygen_derivable`] instead.
+#[cfg(any(
+    test,
+    feature = "dangerous_deterministic",
+    feature = "ceremony",
+    feature = "test_keygen"
+))]
 pub fn keygen(seed: &[u8; SEEDBYTES]) -> (MlDsa65Pk, MlDsa65Sk) {
     let (pk, sk) = keygen_bytes(seed);
     (MlDsa65Pk { bytes: pk }, MlDsa65Sk { bytes: sk })
@@ -1075,6 +1177,104 @@ mod acvp_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── BLUEPRINT-P-E §2.6/§3.3 — batch verify_many parity + adversarial gates ──────
+    // Build a genuine (pk,msg,sig) triple via the gated deterministic keygen/sign.
+    fn make_triple(seed_byte: u8, msg: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let seed = [seed_byte; SEEDBYTES];
+        let (pk, sk) = keygen_bytes(&seed);
+        let rnd = [seed_byte ^ 0x5a; RNDBYTES];
+        let sig = sign_internal_bytes(&sk, msg, &rnd);
+        (pk, msg.to_vec(), sig)
+    }
+
+    // §2.6 layer-1 verdict parity + §3.3-T4 no-cross-contamination. Also exercises
+    // the AVX2 ExpandA lane (N>=2) and asserts byte-identical verdicts to scalar.
+    #[test]
+    fn verify_many_parity_and_no_cross_contamination() {
+        let msgs: [&[u8]; 5] = [b"alpha", b"beta", b"gamma", b"delta", b"epsilon"];
+        let triples: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = (0..5)
+            .map(|i| make_triple(0x10 + i as u8, msgs[i]))
+            .collect();
+
+        // All-valid: every lane accepts, matching per-item scalar verify.
+        let reqs: Vec<(&[u8], &[u8], &[u8])> = triples
+            .iter()
+            .map(|(pk, m, s)| (pk.as_slice(), m.as_slice(), s.as_slice()))
+            .collect();
+        let batch = verify_internal_bytes_many(&reqs);
+        for (i, (pk, m, s)) in reqs.iter().enumerate() {
+            assert!(batch[i], "batch lane {i} rejected a valid signature");
+            assert_eq!(
+                batch[i],
+                verify_internal_bytes(pk, m, s),
+                "batch verdict {i} diverged from scalar (parity §2.6)"
+            );
+        }
+
+        // T4: forge index k for every k — out[k]==false, all others true.
+        for k in 0..triples.len() {
+            let mut forged = triples.clone();
+            forged[k].2[10] ^= 0xff; // flip a signature byte
+            let reqs: Vec<(&[u8], &[u8], &[u8])> = forged
+                .iter()
+                .map(|(pk, m, s)| (pk.as_slice(), m.as_slice(), s.as_slice()))
+                .collect();
+            let out = verify_internal_bytes_many(&reqs);
+            for (i, v) in out.iter().enumerate() {
+                if i == k {
+                    assert!(!v, "forged index {k} was accepted (batch-accept leak!)");
+                } else {
+                    assert!(*v, "clean index {i} corrupted by forged neighbor {k}");
+                }
+            }
+        }
+    }
+
+    // §3.3-T2: a forged signature passed through the SIMD batch MUST be rejected.
+    #[test]
+    fn verify_many_rejects_forgery() {
+        let (pk, m, mut sig) = make_triple(0x77, b"headline adversarial case");
+        sig[0] ^= 0x01;
+        let (pk2, m2, sig2) = make_triple(0x21, b"clean neighbor");
+        let reqs: Vec<(&[u8], &[u8], &[u8])> =
+            vec![(&pk, &m, &sig), (&pk2, &m2, &sig2)];
+        let out = verify_internal_bytes_many(&reqs);
+        assert!(!out[0], "forged sig accepted by the AVX2 lane");
+        assert!(out[1], "valid neighbor wrongly rejected");
+    }
+
+    // N-remainder path (N not a multiple of the 4-lane width) still parity-correct.
+    #[test]
+    fn verify_many_remainder_widths() {
+        for n in [1usize, 2, 3, 4, 5, 7] {
+            let triples: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> =
+                (0..n).map(|i| make_triple(0x30 + i as u8, b"width")).collect();
+            let reqs: Vec<(&[u8], &[u8], &[u8])> = triples
+                .iter()
+                .map(|(pk, m, s)| (pk.as_slice(), m.as_slice(), s.as_slice()))
+                .collect();
+            let out = verify_internal_bytes_many(&reqs);
+            assert_eq!(out.len(), n);
+            assert!(out.iter().all(|&v| v), "N={n} batch rejected valid inputs");
+        }
+    }
+
+    // §2.6 layer-1 (ExpandA parity, direct): AVX2 matrix == scalar matrix, exactly.
+    #[cfg(all(feature = "std", target_arch = "x86_64"))]
+    #[test]
+    fn expand_a_avx2_matches_scalar() {
+        if !crate::keccak_x4_avx2::avx2_available() {
+            eprintln!("AVX2 unavailable — ExpandA parity vacuously skipped");
+            return;
+        }
+        for b in [0u8, 1, 0x5a, 0xff] {
+            let rho = [b; SEEDBYTES];
+            let scalar = poly_matrix_expand(&rho);
+            let avx2 = poly_matrix_expand_avx2(&rho);
+            assert_eq!(scalar, avx2, "ExpandA AVX2 diverged from scalar (rho={b})");
+        }
+    }
 
     // ── C6: hybrid PQ seed domain-separation ────────────────────────────────────────
     // The ML-DSA leg of a hybrid identity must NOT be derived from the raw master seed
