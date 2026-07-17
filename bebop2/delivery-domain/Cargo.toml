@@ -13,7 +13,7 @@ description = "Layer-B decider-core adapter: re-exports the dowiz-kernel order-m
 # dependency-free and offline-clean per MESH-01 R-MESH01a.
 [features]
 default = []
-kernel-rlib = ["dep:dowiz-kernel"]
+kernel-rlib = ["dep:dowiz-kernel", "dep:bebop-proto-cap"]
 
 [dependencies]
 # Path-link the REAL kernel. `default-features = false` + `features = ["std"]`
@@ -23,3 +23,11 @@ kernel-rlib = ["dep:dowiz-kernel"]
 # (Path is `../../../dowiz/kernel` relative to this file: bebop2/delivery-domain
 # → bebop2 → bebop-repo → /root; kernel lives at /root/dowiz/kernel.)
 dowiz-kernel = { path = "../../../dowiz/kernel", default-features = false, features = ["std"], optional = true }
+# WIRE gate (HybridGate + SignedFrame + AnchorRoster). The KernelFacade compiles
+# the WIRE→LAW→MONEY chain; it is gated on `kernel-rlib` so the default build
+# stays dependency-free (MESH-01/02). `proto-cap` is pure-Rust, no transport.
+bebop-proto-cap = { path = "../proto-cap", optional = true }
+
+[dev-dependencies]
+# Real keygen for building signed frames in the MESH-02 RED test (no crypto dep leak).
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }

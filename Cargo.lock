@@ -264,6 +264,8 @@ version = "0.2.0"
 name = "bebop-delivery-domain"
 version = "0.1.0"
 dependencies = [
+ "bebop-proto-cap",
+ "bebop2-core",
  "dowiz-kernel",
 ]
 
@@ -441,9 +443,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.67"
+version = "1.2.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e17dd265a7d0f31ef544e1b20e03add05d3b45b491b633b10d67145d2acc1a38"
+checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
 dependencies = [
  "find-msvc-tools",
  "jobserver",

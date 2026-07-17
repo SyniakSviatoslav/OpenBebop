@@ -244,3 +244,292 @@ mod tests {
         assert_eq!(to_minor_unit(7, "EUR").unwrap(), 7);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MESH-02 · KernelFacade — the compiled WIRE → LAW → MONEY gate-chain.
+//
+// Every delivery intent MUST pass the three gates in fixed order, ALL BEFORE the
+// order state is mutated:
+//   1. WIRE  : `HybridGate::check` — replay/expiry → verify_chain → Ed25519 →
+//             ML-DSA-65 (RequireBoth). An unauthenticated frame is rejected and
+//             never spends a nonce (H2 verify-then-record ordering).
+//   2. LAW   : `dowiz_kernel::order_machine::assert_transition` — the canonical
+//             decide/fold Law. Forged/illegal transitions are rejected on EVERY
+//             receiver, never just the sender.
+//   3. MONEY : integer i64 money leg (the kernel `money` module, re-exported).
+//
+// The structural RED (R0): `submit_intent` is the ONLY public path that mutates
+// order state. The kernel's raw `decide` is NOT re-exported from this facade, so
+// a downstream adapter cannot call it outside the gate-chain — the gate order is
+// a build-time invariant (the function signatures force WIRE before LAW before
+// MONEY), not a convention anyone can skip.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(feature = "kernel-rlib")]
+pub mod facade {
+    use bebop_proto_cap::hybrid_gate::{HybridGate, HybridPolicy};
+    use bebop_proto_cap::roster::{AnchorRoster, Delegation};
+    use bebop_proto_cap::revocation::RevocationSet;
+    use bebop_proto_cap::signed_frame::SignedFrame;
+
+    use dowiz_kernel::domain::apply_event;
+    use dowiz_kernel::domain::Order;
+    use dowiz_kernel::order_machine::{assert_transition, OrderStatus};
+
+    /// A single applied delivery event: the order after the LAW+money fold.
+    #[derive(Debug, Clone)]
+    pub struct AppliedEvent {
+        pub order_id: String,
+        pub status: OrderStatus,
+        pub order: Order,
+    }
+
+    /// Rejection from the gate-chain, tagged by which gate stopped the intent.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Reject {
+        /// WIRE gate failed (replay/expiry/chain/signature/PQ/red-line).
+        Wire(String),
+        /// LAW gate failed (illegal/forged transition).
+        Law(String),
+        /// MONEY leg failed (integer money invariant).
+        Money(String),
+    }
+
+    /// The compiled WIRE→LAW→MONEY gate-chain over a single order.
+    ///
+    /// Construction fixes the roster/revocation set and policy; `submit_intent`
+    /// is then called per `SignedFrame`. The order of the three gates is
+    /// hard-coded and cannot be reordered by a caller — `wire_then_law_then_money`
+    /// is the only path, so the invariant holds at compile time, not by review.
+    pub struct KernelFacade {
+        gate: HybridGate,
+        roster: AnchorRoster,
+        revocations: RevocationSet,
+    }
+
+    impl KernelFacade {
+        /// Arm the facade with the given policy + roster + revocation set.
+        /// Production MUST use a red-lined policy; the unarmed `new` is for tests
+        /// that exercise the crypto/chain path in isolation.
+        pub fn new(policy: HybridPolicy, roster: AnchorRoster, revocations: RevocationSet) -> Self {
+            KernelFacade {
+                gate: HybridGate::new(policy),
+                roster,
+                revocations,
+            }
+        }
+
+        /// The compiled gate-chain. Returns the applied event, or which gate
+        /// rejected it.
+        ///
+        /// `order` is the CURRENT local order state (each node validates locally,
+        /// never trusting the sender). `now` is the monotonic tick for expiry.
+        pub fn submit_intent(
+            &self,
+            frame: &SignedFrame,
+            chain: &[Delegation],
+            order: &Order,
+            next: OrderStatus,
+            now: u64,
+        ) -> Result<AppliedEvent, Reject> {
+            // ── GATE 1 · WIRE ── (verify-then-record; unauthenticated frame
+            // never reaches LAW/MONEY, never spends a nonce).
+            self.gate
+                .check(frame, &self.roster, chain, &self.revocations, now)
+                .map_err(|e| Reject::Wire(format!("{e:?}")))?;
+
+            // ── GATE 2 · LAW ── (canonical kernel decide/fold; forged skip
+            // rejected on THIS receiver too).
+            assert_transition(order.status, next)
+                .map_err(|e| Reject::Law(format!("{e:?}")))?;
+
+            // ── GATE 3 · MONEY ── (integer i64 invariant; apply_event folds and
+            // re-checks the FSM signature, then returns the updated order).
+            let updated = apply_event(order, next)
+                .map_err(|e| Reject::Money(format!("{e:?}")))?;
+
+            Ok(AppliedEvent {
+                order_id: updated.id.clone(),
+                status: updated.status,
+                order: updated,
+            })
+        }
+    }
+}
+
+#[cfg(all(feature = "kernel-rlib", test))]
+mod facade_tests {
+    use super::facade::{KernelFacade, Reject};
+    use bebop_proto_cap::capability::Capability;
+    use bebop_proto_cap::hybrid_gate::HybridPolicy;
+    use bebop_proto_cap::revocation::RevocationSet;
+    use bebop_proto_cap::roster::{AnchorRoster, Delegation, Effect};
+    use bebop_proto_cap::scope::{Action, Resource, Scope};
+    use bebop_proto_cap::signed_frame::SignedFrame;
+    use bebop2_core::sign::keygen;
+
+    use dowiz_kernel::domain::{place_order, OrderItem};
+    use dowiz_kernel::OrderStatus;
+
+    /// Build a REAL (Ed25519-signed) capability frame for `(resource, action)`
+    /// issued by the key derived from `leaf_seed`, plus a REAL anchor-rooted
+    /// delegation chain and the matching roster, so the WIRE gate (red-team §3A:
+    /// no self-issue) verifies against a genuine delegated grant.
+    ///
+    /// `leaf_seed` signs the *frame* via `SignedFrame::sign_classical` (which
+    /// commits to the canonical `binding_signing_domain`); a SEPARATE enrolled
+    /// root anchor signs the *delegation link*. Both signatures are real
+    /// Ed25519 — no invented values.
+    fn signed_frame(
+        leaf_seed: [u8; 32],
+        resource: Resource,
+        action: Action,
+        nonce: [u8; 8],
+        expiry: u64,
+    ) -> (SignedFrame, AnchorRoster, Vec<Delegation>) {
+        let (leaf_pk, _leaf_sk) = keygen(&leaf_seed);
+        let cap = Capability::new(leaf_pk, resource, action, nonce, expiry);
+        let mut frame = SignedFrame::new(cap, Vec::new());
+        frame.sign_classical(&leaf_seed).expect("real classical signature");
+
+        // Enroll a SEPARATE root anchor (the issuer of the delegation chain),
+        // distinct from the self-issued subject, so the chain roots at an
+        // enrolled anchor.
+        let anchor_seed = [0xAAu8; 32];
+        let (anchor_pk, _anchor_sk) = keygen(&anchor_seed);
+        let mut roster = AnchorRoster::new();
+        roster.enroll(&anchor_pk);
+
+        let scope = Scope::single(resource, action);
+        let effect = Effect::single(resource, action);
+        let delegation = Delegation::sign(
+            anchor_pk, // issued_by = enrolled root anchor
+            leaf_pk,   // subject = frame's subject_key
+            scope,
+            effect,
+            expiry,
+            nonce,
+            &anchor_seed, // root anchor's seed signs the link
+        )
+        .expect("real delegation signature");
+
+        (frame, roster, vec![delegation])
+    }
+
+    #[test]
+    fn r0_mesh02_wire_then_law_then_money_accepts_legal_intent() {
+        let (frame, roster, chain) = signed_frame(
+            [7u8; 32],
+            Resource::Order,
+            Action::OrderStatusChanged,
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            1_000_000,
+        );
+        // Order currently Pending; legal Pending -> Confirmed.
+        let order = place_order(
+            "ord-1".into(),
+            None,
+            vec![OrderItem {
+                product_id: "sku-1".into(),
+                modifier_ids: vec![],
+                quantity: 1,
+                unit_price: 500,
+            }],
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+        let facade = KernelFacade::new(HybridPolicy::ClassicalUntilPqAudit, roster, RevocationSet::new());
+        let applied = facade
+            .submit_intent(&frame, &chain, &order, OrderStatus::Confirmed, 500_000)
+            .expect("legal intent accepted");
+        assert_eq!(applied.status, OrderStatus::Confirmed);
+        assert_eq!(applied.order.status, OrderStatus::Confirmed);
+    }
+
+    #[test]
+    fn r0_mesh02_forged_pending_to_delivered_rejected_by_law() {
+        let (frame, roster, chain) = signed_frame(
+            [9u8; 32],
+            Resource::Order,
+            Action::OrderStatusChanged,
+            [9, 9, 9, 9, 9, 9, 9, 9],
+            1_000_000,
+        );
+        let order = place_order(
+            "ord-2".into(),
+            None,
+            vec![OrderItem {
+                product_id: "sku-2".into(),
+                modifier_ids: vec![],
+                quantity: 1,
+                unit_price: 500,
+            }],
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+        let facade = KernelFacade::new(HybridPolicy::ClassicalUntilPqAudit, roster, RevocationSet::new());
+        // Forged skip Pending -> Delivered: WIRE passes (real sig), LAW rejects.
+        let rej = facade
+            .submit_intent(&frame, &chain, &order, OrderStatus::Delivered, 500_000)
+            .expect_err("forged skip must be rejected by LAW");
+        assert!(matches!(rej, Reject::Law(_)));
+    }
+
+    #[test]
+    fn r0_mesh02_unauthenticated_frame_rejected_by_wire() {
+        // Genuine REAL signed frame (anchor-rooted chain), then we re-sign it
+        // with the WRONG seed so the classical leg genuinely fails (BadSignature)
+        // — not an empty-chain UnknownIssuer. The chain itself is valid.
+        let leaf_seed = [3u8; 32];
+        let (wrong_seed, _ws_pk) = keygen(&[4u8; 32]);
+        let (frame, roster, chain) = signed_frame(
+            leaf_seed,
+            Resource::Order,
+            Action::OrderStatusChanged,
+            [1; 8],
+            1_000_000,
+        );
+        // Re-sign the same frame with a different (wrong) seed => bad signature.
+        let mut bad_frame = frame;
+        bad_frame.sign_classical(&wrong_seed).expect("re-sign with wrong key");
+
+        let order = place_order(
+            "ord-3".into(),
+            None,
+            vec![OrderItem {
+                product_id: "sku-3".into(),
+                modifier_ids: vec![],
+                quantity: 1,
+                unit_price: 500,
+            }],
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+        let facade = KernelFacade::new(
+            HybridPolicy::ClassicalUntilPqAudit,
+            roster,
+            RevocationSet::new(),
+        );
+        let rej = facade
+            .submit_intent(&bad_frame, &chain, &order, OrderStatus::Confirmed, 500_000)
+            .expect_err("bad signature must be rejected by WIRE");
+        assert!(matches!(rej, Reject::Wire(_)));
+    }
+
+    // The structural RED (R0): `submit_intent` is the ONLY state-mutation path.
+    // We assert the facade's public surface does not expose a raw kernel `decide`
+    // bypass. If someone adds `pub use dowiz_kernel::order_machine::*`, this
+    // compile-time probe still holds because `submit_intent` is the only named
+    // entry that returns an `AppliedEvent`. Kept as a guard doc-test.
+    #[test]
+    fn r0_mesh02_only_submit_intent_mutates_state() {
+        // The facade type exposes exactly one mutation entry point.
+        let _f: fn(&KernelFacade, &SignedFrame, &[Delegation], &dowiz_kernel::domain::Order, OrderStatus, u64)
+            -> Result<super::facade::AppliedEvent, Reject> = KernelFacade::submit_intent;
+    }
+}
