@@ -357,6 +357,7 @@ pub mod kat;
 // event-sourced, never CRDT-merged: every entry chains h_i = H(h_{i-1} || seq
 // || payload) and the whole chain re-verifies on demand. Reuses crate::hash.
 pub mod anti_entropy; // pull-based anti-entropy / divergence-diff (W4-3)
+pub mod at_rest; // P09 §6 · F30: at-rest XChaCha20-Poly1305 for the per-hub store
 pub mod deliberate; // adversarial mirroring deliberation (author↔mirror, 2-lap cap)
 pub mod event_log; // event-sourcing log + Merkle/hash-chain spine (W3-2)
 #[cfg(feature = "host")]
