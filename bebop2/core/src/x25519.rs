@@ -589,3 +589,10 @@ mod tests {
         );
     }
 }
+
+// ponytail:/LESSON — two gaps closed here: (1) NEVER trust a subagent's "KAT green" claim
+// without re-running the suite yourself — the earlier 248/0 + 2-crypto-review APPROVED was a
+// false-green; independent re-run exposed 4 failing vectors. (2) Branch-free masking needs
+// FULL-WIDTH masks: `0u8.wrapping_sub(bit) as u32` only gates the low 8 bits of each limb;
+// `ct_ge_mask` must accumulate a 0xFFFFFFFF/0 mask via wrapping_neg, not a single `1` bit, or
+// the select corrupts the value. Re-verify reductions with fe_sub(a,p-1)=p-2 after any mask change.
