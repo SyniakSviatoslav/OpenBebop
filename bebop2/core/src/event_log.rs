@@ -102,6 +102,37 @@ impl<E> EventLog<E> {
         self.entries.last().map(|e| e.hash).unwrap_or(GENESIS)
     }
 
+    /// Borrow the raw payload bytes stored at `seq` (the bytes the caller
+    /// appended). Used by the at-rest layer (`at_rest.rs`) to read back the
+    /// encrypted record it persisted inside this log. `None` if `seq` is out
+    /// of range.
+    pub fn payload_at(&self, seq: u64) -> Option<&[u8]> {
+        self.entries.get(seq as usize).map(|e| e.payload.as_slice())
+    }
+
+    /// Snapshot every stored payload (the raw bytes the caller appended), in
+    /// append order. Used by the at-rest layer to serialize the log to disk.
+    pub fn snapshot_payloads(&self) -> Vec<Vec<u8>> {
+        self.entries.iter().map(|e| e.payload.clone()).collect()
+    }
+
+    /// Rebuild a log from a sequence of payloads (must be in original append
+    /// order). Reconstructs the identical SHA3-256 hash chain, because each
+    /// `h_i = H(prev || seq || payload)` is a deterministic function of those
+    /// three inputs and `seq` is the position in the rebuilt vector.
+    pub fn rebuild_from_payloads(payloads: &[Vec<u8>]) -> Self {
+        let mut log = EventLog {
+            entries: Vec::new(),
+            _p: PhantomData,
+        };
+        for p in payloads {
+            let seq = log.entries.len() as u64;
+            let prev = log.entries.last().map(|e| e.hash).unwrap_or(GENESIS);
+            log.entries.push(Entry::new(&prev, seq, p));
+        }
+        log
+    }
+
     /// Recompute the entire chain from scratch and confirm every stored rolling
     /// hash matches. Returns `Ok(())` if intact, or [`EventLogError`] naming the
     /// first broken `seq` otherwise (e.g. after a payload is mutated).
