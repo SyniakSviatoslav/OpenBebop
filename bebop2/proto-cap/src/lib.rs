@@ -37,6 +37,7 @@ pub mod event_dict;
 pub mod facade;
 pub mod hybrid_gate;
 pub mod matcher;
+pub mod node_id; // MESH-12 node identity + Layer D/P-D budgeted issuance (Option A)
 pub mod port;
 pub mod redline; // G5 — capability-scoped red-line (auth/money/secrets/migrations) deny gate
 pub mod revocation;

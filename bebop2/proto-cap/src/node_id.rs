@@ -31,6 +31,7 @@ use bebop2_core::hash::sha3_256;
 
 use crate::capability::Capability;
 use crate::error::CapError;
+use crate::revocation::RevocationSet;
 use crate::roster::{AnchorRoster, Delegation, Effect};
 use crate::scope::{Action, Resource, Scope};
 
@@ -182,6 +183,196 @@ pub fn require_explicit_policy(p: RootDelegationPolicy) -> Result<RootDelegation
         other => Ok(other),
     }
 }
+
+// ── Layer D / P-D (consensus/capability) — Option A: budgeted issuance ──────
+//
+// A per-epoch, per-anchor mint CAP. Production code MUST route all Ed25519
+// delegation signing through [`sign_delegation_budgeted`] — the single seam
+// that enforces the cap, anchor enrollment, and revocation BEFORE it calls
+// `Delegation::sign`. The CI guard `scripts/ci-budgeted-issuance.sh` fails the
+// build on any bare `Delegation::sign(` outside this seam / a `#[cfg(test)]`
+// module (budget-bypass bulkhead).
+//
+// P06-INDEPENDENT: there is NO key_V / dowiz-kernel dependency here. Signing is
+// the crate's REAL Ed25519 (`Delegation::sign` -> `bebop2_core::sign`).
+
+/// Default length of one issuance epoch, in monotonic ticks (1 day @ 1 tick/s).
+pub const DEFAULT_ISSUANCE_EPOCH_LEN_TICKS: u64 = 86_400;
+
+/// Default maximum number of delegations an anchor may mint per epoch.
+pub const DEFAULT_MAX_PER_EPOCH: u32 = 1;
+
+/// A per-epoch mint budget scoped to a single anchor.
+///
+/// The budget is NOT transferable between anchors (see [`IssuanceError::AnchorMismatch`])
+/// and does NOT auto-re-arm: capacity is restored only by an explicit
+/// [`charge_issuance`] rollover (or a brand-new budget). A stale exhausted
+/// budget replayed — even across an epoch boundary — cannot re-arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IssuanceBudget {
+    /// The anchor this budget is scoped to (32-byte Ed25519 public key).
+    pub anchor_id: [u8; 32],
+    /// The epoch this budget's `minted_count` belongs to.
+    pub epoch: u64,
+    /// How many delegations have been minted in the current `epoch`.
+    pub minted_count: u32,
+    /// Maximum delegations allowed per epoch (the cap).
+    pub max_per_epoch: u32,
+}
+
+/// Errors raised by the budgeted-issuance seam. Every pole is a fail-closed
+/// refusal — the delegation is NOT signed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssuanceError {
+    /// The root-delegation policy was not an explicitly chosen, budget-capable
+    /// policy. Only `OperatorSigned` mints today; `WebOfTrust` has no budget
+    /// rule yet, and `Unspecified` fails closed (no authority bootstrapped).
+    PolicyRefused(RootDelegationPolicy),
+    /// The claimed issuer is not an enrolled trust anchor.
+    AnchorNotEnrolled,
+    /// The claimed issuer has been revoked (UCAN-style, irreversible).
+    AnchorRevoked,
+    /// The budget is scoped to a different anchor than the claimed issuer.
+    AnchorMismatch,
+    /// The clock rolled backward below the budget's recorded epoch.
+    EpochRegression,
+    /// The per-epoch mint cap is exhausted.
+    BudgetExhausted,
+    /// `Delegation::sign` (REAL Ed25519) rejected the arguments.
+    SignRejected(CapError),
+}
+
+impl std::fmt::Display for IssuanceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IssuanceError::PolicyRefused(p) => write!(f, "issuance refused: policy not budget-capable ({:?})", p),
+            IssuanceError::AnchorNotEnrolled => write!(f, "issuance refused: anchor not enrolled"),
+            IssuanceError::AnchorRevoked => write!(f, "issuance refused: anchor revoked"),
+            IssuanceError::AnchorMismatch => write!(f, "issuance refused: budget scoped to a different anchor"),
+            IssuanceError::EpochRegression => write!(f, "issuance refused: clock rolled back below budget epoch"),
+            IssuanceError::BudgetExhausted => write!(f, "issuance refused: per-epoch mint budget exhausted"),
+            IssuanceError::SignRejected(e) => write!(f, "issuance refused: delegation sign rejected ({})", e),
+        }
+    }
+}
+
+impl std::error::Error for IssuanceError {}
+
+/// Map a monotonic tick to an issuance epoch.
+///
+/// `epoch_len 0` => the epoch is ALWAYS 0 (an "eternal" epoch: the cap can
+/// never roll over or re-arm). Otherwise `epoch = now_tick / epoch_len_ticks`.
+pub fn issuance_epoch(now_tick: u64, epoch_len_ticks: u64) -> u64 {
+    if epoch_len_ticks == 0 {
+        0
+    } else {
+        now_tick / epoch_len_ticks
+    }
+}
+
+/// Pre-check whether `anchor_id` may mint under budget `b` at `now_tick`.
+///
+/// Enforces: enrolled anchor, not revoked, budget scoped to this anchor,
+/// no epoch regression, and a non-exhausted cap. Does NOT sign.
+pub fn can_issue(
+    b: IssuanceBudget,
+    anchor_id: [u8; 32],
+    now_tick: u64,
+    epoch_len_ticks: u64,
+) -> Result<(), IssuanceError> {
+    let cur = issuance_epoch(now_tick, epoch_len_ticks);
+    if cur < b.epoch {
+        return Err(IssuanceError::EpochRegression);
+    }
+    if b.anchor_id != anchor_id {
+        return Err(IssuanceError::AnchorMismatch);
+    }
+    if b.minted_count >= b.max_per_epoch {
+        return Err(IssuanceError::BudgetExhausted);
+    }
+    Ok(())
+}
+
+/// Charge a mint against the budget at `now_tick`, returning the (possibly
+/// rolled-over) budget with `minted_count` incremented by one.
+///
+/// Roll-over: if `now_tick` falls in a NEW epoch (strictly greater than the
+/// budget's current epoch), the counter resets to 0 BEFORE charging — so an
+/// explicit roll to the next epoch re-arms the cap to EXACTLY `max_per_epoch`.
+/// The counter is never incremented without a successful mint at the caller.
+pub fn charge_issuance(b: IssuanceBudget, now_tick: u64, epoch_len_ticks: u64) -> IssuanceBudget {
+    let cur = issuance_epoch(now_tick, epoch_len_ticks);
+    if cur > b.epoch {
+        // New epoch: reset the counter (re-arm to exactly max), then charge once.
+        IssuanceBudget {
+            epoch: cur,
+            minted_count: 1,
+            ..b
+        }
+    } else {
+        // Same (or first/equal) epoch: increment in place.
+        IssuanceBudget {
+            minted_count: b.minted_count.saturating_add(1),
+            ..b
+        }
+    }
+}
+
+/// The single budgeted-issuance seam. Production code MUST call THIS, not a
+/// bare `Delegation::sign`, so the per-epoch cap is always enforced.
+///
+/// Flow (all REAL, no fake crypto):
+/// 1. policy must be `OperatorSigned` (fail-closed on `Unspecified`/`WebOfTrust`);
+/// 2. `issued_by` must be an enrolled anchor (`roster.contains`) and not revoked
+///    (`revoked.is_revoked_key`);
+/// 3. `can_issue` must pass (enrollment handled above; here: anchor match,
+///    no epoch regression, non-exhausted cap);
+/// 4. `Delegation::sign` (REAL Ed25519) produces the delegation;
+/// 5. return `(delegation, charge_issuance(...))`.
+///
+/// Any failure returns the matching [`IssuanceError`] and signs NOTHING.
+// BUDGETED-ISSUANCE-SEAM-BEGIN
+pub fn sign_delegation_budgeted(
+    policy: RootDelegationPolicy,
+    roster: &AnchorRoster,
+    revoked: &RevocationSet,
+    budget: IssuanceBudget,
+    issued_by: [u8; 32],
+    subject: [u8; 32],
+    scope: Scope,
+    effect: Effect,
+    expiry: u64,
+    nonce: [u8; 8],
+    seed: &[u8; 32],
+    now_tick: u64,
+    epoch_len_ticks: u64,
+) -> Result<(Delegation, IssuanceBudget), IssuanceError> {
+    // 1. Policy gate (fail-closed: only an explicit OperatorSigned mints today).
+    match policy {
+        RootDelegationPolicy::OperatorSigned => {}
+        other => return Err(IssuanceError::PolicyRefused(other)),
+    }
+
+    // 2. Enrollment + revocation gates.
+    if !roster.contains(&issued_by) {
+        return Err(IssuanceError::AnchorNotEnrolled);
+    }
+    if revoked.is_revoked_key(&issued_by) {
+        return Err(IssuanceError::AnchorRevoked);
+    }
+
+    // 3. Budget pre-check (anchor match + epoch regression + exhaustion).
+    can_issue(budget, issued_by, now_tick, epoch_len_ticks)?;
+
+    // 4. REAL Ed25519 signature (the crate's own signing path).
+    let delegation = Delegation::sign(issued_by, subject, scope, effect, expiry, nonce, seed)
+        .map_err(IssuanceError::SignRejected)?;
+
+    // 5. Charge + return.
+    let charged = charge_issuance(budget, now_tick, epoch_len_ticks);
+    Ok((delegation, charged))
+}
+// BUDGETED-ISSUANCE-SEAM-END
 
 // ── small offline hex helpers (no external crate) ─────────────────────────────
 
@@ -374,5 +565,321 @@ mod tests {
             require_explicit_policy(RootDelegationPolicy::OperatorSigned).unwrap(),
             RootDelegationPolicy::OperatorSigned
         );
+    }
+
+    // ── Layer D / P-D (consensus/capability) — Option A: budgeted issuance ──
+    // P06-independent: NO key_V / dowiz-kernel dependency. All signing is the
+    // crate's REAL Ed25519 (Delegation::sign). These RED→GREEN tests prove the
+    // per-epoch mint cap enforced by `sign_delegation_budgeted`.
+
+    /// Build an enrolled anchor + empty roster/revocation + a fresh budget (cap 3).
+    fn budget_anchor_fixture() -> (([u8; 32], [u8; 32]), AnchorRoster, RevocationSet, IssuanceBudget) {
+        let (seed, pk) = k(40u8);
+        let mut roster = AnchorRoster::new();
+        roster.enroll(&pk);
+        let revoked = RevocationSet::new();
+        let budget = IssuanceBudget { anchor_id: pk, epoch: 0, minted_count: 0, max_per_epoch: 3 };
+        ((seed, pk), roster, revoked, budget)
+    }
+
+    // RED: an attacker facing a cap of 3 mints may mint 1..3, and mints 4..10
+    // MUST be refused as BudgetExhausted — while each allowed mint is a REAL
+    // Ed25519 delegation that verify_chain accepts.
+    #[test]
+    fn red_attacker_10_mints_against_cap_3_refused_from_4th() {
+        let ((seed, pk), roster, revoked, mut b) = budget_anchor_fixture();
+        let epoch_len = DEFAULT_ISSUANCE_EPOCH_LEN_TICKS;
+        let now = 0u64;
+        for i in 0..3u8 {
+            let (_ls, lpk) = k(100u8 + i);
+            let cap = Capability::new(lpk, Resource::Route, Action::Send, [i; 8], 9999);
+            let res = sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned,
+                &roster, &revoked, b,
+                pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [i; 8], &seed, now, epoch_len,
+            );
+            assert!(res.is_ok(), "mint {} (cap 3) must be allowed", i + 1);
+            let (d, nb) = res.unwrap();
+            assert!(
+                verify_chain(&roster, &[d], &cap, now).is_ok(),
+                "mint {} delegation must verify_chain-ok (real Ed25519)",
+                i + 1
+            );
+            b = nb;
+        }
+        assert_eq!(b.minted_count, 3, "exactly 3 minted in epoch 0");
+        for i in 3..10u8 {
+            let (_ls, lpk) = k(200u8 + i);
+            let res = sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned,
+                &roster, &revoked, b,
+                pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [i; 8], &seed, now, epoch_len,
+            );
+            assert!(
+                matches!(res, Err(IssuanceError::BudgetExhausted)),
+                "mint {} must be BudgetExhausted (cap 3, 4th+ refused), got {:?}",
+                i + 1, res
+            );
+        }
+    }
+
+    // RED: an Unspecified root-delegation policy mints nothing (fail-closed).
+    #[test]
+    fn red_unspecified_policy_mints_nothing() {
+        let ((seed, pk), roster, revoked, b) = budget_anchor_fixture();
+        let (_ls, lpk) = k(50u8);
+        let res = sign_delegation_budgeted(
+            RootDelegationPolicy::Unspecified,
+            &roster, &revoked, b,
+            pk, lpk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999, [1; 8], &seed, 0, DEFAULT_ISSUANCE_EPOCH_LEN_TICKS,
+        );
+        assert!(matches!(res, Err(IssuanceError::PolicyRefused(RootDelegationPolicy::Unspecified))));
+    }
+
+    // RED: WebOfTrust has no budget rule yet — it is refused, not silently allowed.
+    #[test]
+    fn red_web_of_trust_has_no_budget_rule_yet() {
+        let ((seed, pk), roster, revoked, b) = budget_anchor_fixture();
+        let (_ls, lpk) = k(51u8);
+        let res = sign_delegation_budgeted(
+            RootDelegationPolicy::WebOfTrust,
+            &roster, &revoked, b,
+            pk, lpk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999, [1; 8], &seed, 0, DEFAULT_ISSUANCE_EPOCH_LEN_TICKS,
+        );
+        assert!(matches!(res, Err(IssuanceError::PolicyRefused(RootDelegationPolicy::WebOfTrust))));
+    }
+
+    // RED: an anchor that is NOT enrolled in the roster cannot mint.
+    #[test]
+    fn red_unenrolled_anchor_cannot_mint() {
+        let ((seed, pk), _roster, revoked, b) = budget_anchor_fixture();
+        let roster = AnchorRoster::new(); // pk NOT enrolled
+        let (_ls, lpk) = k(60u8);
+        let res = sign_delegation_budgeted(
+            RootDelegationPolicy::OperatorSigned,
+            &roster, &revoked, b,
+            pk, lpk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999, [1; 8], &seed, 0, DEFAULT_ISSUANCE_EPOCH_LEN_TICKS,
+        );
+        assert!(matches!(res, Err(IssuanceError::AnchorNotEnrolled)));
+    }
+
+    // RED: a revoked anchor mints nothing.
+    #[test]
+    fn red_revoked_anchor_mints_nothing() {
+        let ((seed, pk), roster, mut revoked, b) = budget_anchor_fixture();
+        revoked.revoke_key(pk);
+        let (_ls, lpk) = k(61u8);
+        let res = sign_delegation_budgeted(
+            RootDelegationPolicy::OperatorSigned,
+            &roster, &revoked, b,
+            pk, lpk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999, [1; 8], &seed, 0, DEFAULT_ISSUANCE_EPOCH_LEN_TICKS,
+        );
+        assert!(matches!(res, Err(IssuanceError::AnchorRevoked)));
+    }
+
+    // RED: a budget is scoped to one anchor and is NOT transferable to another.
+    #[test]
+    fn red_budget_not_transferable_between_anchors() {
+        let ((seed, pk), mut roster, revoked, mut b) = budget_anchor_fixture();
+        let (seed2, pk2) = k(62u8);
+        roster.enroll(&pk2); // pk2 is a legit enrolled anchor
+        b.anchor_id = pk;    // budget scoped to pk, but we try to mint as pk2
+        let (_ls, lpk) = k(63u8);
+        let res = sign_delegation_budgeted(
+            RootDelegationPolicy::OperatorSigned,
+            &roster, &revoked, b,
+            pk2, lpk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999, [1; 8], &seed2, 0, DEFAULT_ISSUANCE_EPOCH_LEN_TICKS,
+        );
+        assert!(matches!(res, Err(IssuanceError::AnchorMismatch)));
+    }
+
+    // RED: a clock that rolls backward below the budget's recorded epoch is refused.
+    #[test]
+    fn red_clock_rollback_refuses() {
+        let ((seed, pk), roster, revoked, _b) = budget_anchor_fixture();
+        // A budget recorded at epoch 5; a clock that yields epoch 0 must be refused.
+        let b = IssuanceBudget { anchor_id: pk, epoch: 5, minted_count: 0, max_per_epoch: 3 };
+        let (_ls, lpk) = k(64u8);
+        let res = sign_delegation_budgeted(
+            RootDelegationPolicy::OperatorSigned,
+            &roster, &revoked, b,
+            pk, lpk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999, [1; 8], &seed, 0, DEFAULT_ISSUANCE_EPOCH_LEN_TICKS,
+        );
+        assert!(matches!(res, Err(IssuanceError::EpochRegression)));
+    }
+
+    // RED: an epoch rollover re-arms the budget to EXACTLY max (no more, no less).
+    #[test]
+    fn red_epoch_rollover_rearms_exactly_max() {
+        let ((seed, pk), roster, revoked, mut b) = budget_anchor_fixture(); // max = 3
+        let epoch_len = DEFAULT_ISSUANCE_EPOCH_LEN_TICKS;
+        // Epoch 0: exactly 3 mints allowed.
+        for i in 0..3u8 {
+            let (_ls, lpk) = k(70u8 + i);
+            b = sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned,
+                &roster, &revoked, b,
+                pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [1; 8], &seed, 0, epoch_len,
+            ).unwrap().1;
+        }
+        assert_eq!(b.minted_count, 3);
+        let (_ls, lpk) = k(73u8);
+        assert!(matches!(
+            sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned, &roster, &revoked, b, pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [1; 8], &seed, 0, epoch_len,
+            ),
+            Err(IssuanceError::BudgetExhausted)
+        ));
+        // Rollover to epoch 1: charge_issuance rolls the epoch forward AND
+        // commits one mint, so the re-armed budget is at count == 1 (the first
+        // mint of the new epoch). Exactly `max_per_epoch - 1` more mints fit.
+        b = charge_issuance(b, epoch_len, epoch_len);
+        assert_eq!(b.epoch, 1);
+        assert_eq!(b.minted_count, 1, "re-arm commits one fresh mint in the new epoch");
+        // Epoch 1: 2 more mints reach exactly max (3), then a 4th is refused.
+        for i in 0..2u8 {
+            let (_ls, lpk) = k(74u8 + i);
+            b = sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned,
+                &roster, &revoked, b,
+                pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [1; 8], &seed, epoch_len, epoch_len,
+            ).unwrap().1;
+        }
+        assert_eq!(b.minted_count, 3);
+        let (_ls, lpk) = k(77u8);
+        assert!(matches!(
+            sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned, &roster, &revoked, b, pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [1; 8], &seed, epoch_len, epoch_len,
+            ),
+            Err(IssuanceError::BudgetExhausted)
+        ));
+    }
+
+    // RED: epoch_len == 0 is an eternal epoch (epoch 0 forever); the cap can
+    // never roll over or re-arm.
+    #[test]
+    fn red_epoch_len_zero_is_eternal_epoch() {
+        let ((seed, pk), roster, revoked, mut b) = budget_anchor_fixture(); // max = 3
+        let epoch_len = 0u64; // eternal: epoch is always 0
+        for _ in 0..3u8 {
+            let (_ls, lpk) = k(80u8);
+            b = sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned,
+                &roster, &revoked, b,
+                pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [1; 8], &seed, 1_000_000, epoch_len,
+            ).unwrap().1;
+        }
+        assert_eq!(b.epoch, 0, "epoch_len 0 => epoch 0 forever");
+        // Far-future tick still cannot re-arm (eternity).
+        let (_ls, lpk) = k(83u8);
+        assert!(matches!(
+            sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned, &roster, &revoked, b, pk, lpk,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [1; 8], &seed, 9_999_999, epoch_len,
+            ),
+            Err(IssuanceError::BudgetExhausted)
+        ));
+    }
+
+    // RED: a stale (already-charged) budget replayed — even across an epoch
+    // boundary — cannot re-arm. Only an EXPLICIT charge_issuance restores capacity.
+    #[test]
+    fn red_stale_budget_replay_cannot_rearm() {
+        let ((seed, pk), roster, revoked, _b) = budget_anchor_fixture();
+        let b = IssuanceBudget { anchor_id: pk, epoch: 0, minted_count: 0, max_per_epoch: 1 };
+        let epoch_len = DEFAULT_ISSUANCE_EPOCH_LEN_TICKS;
+        // Mint once -> b1 (minted = 1).
+        let (_ls, lpk) = k(90u8);
+        let (_, b1) = sign_delegation_budgeted(
+            RootDelegationPolicy::OperatorSigned,
+            &roster, &revoked, b,
+            pk, lpk,
+            Scope::single(Resource::Route, Action::Send),
+            Effect::single(Resource::Route, Action::Send),
+            9999, [1; 8], &seed, 0, epoch_len,
+        ).unwrap();
+        assert_eq!(b1.minted_count, 1);
+        // Replay the STALE exhausted budget in the SAME epoch -> no rearm.
+        let (_ls, lpk2) = k(91u8);
+        assert!(matches!(
+            sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned, &roster, &revoked, b1, pk, lpk2,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [2; 8], &seed, 0, epoch_len,
+            ),
+            Err(IssuanceError::BudgetExhausted)
+        ));
+        // Replay across an epoch boundary WITHOUT re-arming -> still no rearm.
+        assert!(matches!(
+            sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned, &roster, &revoked, b1, pk, lpk2,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                9999, [3; 8], &seed, epoch_len, epoch_len,
+            ),
+            Err(IssuanceError::BudgetExhausted)
+        ));
+        // Only an EXPLICIT re-arm via charge_issuance rolls the epoch over AND
+        // commits one mint — so the re-armed budget is at epoch 1, count 1
+        // (its single allowance already spent in the new epoch). A further mint
+        // in that same epoch is STILL BudgetExhausted: charge_issuance re-arms
+        // the *epoch*, but does not grant a free extra mint beyond max_per_epoch.
+        let b2 = charge_issuance(b1, epoch_len, epoch_len);
+        assert_eq!(b2.epoch, 1);
+        assert_eq!(b2.minted_count, 1);
+        let (_ls, lpk3) = k(92u8);
+        assert!(matches!(
+            sign_delegation_budgeted(
+                RootDelegationPolicy::OperatorSigned,
+                &roster, &revoked, b2,
+                pk, lpk3,
+                Scope::single(Resource::Route, Action::Send),
+                Effect::single(Resource::Route, Action::Send),
+                epoch_len, [4; 8], &seed, epoch_len, epoch_len,
+            ),
+            Err(IssuanceError::BudgetExhausted)
+        ), "re-armed budget spent its single mint in the new epoch ⇒ still exhausted");
     }
 }
