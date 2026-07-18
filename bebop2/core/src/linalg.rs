@@ -240,7 +240,7 @@ mod tests {
     fn eigenvalues_2x2_swap_is_pm1() {
         let a = vec![vec![0.0, 1.0], vec![1.0, 0.0]];
         let mut ev: Vec<f64> = eigenvalues(&a).iter().map(|e| e.re).collect();
-        ev.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        ev.sort_by(|x, y| x.total_cmp(y));
         assert!(
             (ev[0] + 1.0).abs() < 1e-9 && (ev[1] - 1.0).abs() < 1e-9,
             "eigs {{1,-1}}, got {ev:?}"
@@ -252,7 +252,7 @@ mod tests {
         // Rotation [[0,-1],[1,0]]: p(λ)=λ²+1 → {i, -i}.
         let a = vec![vec![0.0, -1.0], vec![1.0, 0.0]];
         let mut ev: Vec<(f64, f64)> = eigenvalues(&a).iter().map(|e| (e.re, e.im)).collect();
-        ev.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        ev.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1)));
         assert!(
             (ev[0].0).abs() < 1e-9 && (ev[0].1 + 1.0).abs() < 1e-9,
             "got {ev:?}"

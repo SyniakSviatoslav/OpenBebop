@@ -121,7 +121,7 @@ impl ReplayLedger {
     /// `true` and inserts. Bounded: when over capacity, half the entries are
     /// dropped (any half — order is irrelevant for replay defense).
     pub fn observe(&self, nonce: [u8; 8]) -> bool {
-        let mut g = self.seen.lock().unwrap();
+        let mut g = self.seen.lock().unwrap_or_else(|e| e.into_inner());
         if !g.insert(nonce) {
             return false; // already seen → replay
         }
@@ -675,7 +675,7 @@ impl ConnBucket {
     /// Try to consume one token at `now` (unix seconds). Refills first;
     /// returns `false` (reject) if empty.
     pub fn try_acquire(&self, now: u64) -> bool {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let (tokens, last) = *g;
         let elapsed = now.saturating_sub(last);
         let refilled =

@@ -181,7 +181,7 @@ impl GossipAgent {
 
     /// Register our own endpoint so gossip advertises it.
     pub fn add_self(&self) {
-        self.dir.lock().unwrap().insert(SignedEndpoint {
+        self.dir.lock().unwrap_or_else(|e| e.into_inner()).insert(SignedEndpoint {
             peer: self.id,
             endpoint: self.listen_addr.clone(),
         });
@@ -189,7 +189,7 @@ impl GossipAgent {
 
     /// Seed the directory with one known peer endpoint (MESH-02 bootstrap).
     pub fn seed_peer(&self, peer: PeerId, endpoint: String) {
-        self.dir.lock().unwrap().insert(SignedEndpoint { peer, endpoint });
+        self.dir.lock().unwrap_or_else(|e| e.into_inner()).insert(SignedEndpoint { peer, endpoint });
     }
 
     /// Hybrid-signed frame carrying a roster payload (fresh nonce each call).
@@ -230,17 +230,17 @@ impl GossipAgent {
             .collect();
         let mut learned = Vec::new();
         for t in targets {
-            let payload = self.dir.lock().unwrap().to_wire();
+            let payload = self.dir.lock().unwrap_or_else(|e| e.into_inner()).to_wire();
             let frame = self.wrap_roster(payload);
             match QuicTransport::connect(&QuicEndpoint::Dial(t.endpoint.clone())).await {
                 Ok(mut tr) => {
                     let mut tr = tr
                         .with_roster(self.anchor_roster.clone())
-                        .with_revocations(self.revocations.lock().unwrap().clone());
+                        .with_revocations(self.revocations.lock().unwrap_or_else(|e| e.into_inner()).clone());
                     match tr.send(frame).await {
                         Ok(_) => match tr.recv().await {
                             Ok(resp) => {
-                                learned.extend(self.dir.lock().unwrap().merge(&PeerDirectory::from_wire(&resp.payload)));
+                                learned.extend(self.dir.lock().unwrap_or_else(|e| e.into_inner()).merge(&PeerDirectory::from_wire(&resp.payload)));
                             }
                             Err(_) => {}
                         },
@@ -348,11 +348,11 @@ async fn handle_conn(
 ) {
     tr = tr
         .with_roster(anchor_roster)
-        .with_revocations(revocations.lock().unwrap().clone());
+        .with_revocations(revocations.lock().unwrap_or_else(|e| e.into_inner()).clone());
     match tr.recv().await {
         Ok(frame) => {
-            dir.lock().unwrap().merge(&PeerDirectory::from_wire(&frame.payload));
-            let payload = dir.lock().unwrap().to_wire();
+            dir.lock().unwrap_or_else(|e| e.into_inner()).merge(&PeerDirectory::from_wire(&frame.payload));
+            let payload = dir.lock().unwrap_or_else(|e| e.into_inner()).to_wire();
             let f = build_roster_frame(id, pq_seed, seed, &chain, &nonce, payload);
             match tr.send(f).await {
                 Ok(_) => {

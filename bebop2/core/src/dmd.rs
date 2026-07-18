@@ -111,7 +111,7 @@ fn build_pod(x: &[f64], n: usize, m: usize) -> (Vec<f64>, usize) {
     let mut sig: Vec<(f64, usize)> = (0..n)
         .map(|i| (crate::math::fsqrt(eigvals[i].max(0.0)), i))
         .collect();
-    sig.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // descending
+    sig.sort_by(|a, b| b.0.total_cmp(&a.0)); // descending
                                                         // Gavish–Donoho threshold τ = 2.858 · median(σ).
     let median = if n == 0 {
         0.0

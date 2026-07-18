@@ -594,7 +594,7 @@ mod tests {
         let a = [2.0, 1.0, 1.0, 2.0];
         let ev = eigenvalues_general(&a, 2);
         let mut reals = [ev[0].re, ev[1].re];
-        reals.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        reals.sort_by(|x, y| x.total_cmp(y));
         assert!(
             (reals[0] - 1.0).abs() < 1e-9,
             "min λ should be 1, got {}",
@@ -626,8 +626,8 @@ mod tests {
         let a = [2.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 2.0];
         let mut g: Vec<f64> = eigenvalues_general(&a, 3).iter().map(|c| c.re).collect();
         let mut s: Vec<f64> = eigenvals(&a, 3).iter().map(|c| c.re).collect();
-        g.sort_by(|x, y| x.partial_cmp(y).unwrap());
-        s.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        g.sort_by(|x, y| x.total_cmp(y));
+        s.sort_by(|x, y| x.total_cmp(y));
         for i in 0..3 {
             assert!(
                 (g[i] - s[i]).abs() < 1e-6,

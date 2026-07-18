@@ -116,7 +116,7 @@ impl LaplacianSpectrum {
         // length. `eigenvalues` (length n) takes the valid Ritz values up front; trailing entries
         // stay 0 and are never read by propagate_spectral (which consumes only `km ≤ k` modes).
         let mut order: Vec<usize> = (0..eigvals.len()).collect();
-        order.sort_by(|&a, &b| eigvals[a].partial_cmp(&eigvals[b]).unwrap());
+        order.sort_by(|&a, &b| eigvals[a].total_cmp(&eigvals[b]));
         let mut eigenvalues = vec![0.0f64; n];
         let mut modes = vec![0.0f32; km * n];
         for (rank, &idx) in order.iter().take(km).enumerate() {
@@ -409,7 +409,7 @@ pub fn jacobi_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
     // arbitrary sweep order; a stable ascending sort makes the output
     // reproducible (no RNG, no HashMap). This does NOT change the spectrum. ──
     let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| eigvals[a].partial_cmp(&eigvals[b]).unwrap());
+    order.sort_by(|&a, &b| eigvals[a].total_cmp(&eigvals[b]));
     let mut eig_sorted = vec![0.0f64; n];
     let mut v_out = vec![0.0f64; n * n];
     for (j, &src) in order.iter().enumerate() {
@@ -521,7 +521,7 @@ pub fn lanczos_leading(
     let (mu_vals, t_vecs) = jacobi_eigen(&t, k);
     // mu are B's eigenvalues (descending in magnitude at the top); sort ascending, recover λ = σ − μ.
     let mut order: Vec<usize> = (0..k).collect();
-    order.sort_by(|&a, &b| mu_vals[a].partial_cmp(&mu_vals[b]).unwrap());
+    order.sort_by(|&a, &b| mu_vals[a].total_cmp(&mu_vals[b]));
     // Map T-eigenvectors back to full-space Ritz vectors: v_full = Q_k · v_T. Length-k buffers
     // (only `num_modes` are consumed downstream — never the trailing length-n zeros).
     let mut eigvals = vec![0.0f64; k];
@@ -638,7 +638,7 @@ mod tests {
         // compare as NEAREST-MATCH (each Lanczos value within tol of SOME oracle value), not
         // positionally — positional comparison breaks on degenerate spectra.
         let mut ref_sorted: Vec<f64> = ref_vals.to_vec();
-        ref_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ref_sorted.sort_by(|a, b| a.total_cmp(b));
         let tol = 1e-2;
         for m in 0..num_modes {
             let lv = spec.eigenvalues[m];

@@ -300,7 +300,7 @@ impl Transport for QuicTransport {
         // between accepts instead of dropping the socket (and live connections)
         // on every `accept` call.
         let endpoint = {
-            let cache = BOUND_ENDPOINTS.lock().unwrap();
+            let cache = BOUND_ENDPOINTS.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(e) = cache.get(&addr) {
                 e.clone()
             } else {
@@ -315,7 +315,7 @@ impl Transport for QuicTransport {
                     Arc::new(quinn::TokioRuntime),
                 )
                 .map_err(|e| WireError::Carrier(e.to_string()))?;
-                BOUND_ENDPOINTS.lock().unwrap().insert(addr.clone(), e.clone());
+                BOUND_ENDPOINTS.lock().unwrap_or_else(|e| e.into_inner()).insert(addr.clone(), e.clone());
                 e
             }
         };

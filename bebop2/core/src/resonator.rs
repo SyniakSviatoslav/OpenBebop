@@ -313,7 +313,7 @@ pub fn rollback_to_best<S: Clone>(result: &ResonatorResult<S>) -> &Checkpoint<S>
     result
         .checkpoints
         .iter()
-        .min_by(|a, b| a.error.partial_cmp(&b.error).unwrap())
+        .min_by(|a, b| a.error.total_cmp(&b.error))
         .unwrap()
 }
 

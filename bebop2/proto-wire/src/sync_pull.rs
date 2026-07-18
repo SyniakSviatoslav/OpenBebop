@@ -951,10 +951,10 @@ mod tests {
             }
         }
         fn send(&self, f: SignedFrame) {
-            self.buf.lock().unwrap().push_back(f);
+            self.buf.lock().unwrap_or_else(|e| e.into_inner()).push_back(f);
         }
         fn recv(&self) -> Option<SignedFrame> {
-            self.buf.lock().unwrap().pop_front()
+            self.buf.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
         }
     }
 
