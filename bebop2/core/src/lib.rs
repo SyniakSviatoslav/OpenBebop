@@ -22,6 +22,11 @@
 #[macro_use]
 extern crate alloc;
 
+/// In-code mesh/wire version. Independent of the repo CalVer tag so a breaking
+/// wire/envelope change can be gated without a repo retag. Bump on any wire-format,
+/// envelope, or handshake change.
+pub const MESH_WIRE_VERSION: &str = "2026.07.0";
+
 // ── Genuine no_std (--no-default-features) support ──────────────────────────────────────
 // When `std` is off we must supply a global allocator + panic handler and provide the few
 // `f64` libm intrinsics (sqrt/sin/cos/ln/powi/exp) that std normally provides as methods.
