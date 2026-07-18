@@ -1,0 +1,11 @@
+# bebop2-core no_std / wasm32 build configuration.
+#
+# The PQ crypto core is designed for `wasm32-unknown-unknown --no-default-features`
+# (see scripts/check-wasm32.sh): a genuine no_std + no-alloc-empty-import build
+# whose `#[panic_handler]` is an abort-style infinite loop. Unwinding is not
+# supported there, so pin `panic = "abort"` for that target. Without this pin the
+# gate only passes because the host's default happens to be abort — this makes the
+# choice explicit and deterministic (root-cause fix for the "no_std RED" audit item,
+# which did not reproduce on the intended wasm gate once panic=abort is pinned).
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "panic=abort"]

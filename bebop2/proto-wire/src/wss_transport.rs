@@ -207,9 +207,10 @@ pub enum WssEndpoint {
     /// self-signed dev cert), this serves the operator's real CA-issued cert.
     ///
     /// CAVEAT (no over-claim): a peer only *verifies* this cert when it runs a HARDENED client
-    /// (`--no-default-features`, i.e. `insecure-tls` OFF). The DEFAULT client is accept-any, so
-    /// TLS server-authentication holds end-to-end only against a hardened peer; frame integrity
-    /// is protected regardless by the app-layer hybrid gate (RequireBoth + channel binding).
+    /// (the DEFAULT build — `insecure-tls` is OFF, so the client verifies against webpki-roots).
+    /// The `insecure-tls` feature (opt-in, local dev only) is accept-any; TLS server-authentication
+    /// holds end-to-end against a default peer. Frame integrity is protected regardless by the
+    /// app-layer hybrid gate (RequireBoth + channel binding).
     /// NOT yet covered (follow-ups): cert hot-reload/rotation, PEM ingest (DECART), mTLS.
     /// DER (not PEM) so no cert-parsing dependency is pulled into the sovereign core.
     ListenTlsWithCert {

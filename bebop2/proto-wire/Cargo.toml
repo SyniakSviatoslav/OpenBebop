@@ -47,11 +47,15 @@ http = "1"
 # (`bpv7.rs`) carries the store-and-forward semantics. The empty `iroh` feature
 # is a documented hook, NOT resolvable offline until the dalek conflict is fixed.
 [features]
-default = ["insecure-tls"]
+# SECURITY (fix-wave, audit #6): the client TLS verifier defaults to HARDENED
+# (webpki-roots CA verification). `insecure-tls` is NO LONGER a default feature —
+# shipping accept-any as the default made every production wss/quic client
+# MITM-able. Opt back in for local-first dev with `--features insecure-tls`.
+default = []
 iroh = []
 # insecure-tls (C5): the iroh/QUIC client accepts ANY TLS cert (dev/local-first — the signed-frame
-# hybrid gate is the real auth). Default-ON preserves current behavior; a hardened build
-# (`--no-default-features`) turns it OFF and REFUSES TO COMPILE until a real ServerCertVerifier is wired.
+# hybrid gate is the real auth). Default-OFF (secure-by-default): a hardened build verifies the
+# server cert against webpki-roots. Opt in with `--features insecure-tls` for local dev only.
 insecure-tls = []
 # insecure-test (MESH-10): enables the PLAINTEXT `ws://` transport path for local loopback
 # tests only. It is OFF by default, so a production build REQUIRES TLS — `connect`/`accept` reject

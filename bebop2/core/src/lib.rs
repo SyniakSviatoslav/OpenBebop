@@ -16,6 +16,18 @@
 // --target wasm32-unknown-unknown`). Native + test builds enable `std` (the default feature)
 // so tests can allocate + panic, and so the default wasm32 build links with std semantics.
 #![cfg_attr(not(feature = "std"), no_std)]
+// ROOT-CAUSE FIX (no_std audit): no_std builds are only meaningful for the
+// wasm32-unknown-unknown empty-import target (the `#[panic_handler]` in
+// `no_std_runtime` is abort-style and there is no std unwinding machinery). A
+// native host `--no-default-features` build has nowhere to get a panic strategy
+// from (the precompiled host `core` is `panic="unwind"`), so it dies with a
+// cryptic "unwinding panics are not supported without std". Fail fast with the
+// correct invocation instead of that dead end.
+#[cfg(all(not(feature = "std"), not(target_arch = "wasm32")))]
+compile_error!(
+    "bebop2-core no_std is only supported for wasm32-unknown-unknown (the empty-import PQ core). \
+     Build with: cargo build --target wasm32-unknown-unknown --no-default-features"
+);
 // `alloc` is in scope for both std and no_std builds (brought in explicitly so hash.rs's
 // `alloc::vec::Vec` / `alloc::string::String` helpers resolve under native doctest builds too).
 // `#[macro_use]` re-exports `vec!`/`format!` crate-wide so modules don't each need the import.

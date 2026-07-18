@@ -61,6 +61,8 @@ const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
 const RECORD_OVERHEAD: usize = NONCE_LEN + TAG_LEN;
 
+use alloc::string::String;
+
 /// Errors returned by the at-rest store. All are fail-closed: a corrupt or
 /// tampered record yields `Err`, never a plaintext fallback.
 #[derive(Debug, Clone, PartialEq, Eq)]
