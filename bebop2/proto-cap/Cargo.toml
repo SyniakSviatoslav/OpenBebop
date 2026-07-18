@@ -23,6 +23,17 @@ serde = { version = "1", features = ["derive"] }
 # offline-clean and never touches the network. No new dependency is pulled.
 [features]
 anu = []
+# Forwards to bebop2-core's `ceremony` feature so `cargo test --features ceremony`
+# / `cargo build --features ceremony` resolve at the proto-cap level. proto-cap
+# already enables `test_keygen` (=> bebop2-core/ceremony) unconditionally, so this
+# is a no-op for the crypto surface but makes the operator's feature flag valid.
+ceremony = ["bebop2-core/ceremony"]
+
+# CLI binary: bebop2-kv (genkeys / sign / verify) — see src/bin/bebop2-kv.rs.
+# Zero extra dependencies; JSON + hex/base64 are hand-rolled.
+[[bin]]
+name = "bebop2-kv"
+path = "src/bin/bebop2-kv.rs"
 
 # `serde_json` is a *dev-only* dependency, used solely by the regression test
 # `tlv::tests::serde_json_is_non_canonical_red` to PROVE the defect the TLV codec

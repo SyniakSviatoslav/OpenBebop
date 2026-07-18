@@ -36,6 +36,7 @@ pub mod error;
 pub mod event_dict;
 pub mod facade;
 pub mod hybrid_gate;
+pub mod kv_signer; // P06 — real hybrid Ed25519⊕ML-DSA-65 K/V split-identity signer
 pub mod matcher;
 pub mod node_id; // MESH-12 node identity + Layer D/P-D budgeted issuance (Option A)
 pub mod port;
