@@ -172,6 +172,31 @@ node scripts/guardrail-falsifiable-proof.mjs   # every #[test] must be falsifiab
 - **Crypto ground truth** — ML-DSA-65 is **60/60 NIST ACVP** byte-exact; ML-KEM implicit-reject `J(z‖c)=SHAKE256`.
 - **Open (crypto red-line, council-gated):** statistical constant-time (dudect / Welch t-test) for `mod_l`/AEAD/KDF, and collapsing the duplicate ML-KEM impl to one.
 
+## Transport security posture (`proto-wire`)
+
+**Client TLS is hardened-by-default.** `bebop2/proto-wire` ships with
+`default = []`; the `insecure-tls` feature is **opt-in only** (dev/local-first).
+When `insecure-tls` is OFF, `client_rustls_config()` verifies the server
+certificate against the **Mozilla CA bundle (`webpki-roots`)** — a real
+`ServerCertVerifier`, not accept-any. This is proven by the test
+`hardened_verifier_rejects_self_signed_cert`, which fails closed on an untrusted
+(self-signed) cert. The signed-frame hybrid gate (`proto-cap`) remains the
+authorization boundary on every `recv`; TLS is the transport channel, not the
+trust root.
+
+> History: an earlier build defaulted `insecure-tls` ON (every wss/quic client
+> was MITM-able). That was root-caused and flipped — secure-by-default is now the
+> shipped posture. Verify any fork with `cargo build --no-default-features`.
+
+## Current verified state (2026-07-18)
+
+- `bebop2/core` — **264 passed, 0 failed** (`cargo test --lib`).
+- `bebop2/proto-wire` — **68 passed, 0 failed** (incl. hardened-TLS rejection +
+  WSS/QUIC round-trips).
+- Mesh discovery / sync `Mutex` guards use **poison-recover**
+  (`unwrap_or_else(|e| e.into_inner())`) so an external frame can't poison the
+  node's directory lock. NaN-panic spectral sorts use `f64::total_cmp`.
+
 Full proof table: [`docs/VERIFICATION-MATRIX.md`](docs/VERIFICATION-MATRIX.md).
 
 ## Development & docs
