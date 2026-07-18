@@ -1318,4 +1318,61 @@ mod c4b_mod_l_timing_gate {
             t_abs
         );
     }
+
+    /// SENSITIVITY CHECK (proves the gate above is not a constant pass-through).
+    /// A deliberately variable-time function (secret-bit branch + asymmetric work) must
+    /// drive |Welch t| ABOVE the 4.5 dudect threshold. If this test ever stops failing,
+    /// the measurement is broken (e.g. a constant-time source with zero variance) and the
+    /// GREEN above is meaningless. This is the "verify the verifier" discipline: a gate that
+    /// cannot go RED has not earned the right to go GREEN.
+    #[test]
+    fn gate_detects_deliberate_leak() {
+        // A leaky reduction whose EXTRA WORK SCALES WITH THE SECRET: the number of heavy
+        // iterations = count of set bits in the buffer. The all-zero class does 0 extra
+        // iterations; the random class does ~128. The trip count is a loop BOUND (not a
+        // predictable branch), so the CPU cannot hide it via branch prediction. A fresh
+        // random buffer is drawn per sample so the per-iteration pattern is not learnable
+        // within a run. This is the canonical dudect leak (data-dependent execution length).
+        fn leaky(num: &[u8; 32]) -> u64 {
+            let mut bits: u32 = 0;
+            for &b in num.iter() { bits += b.count_ones(); }
+            let mut acc: u64 = 0;
+            for _ in 0..bits { // secret-dependent trip count
+                acc = acc.wrapping_mul(0x9e3779b97f4a7c15);
+                acc ^= acc >> 31;
+                acc = acc.wrapping_add(0xc4ceb9fe1a85ec53);
+            }
+            acc
+        }
+        let fixed: [u8; 32] = [0u8; 32]; // all-zero -> 0 set bits -> no extra work
+        let mut state: u64 = 0xdead_beef_cafe_babe;
+        let mut rng = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut t_fixed = Vec::with_capacity(N);
+        let mut t_random = Vec::with_capacity(N);
+        for _ in 0..N {
+            // fresh random buffer per sample (unlearnable pattern)
+            let mut random: [u8; 32] = [0u8; 32];
+            for chunk in random.chunks_mut(8) {
+                chunk.copy_from_slice(&rng().to_le_bytes());
+            }
+            let s = read_cycles();
+            let _ = std::hint::black_box(leaky(&fixed));
+            t_fixed.push((read_cycles() - s) as f64);
+            let s = read_cycles();
+            let _ = std::hint::black_box(leaky(&random));
+            t_random.push((read_cycles() - s) as f64);
+        }
+        let t = welch_t(&t_fixed, &t_random).abs();
+        eprintln!("C4b sensitivity check: |Welch t| = {:.4} on a KNOWN-LEAKY fn (must exceed 4.5)", t);
+        assert!(
+            t >= 4.5,
+            "C4b gate is INSENSITIVE (|t|={:.4} < 4.5 on a known-leaky fn) — GREEN above is not trustworthy",
+            t
+        );
+    }
 }
