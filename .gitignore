@@ -49,3 +49,4 @@ dist/
 pnpm-lock.yaml
 pnpm-workspace.yaml
 .review/
+bebop2-test-link
