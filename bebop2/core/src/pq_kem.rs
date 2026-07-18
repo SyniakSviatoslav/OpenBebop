@@ -333,6 +333,151 @@ fn poly_mul(a: &[i32; N], b: &[i32; N]) -> [i32; N] {
 // the coefficient domain via `poly_mul` above, which is correct-by-construction.
 // (If a from-scratch NTT is later needed, it must be re-derived from a verifier that
 // proves intt(ntt(a))==a AND intt(multiply_ntts(ntt(a),ntt(b)))==schoolbook(a,b).)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// RE-DERIVED, EXHAUSTIVELY-PROVEN NTT (2026-07-18) — NOT WIRED INTO THE LIVE PATH.
+// ─────────────────────────────────────────────────────────────────────────────
+// This is the *correct* FIPS-203 incomplete NTT for R_q = Z_q[x]/(x^256+1), q=3329.
+// A COMPLETE length-256 negacyclic NTT is IMPOSSIBLE over Z_3329: it would need a
+// primitive 512th root of unity, but q-1 = 3328 = 2^8·13 and 512 = 2^9 does not
+// divide 3328. So x^256+1 splits only into 128 QUADRATIC factors (x^2 - ζ^{2·brv7(i)+1}),
+// where ζ = 17 has order exactly 256 (17^128 ≡ -1). Hence the transform is a 7-layer
+// (not 8-layer) NTT leaving 128 degree-1 residues, multiplied by a quadratic `basemul`.
+// (This is exactly why ML-DSA in pq_dsa.rs CAN use a complete NTT — its q=8380417 has
+//  a 512th root — while ML-KEM cannot.)
+//
+// CORRECTNESS GATE (the reason the prior NTT was ripped out is addressed head-on):
+// `poly_mul` (schoolbook) and `poly_mul_ntt` are BOTH Z_q-bilinear maps, so agreement
+// on all 256×256 monomial basis pairs (x^i · x^j) proves equality on the ENTIRE input
+// space (Z_q^256)^2 — not a sample, a proof. `ntt_kem_exhaustive_basis_proof` below
+// checks all 65536 pairs == 0 mismatches, plus round-trip, negacyclic-wrap, and a
+// random corpus. Only wire this into keygen/encaps/decaps after explicit sign-off;
+// until then the live KEM keeps using the schoolbook `poly_mul` above.
+
+/// ζ = 17 is a primitive 256th root of unity mod q=3329. `ZETAS_KEM[i] = 17^{brv7(i)} mod q`.
+/// Computed at compile time; no runtime init, no alloc.
+const fn brv7(x: usize) -> usize {
+    let mut r = 0usize;
+    let mut b = 0;
+    while b < 7 {
+        r = (r << 1) | ((x >> b) & 1);
+        b += 1;
+    }
+    r
+}
+const fn modpow_c(base: i64, mut e: i64, m: i64) -> i64 {
+    let mut r = 1i64;
+    let mut b = base % m;
+    while e > 0 {
+        if e & 1 == 1 {
+            r = r * b % m;
+        }
+        b = b * b % m;
+        e >>= 1;
+    }
+    r
+}
+const ZETAS_KEM: [i32; 128] = {
+    let mut z = [0i32; 128];
+    let mut i = 0;
+    while i < 128 {
+        z[i] = modpow_c(17, brv7(i) as i64, Q as i64) as i32;
+        i += 1;
+    }
+    z
+};
+
+/// Forward incomplete NTT (Cooley-Tukey, 7 layers). In-place; result coefficients
+/// are the 128 degree-1 residues in bit-reversed order (Kyber/FIPS-203 layout).
+fn ntt_fwd_kem(r: &mut [i32; N]) {
+    let mut k = 1usize;
+    let mut len = 128usize;
+    while len >= 2 {
+        let mut start = 0usize;
+        while start < N {
+            let zeta = ZETAS_KEM[k] as i64;
+            k += 1;
+            let mut j = start;
+            while j < start + len {
+                let t = red(zeta * r[j + len] as i64);
+                r[j + len] = red(r[j] - t);
+                r[j] = red(r[j] + t);
+                j += 1;
+            }
+            start += 2 * len;
+        }
+        len >>= 1;
+    }
+}
+
+/// Inverse incomplete NTT (Gentleman-Sande, 7 layers) + multiply by N/2-inverse
+/// (128^{-1} mod q). Same zeta table traversed backward — matches the FIPS-203/Kyber
+/// forward/inverse pairing; validated by `intt(ntt(a)) == a`.
+fn ntt_inv_kem(r: &mut [i32; N]) {
+    let mut k = 127usize;
+    let mut len = 2usize;
+    while len <= 128 {
+        let mut start = 0usize;
+        while start < N {
+            let zeta = ZETAS_KEM[k] as i64;
+            k -= 1;
+            let mut j = start;
+            while j < start + len {
+                let t = r[j];
+                r[j] = red(t + r[j + len]);
+                let d = red(r[j + len] - t);
+                r[j + len] = red(zeta * d as i64);
+                j += 1;
+            }
+            start += 2 * len;
+        }
+        len <<= 1;
+    }
+    // 128^{-1} mod q = 3303 (128·3303 = 422784 = 127·3329 + 1).
+    const N_HALF_INV: i64 = 3303;
+    for x in r.iter_mut() {
+        *x = red(N_HALF_INV * *x as i64);
+    }
+}
+
+/// Multiply two degree-1 residues (a0+a1·x)(b0+b1·x) mod (x^2 - zeta).
+#[inline]
+fn basemul_kem(a0: i32, a1: i32, b0: i32, b1: i32, zeta: i32) -> (i32, i32) {
+    let r0 = red((a1 as i64) * (b1 as i64));
+    let r0 = red((r0 as i64) * (zeta as i64) + (a0 as i64) * (b0 as i64));
+    let r1 = red((a0 as i64) * (b1 as i64) + (a1 as i64) * (b0 as i64));
+    (r0, r1)
+}
+
+/// NTT-domain ring multiply in R_q = Z_q[x]/(x^256+1). O(N log N).
+/// PROVEN bit-identical to the schoolbook `poly_mul` (see the exhaustive test).
+/// NOT wired into the live KEM — call site swap is gated on independent review.
+fn poly_mul_ntt(a: &[i32; N], b: &[i32; N]) -> [i32; N] {
+    let mut fa = *a;
+    let mut fb = *b;
+    ntt_fwd_kem(&mut fa);
+    ntt_fwd_kem(&mut fb);
+    let mut fr = [0i32; N];
+    let mut i = 0usize;
+    while i < 64 {
+        let zeta = ZETAS_KEM[64 + i];
+        let (r0, r1) = basemul_kem(fa[4 * i], fa[4 * i + 1], fb[4 * i], fb[4 * i + 1], zeta);
+        fr[4 * i] = r0;
+        fr[4 * i + 1] = r1;
+        let (r2, r3) = basemul_kem(
+            fa[4 * i + 2],
+            fa[4 * i + 3],
+            fb[4 * i + 2],
+            fb[4 * i + 3],
+            red(-(zeta as i64)),
+        );
+        fr[4 * i + 2] = r2;
+        fr[4 * i + 3] = r3;
+        i += 1;
+    }
+    ntt_inv_kem(&mut fr);
+    fr
+}
 
 fn byte_encode(d: usize, f: &[i32; N], out: &mut [u8]) {
     let mut acc: u32 = 0;
@@ -844,6 +989,81 @@ mod tests {
             let prod_ref = poly_mul_ref(&a, &b);
             for i in 0..N {
                 assert_eq!(prod[i], prod_ref[i], "poly_mul != schoolbook at {i}");
+            }
+        }
+    }
+
+    // ── Re-derived NTT (poly_mul_ntt) correctness — NOT wired into the live path.
+    //    The gate is bit-identity to the schoolbook `poly_mul`. ──────────────────
+    #[test]
+    fn ntt_kem_sanity() {
+        // ζ=17 is a primitive 256th root of unity mod q; there is NO 512th root
+        // (q-1 = 3328 = 2^8·13), which is why the transform must be incomplete.
+        assert_eq!(modpow_c(17, 128, Q as i64), (Q - 1) as i64, "17^128 != -1 mod q");
+        assert_eq!(modpow_c(17, 256, Q as i64), 1, "17^256 != 1 mod q");
+        assert_ne!((Q - 1) % 512, 0, "512 must not divide q-1");
+    }
+
+    #[test]
+    fn ntt_kem_roundtrip() {
+        // intt(ntt(a)) == a — proves ntt_fwd_kem / ntt_inv_kem are a valid pair.
+        let mut st = 0xABCD_1234_u64;
+        for _ in 0..1000 {
+            let mut a = [0i32; N];
+            for x in a.iter_mut() {
+                *x = ((lcg(&mut st) as i32) * 13 + lcg(&mut st) as i32) % Q;
+            }
+            let mut t = a;
+            ntt_fwd_kem(&mut t);
+            ntt_inv_kem(&mut t);
+            assert_eq!(t, a, "intt(ntt(a)) != a");
+        }
+    }
+
+    #[test]
+    fn ntt_kem_negacyclic_wrap() {
+        // x^255 · x == x^256 == -1 in Z_q[x]/(x^256+1): coeff[0]=q-1, rest 0.
+        let mut x255 = [0i32; N];
+        x255[255] = 1;
+        let mut x1 = [0i32; N];
+        x1[1] = 1;
+        let prod = poly_mul_ntt(&x255, &x1);
+        assert_eq!(prod[0], Q - 1, "negacyclic wrap sign wrong");
+        for i in 1..N {
+            assert_eq!(prod[i], 0, "spurious coeff at {i}");
+        }
+    }
+
+    #[test]
+    fn ntt_kem_matches_schoolbook_random() {
+        let mut st = 0x1234_5678_u64;
+        for _ in 0..300 {
+            let mut a = [0i32; N];
+            let mut b = [0i32; N];
+            for i in 0..N {
+                a[i] = ((lcg(&mut st) as i32) * 7 + lcg(&mut st) as i32) % Q;
+                b[i] = ((lcg(&mut st) as i32) * 5 + lcg(&mut st) as i32) % Q;
+            }
+            assert_eq!(poly_mul_ntt(&a, &b), poly_mul(&a, &b), "ntt != schoolbook");
+        }
+    }
+
+    #[test]
+    fn ntt_kem_exhaustive_basis_proof() {
+        // COMPLETE PROOF (not a sample): poly_mul and poly_mul_ntt are both
+        // Z_q-bilinear, so equality on all 256×256 monomial basis pairs (x^i · x^j)
+        // proves equality on the entire input space (Z_q^256)^2. 65536 checks.
+        for i in 0..N {
+            let mut ei = [0i32; N];
+            ei[i] = 1;
+            for j in 0..N {
+                let mut ej = [0i32; N];
+                ej[j] = 1;
+                assert_eq!(
+                    poly_mul_ntt(&ei, &ej),
+                    poly_mul(&ei, &ej),
+                    "basis-pair mismatch at x^{i} · x^{j}"
+                );
             }
         }
     }
