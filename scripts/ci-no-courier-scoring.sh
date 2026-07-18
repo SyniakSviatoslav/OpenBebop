@@ -6,7 +6,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 hit=0
 # Whole-word score/rating/reputation/rank anywhere in a field-ish context,
-# plus trust_score/trust_level (root-of-trust / trust_anchor are ALLOWED).
+# plus trust_score/trust_level/trust_weight/integrity_score (root-of-trust /
+# trust_anchor are ALLOWED). `integrity_score` previously evaded the guard
+# because `_` is a word char, so `\bscore\b` does not match inside it; and
+# `trust_weight` contains none of the listed stems. Both are mover trust/reputation
+# metrics and MUST be blocked (gap-audit round-2: MESH-05 still-live).
 #
 # G7 FIX (2026-07-14): the field pattern now ALSO matches a leading `pub`
 # modifier — `^\s*pub\s+ident: type`. The old pattern `^\s*ident:\s` silently
@@ -18,8 +22,8 @@ while IFS= read -r f; do
   # by ':' and a type), never comments or prose that merely mentions "score".
   # Scoped to the mesh protocol line (bebop2/): the physics field-engine crate is
   # out of scope (its `score` metrics are legitimate, not courier/agent rating).
-  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' >/dev/null; then
-    echo "NO-COURIER-SCORING violation in $f:"; grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' | sed 's/^/  /'
+  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|trust_weight|integrity_score|courier_score|agent_rating)\b' >/dev/null; then
+    echo "NO-COURIER-SCORING violation in $f:"; grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|trust_weight|integrity_score|courier_score|agent_rating)\b' | sed 's/^/  /'
     hit=1
   fi
 done < <(grep -rlE '\bstruct\b' --include='*.rs' bebop2 2>/dev/null | grep -vE '^bebop2/core/' || true)

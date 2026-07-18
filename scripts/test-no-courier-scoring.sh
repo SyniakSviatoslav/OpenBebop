@@ -33,10 +33,35 @@ ln -sfn "$TMP/evil/bebop2" ./bebop2-test-link 2>/dev/null || true
 # is not supported, so instead we inline the same grep against the temp tree.
 RED=0
 while IFS= read -r f; do
-  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' >/dev/null; then
+  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|trust_weight|integrity_score|courier_score|agent_rating)\b' >/dev/null; then
     RED=1
   fi
 done < <(grep -rlE '\bstruct\b' --include='*.rs' "$TMP/evil/bebop2" 2>/dev/null || true)
+
+# ── RED (round-2 gap-audit): trust_weight / integrity_score must ALSO trip ──
+# `integrity_score` evaded the old guard because `_` is a word char, so `\bscore\b`
+# does not match inside it; `trust_weight` contains no listed stem. Both are mover
+# trust metrics and MUST be blocked.
+mkdir -p "$TMP/evil2/bebop2"
+cat > "$TMP/evil2/bebop2/trust_struct.rs" <<'EOF'
+pub struct TrustRecord {
+    pub id: u64,
+    pub trust_weight: f64,
+    pub integrity_score: f64,
+}
+EOF
+RED2=0
+while IFS= read -r f; do
+  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|trust_weight|integrity_score|courier_score|agent_rating)\b' >/dev/null; then
+    RED2=1
+  fi
+done < <(grep -rlE '\bstruct\b' --include='*.rs' "$TMP/evil2/bebop2" 2>/dev/null || true)
+
+if [ "$RED2" -ne 1 ]; then
+  echo "REGRESSION: NO-COURIER-SCORING did NOT catch 'pub trust_weight/integrity_score' fields (round-2 gap)" >&2
+  exit 1
+fi
+echo "RED ok: guard catches 'pub trust_weight/integrity_score'"
 
 if [ "$RED" -ne 1 ]; then
   echo "REGRESSION: NO-COURIER-SCORING did NOT catch a 'pub courier_score: u32' field (G7)" >&2
@@ -54,7 +79,7 @@ pub struct CourierRecord {
 EOF
 GREEN=0
 while IFS= read -r f; do
-  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|courier_score|agent_rating)\b' >/dev/null; then
+  if grep -nE '^\s*(pub\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s' "$f" | grep -E '\b(score|rating|reputation|rank|trust_score|trust_level|trust_weight|integrity_score|courier_score|agent_rating)\b' >/dev/null; then
     GREEN=1
   fi
 done < <(grep -rlE '\bstruct\b' --include='*.rs' "$TMP/clean/bebop2" 2>/dev/null || true)
