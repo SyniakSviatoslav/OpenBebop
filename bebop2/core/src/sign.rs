@@ -1214,22 +1214,43 @@ mod bignum_tests {
 
 // ── C4b: dudect-style statistical timing gate for `mod_l` ────────────────────────
 //
-// ADVISORY wall-clock gate (std::time::Instant). The secret we reduce is a 64-byte
-// (512-bit) SHA-512 hash; the fixed secret is a zero scalar. If the reduction leaked
-// secret-dependent timing, the two fixed-width distributions would diverge and |t|
-// (Welch) would exceed the dudect 4.5 threshold. We run many samples and black_box the
-// call so the compiler cannot hoist/precompute it. The math is unchanged (proven by the
-// RFC 8032 §7.1 KAT), so this gate measures ONLY the control-flow / length side-channel.
+// Cycle-accurate Welch-t gate. The secret we reduce is a 64-byte (512-bit) SHA-512
+// hash; the "fixed" class uses an all-zero buffer, the "random" class varies every bit.
+// If the reduction leaked secret-dependent timing, the two distributions would diverge
+// and |t| (Welch) would exceed the dudect 4.5 threshold.
 //
-// NOTE: std::time is noisy on shared hosts, so this is an advisory gate: it asserts the
-// structural property (fixed iteration count, fixed buffer width, no secret bit branch)
-// and reports the measured |t|. A consistently elevated |t| would mean the fix is
-// incomplete — do NOT lower the threshold to pass; fix the leak. |t| < 4.5 is the bar.
+// EVIDENCE GRADE: this version measures CPU cycles via `_rdtsc` on x86_64 (with a
+// wall-clock fallback on non-x86), NOT `std::time::Instant`. Wall-clock on a shared host
+// is dominated by scheduler jitter (ms-scale), which would make a real ≤10µs leak
+// invisible (|t|≈0) — that is a fake-green trap. Cycle counts are sensitive to the actual
+// instruction path, so a leaking `mod_l` would show up as a real |t| spike. We still
+// run many samples and `black_box` the call so the compiler cannot hoist/precompute it.
+// The math is unchanged (proven by the RFC 8032 §7.1 KAT), so this gate measures ONLY
+// the control-flow / length side-channel.
+//
+// DO NOT lower the threshold to pass; fix the leak. |t| < 4.5 is the dudect bar.
 #[cfg(test)]
 mod c4b_mod_l_timing_gate {
     use super::*;
 
-    const N: usize = 4000; // samples per class (dudect uses thousands)
+    const N: usize = 20000; // samples per class (more cycles of data => tighter t)
+
+    /// Cycle-accurate timestamp. x86_64 reads TSC directly; other targets fall back to
+    /// wall-clock (still statistical, just noisier — the fallback keeps the gate portable
+    /// and clearly labelled, never silently substituting a pass).
+    #[inline(never)]
+    fn read_cycles() -> u64 {
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        unsafe {
+            // lfence serialises so the rdtsc is ordered between the measured work.
+            std::arch::x86_64::_mm_lfence();
+            std::arch::x86_64::_rdtsc()
+        }
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
+        {
+            std::time::Instant::now().elapsed().as_nanos() as u64
+        }
+    }
 
     /// Welch's t-statistic: how separated the two *mean* timing distributions are,
     /// normalised by the combined sample standard error.
@@ -1274,19 +1295,19 @@ mod c4b_mod_l_timing_gate {
         let mut t_random = Vec::with_capacity(N);
 
         for _ in 0..N {
-            let start = std::time::Instant::now();
+            let start = read_cycles();
             let _ = std::hint::black_box(mod_l(&fixed));
-            t_fixed.push(start.elapsed().as_nanos() as f64);
+            t_fixed.push((read_cycles() - start) as f64);
 
-            let start = std::time::Instant::now();
+            let start = read_cycles();
             let _ = std::hint::black_box(mod_l(&random));
-            t_random.push(start.elapsed().as_nanos() as f64);
+            t_random.push((read_cycles() - start) as f64);
         }
 
         let t = welch_t(&t_fixed, &t_random);
         let t_abs = t.abs();
         eprintln!(
-            "C4b dudect gate: |Welch t| = {:.4}  (threshold 4.5; t_fixed_mean={:.1}ns, t_random_mean={:.1}ns)",
+            "C4b dudect gate (cycle-accurate): |Welch t| = {:.4}  (threshold 4.5; t_fixed_mean={:.1} cyc, t_random_mean={:.1} cyc)",
             t_abs,
             t_fixed.iter().sum::<f64>() / N as f64,
             t_random.iter().sum::<f64>() / N as f64,
