@@ -36,6 +36,22 @@ pub fn eigenvals(a: &[f64], n: usize) -> Vec<Complex> {
         .collect()
 }
 
+/// Per-mode weights `w` on the Lyapunov quadratic form `V(x) = Σ wᵢ xᵢ²`.
+///
+/// A valid (PSD) Lyapunov certificate requires `wᵢ ≥ 0` for every mode: a negative
+/// weight breaks the positive-semidefinite assumption under which `V̇ < 0 ⇒ stable`
+/// is sound. A non-finite weight is equally untrustworthy. Either condition makes the
+/// gate UNUSABLE, so the gate MUST reject (fail-closed), never silently certify.
+///
+/// Returns `true` iff the (optional) weight slice is absent or every weight is finite
+/// and non-negative.
+fn weights_psd_ok(weights: Option<&[f64]>) -> bool {
+    match weights {
+        None => true,
+        Some(w) => w.iter().all(|&wi| wi.is_finite() && wi >= 0.0),
+    }
+}
+
 /// Spectral Lyapunov stability test for ẋ = A x.
 ///
 /// Returns the SIGNED stability margin `μ = max_i Re(λ_i)`:
@@ -45,27 +61,55 @@ pub fn eigenvals(a: &[f64], n: usize) -> Vec<Complex> {
 ///
 /// The sign is what the architecture requires ("lyapunov sign correct on a known unstable/stable
 /// system"). Uses the spectral (eigenvalue) form — no dense P tensor constructed.
-pub fn stability_margin(a: &[f64], n: usize) -> f64 {
+///
+/// **FAIL-CLOSED (verification V1 #2).** If any entry of `a` is non-finite, any eigenvalue is
+/// non-finite (the spectrum cannot be trusted), or `weights` is present but contains a
+/// non-finite or negative (PSD-violating) weight, the gate returns `+INFINITY` — i.e. it reports
+/// the system as UNSTABLE / NOT-certified-stable (reject). It never silently reports a
+/// non-finite / invalid input as stable. Previously `NaN > tol` evaluated to `false` and the gate
+/// failed OPEN.
+pub fn stability_margin(a: &[f64], n: usize, weights: Option<&[f64]>) -> f64 {
+    // Fail-closed: unverifiable / PSD-invalid input ⇒ reject (treat as maximally unstable).
+    if !a.iter().all(|&x| x.is_finite()) || !weights_psd_ok(weights) {
+        return f64::INFINITY;
+    }
     let ev = eigenvals(a, n);
+    if !ev.iter().all(|c| c.re.is_finite() && c.im.is_finite()) {
+        return f64::INFINITY;
+    }
     ev.iter().map(|c| c.re).fold(f64::NEG_INFINITY, f64::max)
 }
 
 /// Is the linear system ẋ = A x asymptotically stable? (all Re(λ) < 0, with a small tolerance).
+///
+/// Fail-closed: non-finite or PSD-invalid input ⇒ `false` (never certifies stable).
 #[inline]
-pub fn is_stable(a: &[f64], n: usize) -> bool {
-    stability_margin(a, n) < -1e-12
+pub fn is_stable(a: &[f64], n: usize, weights: Option<&[f64]>) -> bool {
+    stability_margin(a, n, weights) < -1e-12
 }
 
 /// Is it unstable? (some Re(λ) > 0).
+///
+/// Fail-closed: non-finite or PSD-invalid input ⇒ `true` (reject — do not proceed).
+/// Previously `NaN > tol` was `false`, so a corrupted spectrum was silently declared
+/// "not unstable" (fail-OPEN). That is now closed.
 #[inline]
-pub fn is_unstable(a: &[f64], n: usize) -> bool {
-    stability_margin(a, n) > 1e-12
+pub fn is_unstable(a: &[f64], n: usize, weights: Option<&[f64]>) -> bool {
+    stability_margin(a, n, weights) > 1e-12
 }
 
 /// Discrete-time analogue: x_{k+1} = A x_k is stable iff all |λ| < 1 (spectral radius < 1).
 /// Returns `ρ = max |λ|` and its stability flag. This is the resolvent (I - A) invertibility test.
-pub fn spectral_radius(a: &[f64], n: usize) -> (f64, bool) {
+///
+/// Fail-closed: non-finite or PSD-invalid input ⇒ `(+INFINITY, false)` (reject).
+pub fn spectral_radius(a: &[f64], n: usize, weights: Option<&[f64]>) -> (f64, bool) {
+    if !a.iter().all(|&x| x.is_finite()) || !weights_psd_ok(weights) {
+        return (f64::INFINITY, false);
+    }
     let ev = eigenvals(a, n);
+    if !ev.iter().all(|c| c.re.is_finite() && c.im.is_finite()) {
+        return (f64::INFINITY, false);
+    }
     let rho = ev.iter().map(|c| c.norm()).fold(0.0f64, f64::max);
     (rho, rho < 1.0)
 }
@@ -374,12 +418,93 @@ pub fn spectral_radius_general(a: &[f64], n: usize) -> (f64, bool) {
 mod tests {
     use super::*;
 
+    // ── verification V1 #2: fail-closed Lyapunov gate (was fail-OPEN on NaN/PSD) ──
+
+    #[test]
+    fn v1_nan_spectrum_reported_unstable_not_silent() {
+        // RED→GREEN. A matrix entry that yields a non-finite eigenvalue must NOT be
+        // silently certified "stable" (the old fail-OPEN bug: `NaN > tol` ⇒ false,
+        // so is_unstable == false and the system looked safe). The gate must now
+        // reject: is_unstable ⇒ true, is_stable ⇒ false, margin ⇒ +INF.
+        let a = [f64::NAN, 0.0, 0.0, -3.0];
+        assert!(
+            is_unstable(&a, 2, None),
+            "NaN-corrupted spectrum MUST be reported unstable (fail-closed)"
+        );
+        assert!(
+            !is_stable(&a, 2, None),
+            "NaN-corrupted spectrum MUST NOT be certified stable"
+        );
+        let mu = stability_margin(&a, 2, None);
+        assert!(
+            mu.is_infinite() && mu > 0.0,
+            "margin must be +INF on NaN, got {mu}"
+        );
+        // Discrete analogue must also reject.
+        let (rho, ok) = spectral_radius(&a, 2, None);
+        assert!(!ok && rho.is_infinite(), "spectral_radius must reject NaN");
+    }
+
+    #[test]
+    fn v1_nonfinite_entry_rejected() {
+        // Any non-finite matrix entry makes the spectrum untrustworthy ⇒ reject.
+        let a = [1.0, f64::INFINITY, 0.0, -1.0];
+        assert!(
+            is_unstable(&a, 2, None),
+            "Inf entry ⇒ unstable (fail-closed)"
+        );
+        assert!(!is_stable(&a, 2, None), "Inf entry ⇒ not stable");
+        assert!(
+            stability_margin(&a, 2, None).is_infinite(),
+            "margin must be +INF on Inf entry"
+        );
+    }
+
+    #[test]
+    fn v1_negative_weight_psd_rejected() {
+        // The Lyapunov certificate V(x)=Σ wᵢxᵢ² is only valid for wᵢ ≥ 0 (PSD).
+        // A negative weight breaks the assumption; the gate must reject rather than
+        // silently accept. Use a genuinely STABLE matrix (all λ<0) with a negative
+        // weight to prove we are NOT just re-detecting instability.
+        let a = [-2.0, 0.0, 0.0, -3.0]; // stable on its own
+        let bad_w = [-1.0, 0.0]; // negative PSD weight
+        assert!(
+            is_unstable(&a, 2, Some(&bad_w)),
+            "negative PSD weight MUST be rejected (fail-closed)"
+        );
+        assert!(
+            !is_stable(&a, 2, Some(&bad_w)),
+            "negative PSD weight MUST NOT certify stable"
+        );
+        // A valid non-negative weight leaves a stable matrix certified stable.
+        let good_w = [1.0, 0.0];
+        assert!(
+            is_stable(&a, 2, Some(&good_w)),
+            "stable matrix + valid PSD weights ⇒ stable"
+        );
+    }
+
+    #[test]
+    fn v1_nan_weight_rejected() {
+        // A non-finite weight is equally unusable ⇒ reject.
+        let a = [-2.0, 0.0, 0.0, -3.0];
+        let bad_w = [f64::NAN, 0.0];
+        assert!(
+            is_unstable(&a, 2, Some(&bad_w)),
+            "NaN PSD weight MUST be rejected"
+        );
+        assert!(
+            !is_stable(&a, 2, Some(&bad_w)),
+            "NaN weight MUST NOT certify stable"
+        );
+    }
+
     #[test]
     fn stable_system_has_negative_margin() {
         // GREEN: A = [[-2,0],[0,-3]] is asymptotically stable (both λ < 0).
         let a = [-2.0, 0.0, 0.0, -3.0];
-        assert!(is_stable(&a, 2), "should be stable");
-        let mu = stability_margin(&a, 2);
+        assert!(is_stable(&a, 2, None), "should be stable");
+        let mu = stability_margin(&a, 2, None);
         assert!(
             mu < 0.0 && (mu + 2.0).abs() < 1e-9,
             "margin should be -2, got {mu}"
@@ -390,8 +515,8 @@ mod tests {
     fn unstable_system_has_positive_margin() {
         // GREEN: A = [[2,0],[0,-1]] has a positive eigenvalue ⇒ unstable.
         let a = [2.0, 0.0, 0.0, -1.0];
-        assert!(is_unstable(&a, 2), "should be unstable");
-        let mu = stability_margin(&a, 2);
+        assert!(is_unstable(&a, 2, None), "should be unstable");
+        let mu = stability_margin(&a, 2, None);
         assert!(
             mu > 0.0 && (mu - 2.0).abs() < 1e-9,
             "margin should be +2, got {mu}"
@@ -403,17 +528,17 @@ mod tests {
         // RED+GREEN: flipping the sign of A must flip the stability verdict.
         let stable = [-2.0, 0.0, 0.0, -3.0];
         let unstable = [2.0, 0.0, 0.0, 3.0];
-        assert!(is_stable(&stable, 2));
-        assert!(is_unstable(&unstable, 2));
-        assert!(stability_margin(&stable, 2) < 0.0);
-        assert!(stability_margin(&unstable, 2) > 0.0);
+        assert!(is_stable(&stable, 2, None));
+        assert!(is_unstable(&unstable, 2, None));
+        assert!(stability_margin(&stable, 2, None) < 0.0);
+        assert!(stability_margin(&unstable, 2, None) > 0.0);
     }
 
     #[test]
     fn discrete_spectral_radius() {
         // GREEN: A = [[0.5,0],[0,0.9]] ⇒ ρ = 0.9 < 1 ⇒ discrete-stable.
         let a = [0.5, 0.0, 0.0, 0.9];
-        let (rho, stable) = spectral_radius(&a, 2);
+        let (rho, stable) = spectral_radius(&a, 2, None);
         assert!(stable, "ρ={rho} must be < 1");
         assert!((rho - 0.9).abs() < 1e-9, "ρ should be 0.9, got {rho}");
     }
@@ -422,7 +547,7 @@ mod tests {
     fn discrete_unstable_radius() {
         // GREEN: A = [[1.2,0],[0,0.3]] ⇒ ρ = 1.2 > 1 ⇒ discrete-unstable.
         let a = [1.2, 0.0, 0.0, 0.3];
-        let (rho, stable) = spectral_radius(&a, 2);
+        let (rho, stable) = spectral_radius(&a, 2, None);
         assert!(!stable, "ρ={rho} must be > 1");
         assert!((rho - 1.2).abs() < 1e-9, "ρ should be 1.2, got {rho}");
     }
