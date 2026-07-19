@@ -1587,3 +1587,90 @@ mod ntt_ct_gate {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERFORMANCE DELTA: schoolbook O(N²) `poly_mul` vs NTT O(N log N) `poly_mul_ntt`.
+// ─────────────────────────────────────────────────────────────────────────────
+// The whole point of the wire-in is speed. This micro-benchmark measures the exact
+// operation that was swapped (the ring multiply) with cycle-accurate rdtsc medians
+// (robust to scheduler jitter). MUST be run --release (a debug build measures neither
+// the shipping code nor a representative ratio). The falsifiable assertion is that the
+// NTT is strictly faster than schoolbook on random operands — if it ever is not, the
+// wire-in has no justification and this test fails.
+//   cargo test --release -p bebop2-core --lib pq_kem::ntt_perf -- --ignored --nocapture
+#[cfg(test)]
+mod ntt_perf {
+    use super::*;
+
+    #[inline(never)]
+    fn read_cycles() -> u64 {
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        unsafe {
+            std::arch::x86_64::_mm_lfence();
+            let c = std::arch::x86_64::_rdtsc();
+            std::arch::x86_64::_mm_lfence();
+            c
+        }
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
+        {
+            std::time::Instant::now().elapsed().as_nanos() as u64
+        }
+    }
+
+    fn median(v: &mut [u64]) -> u64 {
+        v.sort_unstable();
+        v[v.len() / 2]
+    }
+
+    #[test]
+    #[ignore = "perf micro-benchmark; run: cargo test --release ... pq_kem::ntt_perf -- --ignored --nocapture"]
+    fn bench_schoolbook_vs_ntt() {
+        const ITERS: usize = 4000;
+        // Deterministic random operands (xorshift), regenerated per iteration.
+        let mut st: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut nextp = || {
+            let mut p = [0i32; N];
+            for c in p.iter_mut() {
+                st ^= st << 13;
+                st ^= st >> 7;
+                st ^= st << 17;
+                *c = (st % Q as u64) as i32;
+            }
+            p
+        };
+        let ops: Vec<([i32; N], [i32; N])> = (0..ITERS).map(|_| (nextp(), nextp())).collect();
+
+        // Warm up (populate caches / branch predictors) — not measured.
+        for (a, b) in ops.iter().take(64) {
+            std::hint::black_box(poly_mul(a, b));
+            std::hint::black_box(poly_mul_ntt(a, b));
+        }
+
+        let mut school = vec![0u64; ITERS];
+        let mut ntt = vec![0u64; ITERS];
+        for (i, (a, b)) in ops.iter().enumerate() {
+            let s = read_cycles();
+            let r = std::hint::black_box(poly_mul(std::hint::black_box(a), std::hint::black_box(b)));
+            school[i] = read_cycles() - s;
+            std::hint::black_box(r);
+
+            let s = read_cycles();
+            let r =
+                std::hint::black_box(poly_mul_ntt(std::hint::black_box(a), std::hint::black_box(b)));
+            ntt[i] = read_cycles() - s;
+            std::hint::black_box(r);
+        }
+
+        let m_school = median(&mut school);
+        let m_ntt = median(&mut ntt);
+        eprintln!(
+            "ring multiply — schoolbook median = {m_school} cyc, NTT median = {m_ntt} cyc, speedup = {:.2}x",
+            m_school as f64 / m_ntt as f64
+        );
+        // Falsifiable: the O(N log N) NTT must beat the O(N²) schoolbook on random input.
+        assert!(
+            m_ntt < m_school,
+            "NTT ({m_ntt} cyc) is not faster than schoolbook ({m_school} cyc) — wire-in unjustified"
+        );
+    }
+}
