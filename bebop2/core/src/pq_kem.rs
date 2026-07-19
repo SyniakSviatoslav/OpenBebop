@@ -326,16 +326,14 @@ fn poly_mul(a: &[i32; N], b: &[i32; N]) -> [i32; N] {
     r
 }
 
-// The NTT implementation that shipped here was found to be incorrect (the forward
-// transform was not a valid inverse pair with the inverse-NTT, and the basemul did
-// not reproduce schoolbook products — verified against an independent reference in
-// /tmp harnesses). Rather than ship a subtly-wrong fast path, the KEM multiplies in
-// the coefficient domain via `poly_mul` above, which is correct-by-construction.
-// (If a from-scratch NTT is later needed, it must be re-derived from a verifier that
-// proves intt(ntt(a))==a AND intt(multiply_ntts(ntt(a),ntt(b)))==schoolbook(a,b).)
+// HISTORY: an earlier NTT shipped here was found incorrect (forward transform not a
+// valid inverse pair; basemul did not reproduce schoolbook products) and was ripped
+// out. It was re-derived from scratch on 2026-07-18 with the exhaustive proof below,
+// then left UNWIRED pending sign-off. The schoolbook `poly_mul` above remains the
+// correctness oracle: it must agree with the NTT production path BIT-EXACT.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// RE-DERIVED, EXHAUSTIVELY-PROVEN NTT (2026-07-18) — NOT WIRED INTO THE LIVE PATH.
+// RE-DERIVED, EXHAUSTIVELY-PROVEN NTT (2026-07-18) — WIRED INTO THE LIVE PATH 2026-07-19.
 // ─────────────────────────────────────────────────────────────────────────────
 // This is the *correct* FIPS-203 incomplete NTT for R_q = Z_q[x]/(x^256+1), q=3329.
 // A COMPLETE length-256 negacyclic NTT is IMPOSSIBLE over Z_3329: it would need a
@@ -351,8 +349,11 @@ fn poly_mul(a: &[i32; N], b: &[i32; N]) -> [i32; N] {
 // on all 256×256 monomial basis pairs (x^i · x^j) proves equality on the ENTIRE input
 // space (Z_q^256)^2 — not a sample, a proof. `ntt_kem_exhaustive_basis_proof` below
 // checks all 65536 pairs == 0 mismatches, plus round-trip, negacyclic-wrap, and a
-// random corpus. Only wire this into keygen/encaps/decaps after explicit sign-off;
-// until then the live KEM keeps using the schoolbook `poly_mul` above.
+// random corpus. WIRED 2026-07-19 (after sign-off): keygen/encaps/decaps now multiply
+// via `ring_mul` (NTT fast path + a debug-only schoolbook cross-check on every call).
+// The wire-in is proven behaviour-neutral by `kem_golden_vectors_frozen` (byte-exact
+// ek/dk/ct/K vs the pre-swap schoolbook capture); schoolbook `poly_mul` is kept forever
+// as the independent oracle, not pruned.
 
 /// ζ = 17 is a primitive 256th root of unity mod q=3329. `ZETAS_KEM[i] = 17^{brv7(i)} mod q`.
 /// Computed at compile time; no runtime init, no alloc.
@@ -477,6 +478,29 @@ fn poly_mul_ntt(a: &[i32; N], b: &[i32; N]) -> [i32; N] {
     }
     ntt_inv_kem(&mut fr);
     fr
+}
+
+/// LIVE production ring multiply in R_q = Z_q[x]/(x^256+1) — the single polynomial
+/// multiply used by keygen/encaps/decaps (wired 2026-07-19 after explicit sign-off,
+/// replacing the direct schoolbook `poly_mul` calls).
+///
+/// It computes the product via the O(N log N) NTT (`poly_mul_ntt`) and, in debug/test
+/// builds ONLY, cross-checks the result against the O(N²) schoolbook `poly_mul` on
+/// EVERY call. This keeps `poly_mul` a permanent, first-class correctness oracle — the
+/// "independent implementation that must agree with the NTT production path BIT-EXACT"
+/// — exercised on live inputs, not dead code. In release builds the `debug_assert_eq!`
+/// compiles out, leaving pure NTT throughput. The equality is a proven invariant
+/// (`ntt_kem_exhaustive_basis_proof`: all 65536 monomial basis pairs), so the assert
+/// can only ever fire if the NTT or schoolbook code is later broken.
+#[inline]
+fn ring_mul(a: &[i32; N], b: &[i32; N]) -> [i32; N] {
+    let prod = poly_mul_ntt(a, b);
+    debug_assert_eq!(
+        prod,
+        poly_mul(a, b),
+        "NTT/schoolbook divergence in live ring multiply — wire-in bit-exactness invariant broken"
+    );
+    prod
 }
 
 fn byte_encode(d: usize, f: &[i32; N], out: &mut [u8]) {
@@ -616,7 +640,9 @@ fn build_a(rho: &[u8]) -> [[[i32; N]; K]; K] {
 fn kpke_encrypt(ek: &[u8], m: &[u8; 32], r: &[u8; 32]) -> MlKem768Ct {
     // Public key stores the coefficient polynomial t (ByteEncode12 of t); the KEM
     // encoding is identical whether t or NTT(t) is stored, as long as both sides
-    // agree. We use the coefficient domain (no NTT) for correctness-by-construction.
+    // agree. The SCHEME stays coefficient-domain (t/s stored as coefficients); only
+    // the ring MULTIPLY is accelerated via the NTT (`ring_mul`), whose result is
+    // byte-identical to schoolbook — so ek/dk/ct/K are unchanged by the wire-in.
     let mut t = [[0i32; N]; K];
     for i in 0..K {
         byte_decode(12, &ek[384 * i..384 * (i + 1)], &mut t[i]);
@@ -642,12 +668,13 @@ fn kpke_encrypt(ek: &[u8], m: &[u8; 32], r: &[u8; 32]) -> MlKem768Ct {
     prf_eta(ETA2, r, n, &mut prfbuf);
     e2 = sample_poly_cbd(ETA2, &prfbuf);
 
-    // u = A^T ∘ y + e1  (coefficient domain; ∘ is poly multiplication)
+    // u = A^T ∘ y + e1  (∘ is ring multiplication via the NTT fast path `ring_mul`,
+    // whose output is byte-identical to schoolbook `poly_mul` — proven exhaustively).
     let mut u = [[0i32; N]; K];
     for i in 0..K {
         let mut acc = [0i32; N];
         for j in 0..K {
-            let m_ = poly_mul(&a[j][i], &y[j]);
+            let m_ = ring_mul(&a[j][i], &y[j]);
             acc = poly_add(&acc, &m_);
         }
         u[i] = poly_add(&acc, &e1[i]);
@@ -663,7 +690,7 @@ fn kpke_encrypt(ek: &[u8], m: &[u8; 32], r: &[u8; 32]) -> MlKem768Ct {
     }
     let mut acc = [0i32; N];
     for i in 0..K {
-        let mh = poly_mul(&t[i], &y[i]);
+        let mh = ring_mul(&t[i], &y[i]);
         acc = poly_add(&acc, &mh);
     }
     let v = poly_add(&poly_add(&acc, &e2), &mu);
@@ -707,7 +734,7 @@ fn kpke_decrypt(dk_pke: &[u8], ct: &[u8; KEM768_CT_LEN]) -> [u8; 32] {
     }
     let mut acc = [0i32; N];
     for i in 0..K {
-        let su = poly_mul(&s_prime[i], &u_prime[i]);
+        let su = ring_mul(&s_prime[i], &u_prime[i]);
         acc = poly_add(&acc, &su);
     }
     let w = poly_sub(&v_prime, &acc);
@@ -764,12 +791,13 @@ pub(crate) fn keygen_internal_prod(d: &[u8; 32], z: &[u8; 32]) -> (MlKem768Ek, M
         e[i] = sample_poly_cbd(ETA1, &prfbuf);
         n += 1;
     }
-    // s_hat / e_hat in the coefficient domain (no NTT); t = A s + e.
+    // t = A s + e. Coefficient-domain scheme, but each ring product now goes through
+    // the NTT fast path `ring_mul` (byte-identical to schoolbook; proven exhaustively).
     let mut t = [[0i32; N]; K];
     for i in 0..K {
         let mut acc = [0i32; N];
         for j in 0..K {
-            let m_ = poly_mul(&a[i][j], &s[j]);
+            let m_ = ring_mul(&a[i][j], &s[j]);
             acc = poly_add(&acc, &m_);
         }
         t[i] = poly_add(&acc, &e[i]);
