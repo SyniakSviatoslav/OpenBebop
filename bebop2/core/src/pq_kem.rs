@@ -1267,6 +1267,78 @@ mod tests {
         );
     }
 
+    // ── Golden-output equivalence corpus (wire-in regression gate) ──────────────
+    // A fixed, deterministic corpus of (d, z, m) seed triples spanning edge cases
+    // (all-zero, all-ones) and pseudo-random streams. `golden_corpus` is the SINGLE
+    // source of truth for both the capture and the frozen-vector assertion, so the
+    // golden test can never silently drift from what was captured.
+    fn golden_corpus() -> [( [u8; 32], [u8; 32], [u8; 32] ); 6] {
+        let mut cases = [([0u8; 32], [0u8; 32], [0u8; 32]); 6];
+        // case 0: all-zero seeds (edge).
+        // case 1: all-ones seeds (edge).
+        cases[1] = ([0xFFu8; 32], [0xFFu8; 32], [0xFFu8; 32]);
+        // cases 2..6: independent LCG streams with distinct pinned seeds.
+        let seeds = [0x0000_0000_0000_0001u64, 0xDEAD_BEEF_CAFE_BABE, 0x1234_5678_9ABC_DEF0, 0x0F0F_0F0F_F0F0_F0F0];
+        for (c, &s0) in seeds.iter().enumerate() {
+            let mut st = s0;
+            lcg_fill(&mut st, &mut cases[2 + c].0);
+            lcg_fill(&mut st, &mut cases[2 + c].1);
+            lcg_fill(&mut st, &mut cases[2 + c].2);
+        }
+        cases
+    }
+
+    fn hex_str(bytes: &[u8]) -> String {
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            s.push(core::char::from_digit((b >> 4) as u32, 16).unwrap());
+            s.push(core::char::from_digit((b & 15) as u32, 16).unwrap());
+        }
+        s
+    }
+
+    /// GOLDEN-OUTPUT EQUIVALENCE GATE (wire-in regression).
+    ///
+    /// These digests were CAPTURED from the schoolbook (`poly_mul`) KEM before the NTT
+    /// (`poly_mul_ntt`) was wired into keygen/encaps/decaps (commit "capture golden
+    /// vectors"). Because `poly_mul_ntt` is proven bit-identical to `poly_mul`
+    /// (`ntt_kem_exhaustive_basis_proof`, all 65536 basis pairs), swapping the ring
+    /// multiply MUST leave ek/dk/ct/K byte-for-byte unchanged — this test is the
+    /// independent, frozen proof of that, distinct from the live dual-impl cross-check.
+    ///
+    /// If this test ever goes RED after a change to the polynomial-multiply path, the
+    /// wire-in altered observable KEM behaviour and MUST NOT ship. To legitimately
+    /// re-baseline (e.g. an intentional scheme change), print the computed `hex_str`
+    /// values below (they derive deterministically from `golden_corpus`) and update
+    /// these `GOLDEN` constants in the same commit, with justification.
+    ///
+    /// Per-case: `sha3_256(ek ‖ dk)`, `sha3_256(ct)`, and the full 32-byte shared secret.
+    #[test]
+    fn kem_golden_vectors_frozen() {
+        const GOLDEN: [(&str, &str, &str); 6] = [
+            ("0f4d147392ac669368a2690380b06824be0f3c6b08dfca70131a56fe92dc09e2", "04ae354c18634b52f9e35fee247a3b1f82c08801ebd6e45dfc2bf13c9fb5973b", "e93d5b724f646779a6ed6b6463ea4baf55d5dec25519c2c6804942cfed4d2e91"),
+            ("bee2dee9744cac6e73c5575aee82901add6f91d5a55832a63eb4cd968813f43e", "c89a0e8c42f4e8f7d6ba8b37be8dc645b1309a11d4791de84e344ebc8ae889ec", "c4e2895fd9ee887fff410599ad59aa83749c00a45d2654a7c2ac6a3b80ce72e5"),
+            ("52eecd696df2ca34300c4008df48e5bfa6965c8b041f9f08e003f41214211c43", "eb5eb54fd7867f169ff3aca183ae06b40cda78c1dc245cdb71b29e69b8f3072e", "cb44c24f354301b30be23d8631e40bbdd1ff66f318fac44a2d2b56773b178242"),
+            ("0958863c6c2f44d1f30f682d282e7b1bbf5a45726906efec9f71fb20379d7691", "977e3e843803a592763ed39c98ce4e574f8f0d5df80b4ab6544322677368e9bd", "9dcbbfacf17b29f984d9b02d03dd325f3ab46a9750c6c1ab4d992aa41b79bd9b"),
+            ("7d0cca5bdfebb9ab26b94d544b6645deb91239309ae616e020b0bf056569ce0d", "1213eb4653ceb731d71de8806307d01536aa36b63b8779d26e39b3b30c3636f7", "725c4955c3a3d2993c696210acf7f4ea8e80421f3471884b0658da674f290757"),
+            ("552bb83725b82faed5008ed36e9020e824c45ae0d7bf786b95e72fe90661dd01", "cfd465fe56bd9cb35760a2156675ad8f13cc32d3f3a64aa3736a98741cf2bbd6", "4bf515748baf49a14307c5ad4ccbb681968aba863f007177f007c7d6c87fdda1"),
+        ];
+        for (i, (d, z, m)) in golden_corpus().iter().enumerate() {
+            let (ek, dk) = keygen_internal(d, z);
+            let (ss, ct) = encaps_internal(&ek, m);
+            let mut buf = [0u8; KEM768_EK_LEN + KEM768_DK_LEN];
+            buf[..KEM768_EK_LEN].copy_from_slice(&ek);
+            buf[KEM768_EK_LEN..].copy_from_slice(&dk);
+            let h_keys = sha3_256(&buf);
+            let h_ct = sha3_256(&ct);
+            assert_eq!(hex_str(&h_keys), GOLDEN[i].0, "case {i}: ek‖dk digest drifted from golden");
+            assert_eq!(hex_str(&h_ct), GOLDEN[i].1, "case {i}: ct digest drifted from golden");
+            assert_eq!(hex_str(&ss), GOLDEN[i].2, "case {i}: shared secret drifted from golden");
+            // Sanity: the frozen artifacts still round-trip (decaps recovers ss).
+            assert_eq!(decaps(&dk, &ct), ss, "case {i}: golden ct does not decapsulate to ss");
+        }
+    }
+
     // Parse a hex string literal into a fixed array (test helper).
     fn hex<const L: usize>(s: &str) -> [u8; L] {
         let s = s.trim();
