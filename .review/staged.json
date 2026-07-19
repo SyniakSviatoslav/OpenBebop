@@ -2,10 +2,10 @@
   "builder": "claude-ntt-wire-builder",
   "reviewer": {
     "agent": "claude-ntt-wire-rev1",
-    "findings": "C2 wires ring_mul (NTT fast path + debug-only schoolbook cross-check) into the 4 live poly_mul call sites in keygen_internal_prod, kpke_encrypt (x2), kpke_decrypt. No scheme change: t/s/u/v remain coefficient-domain, only the ring-multiply implementation changed. kem_golden_vectors_frozen (added in C1, captured pre-wire) still passes byte-for-byte after this swap, and all 12 pq_kem tests pass (cargo test -p bebop2-core --lib pq_kem::), confirming behaviour-neutrality. debug_assert_eq! in ring_mul keeps poly_mul as a live, permanent oracle rather than dead code in debug/test builds; it compiles out in release."
+    "findings": "C3 makes red() (the canonical mod-Q residue used by every reduction on the live NTT path: ntt_fwd/inv_kem, basemul_kem, plus decaps) branch-free: `r + ((r >> 31) & Q)` instead of `if r < 0 { r + Q } else { r }`. Purely arithmetic rewrite, no algorithmic change. All 12 pq_kem tests pass (cargo test -p bebop2-core --lib pq_kem::), including kem_golden_vectors_frozen, confirming bit-identical output to the branching form."
   },
   "overlap": {
     "agent": "claude-ntt-wire-ovl",
-    "findings": "Cross-checked against the exhaustive proof already on main (ntt_kem_exhaustive_basis_proof: all 65536 monomial basis pairs, poly_mul_ntt == poly_mul) which is the substantive correctness authority for this swap — C2 only wires that already-proven equivalence into the live path, it does not introduce new cryptographic claims. Verified the swap touches exactly the 4 call sites named in the plan and no others (grep confirms the one remaining poly_mul(&a[i][j], &s[j]) call is inside a test-only reference reimplementation in mod tests, correctly left untouched). No production behavior change beyond speed."
+    "findings": "Verified the branchless identity by construction: x mod Q via Rust's `%` on i64 yields r in (-Q, Q) since |x| is bounded; r>>31 is an arithmetic shift on i32 that is all-1s (-1) iff r<0 and 0 otherwise, so `r + ((r>>31) & Q)` adds Q exactly when r is negative, matching the branching form for every r in (-Q, Q). This motivates C4 (the dudect gate on this exact function): a debug/-O0 build previously kept a real conditional branch here that leaked timing; the release cmov was already constant-time, but branch-free-by-construction removes the optimization-level dependency entirely."
   }
 }

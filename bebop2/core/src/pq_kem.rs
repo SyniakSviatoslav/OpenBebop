@@ -260,14 +260,21 @@ const ETA2: usize = 2;
 const DU: usize = 10;
 const DV: usize = 4;
 
+/// Canonical residue in [0, Q). BRANCH-FREE by construction (constant-time): `%` yields
+/// r in (-Q, Q); the arithmetic-shift sign mask (`r >> 31` is all-ones iff r<0) folds a
+/// negative r into range without a secret-dependent branch. Output is bit-identical to
+/// the prior `if r < 0 { r + Q }` form (all KATs + `kem_golden_vectors_frozen` confirm).
+///
+/// WHY BRANCH-FREE (not left to the optimizer): a release build compiled the old branch
+/// to a cmov (constant-time), but a debug/`-O0` build kept a real branch that a
+/// cycle-accurate dudect gate measured leaking (|t|≈15). Making it branch-free by
+/// construction matches the C4b `mod_l` standard — the constant-time property no longer
+/// depends on the optimization level. `red` underlies every mod-q reduction on the live
+/// NTT path (ntt_fwd/inv_kem, basemul_kem) and in decaps, so this is the one place to fix.
 #[inline]
 fn red<T: Into<i64>>(x: T) -> i32 {
-    let r = x.into() % (Q as i64);
-    if r < 0 {
-        (r + Q as i64) as i32
-    } else {
-        r as i32
-    }
+    let r = (x.into() % (Q as i64)) as i32; // r in (-Q, Q)
+    r + ((r >> 31) & Q) // add Q iff r < 0, branchlessly
 }
 #[inline]
 fn poly_add(a: &[i32; N], b: &[i32; N]) -> [i32; N] {
