@@ -446,10 +446,15 @@ impl MerkleLog {
     }
 
     /// Add a content-id (idempotent: dups do not change the set/root).
+    ///
+    /// Dedup is handled by the `seen` set — we do NOT sort here. Sorting the
+    /// whole leaf vector on every insert was O(n²·log n) on the anti-entropy
+    /// fold path. The order is instead fixed exactly once in `root()`, which
+    /// clones the leaves anyway, so the root is identical to the old
+    /// always-sorted behavior for the same input set.
     pub fn add(&mut self, id: [u8; 32]) {
         if self.seen.insert(id) {
             self.leaves.push(id);
-            self.leaves.sort_unstable();
         }
     }
 
@@ -458,7 +463,10 @@ impl MerkleLog {
         if self.leaves.is_empty() {
             return [0u8; 32];
         }
+        // Sort once, on the clone `root()` already makes — same total order as
+        // the previous always-sorted invariant, so the root bytes are bit-stable.
         let mut level: Vec<[u8; 32]> = self.leaves.clone();
+        level.sort_unstable();
         while level.len() > 1 {
             let mut next = Vec::with_capacity(level.len().div_ceil(2));
             let mut i = 0;
@@ -668,6 +676,68 @@ mod tests {
         m.add([9u8; 32]);
         m.add([9u8; 32]);
         assert_eq!(m.len(), 1, "duplicate add is a no-op");
+    }
+
+    // ── P78 B3 ORDER-STABILITY GATE ────────────────────────────────────────────
+    // The per-insert `sort_unstable` was removed (now sorted once in `root()`).
+    // This test pins the invariant the change must NOT break: the root bytes are
+    // bit-identical for the same input SET regardless of insertion order, and
+    // match the canonical always-sorted reference computation. If the sort moves
+    // or the comparison changes, this fails.
+    #[test]
+    fn merkle_root_is_order_stable_after_deferred_sort() {
+        let ids: Vec<[u8; 32]> = (0u8..16).map(|i| [i; 32]).collect();
+
+        // Build in order.
+        let mut in_order = MerkleLog::new();
+        // Build in reverse.
+        let mut reversed: Vec<[u8; 32]> = ids.clone();
+        reversed.reverse();
+        let mut in_rev = MerkleLog::new();
+        // Build via interleaved insertions (idempotent dups sprinkled in).
+        let mut interleaved = MerkleLog::new();
+
+        for id in &ids {
+            in_order.add(*id);
+        }
+        for id in &reversed {
+            in_rev.add(*id);
+        }
+        // Insert every id, then re-insert every other id as a dup.
+        for (i, id) in ids.iter().enumerate() {
+            interleaved.add(*id);
+            if i % 2 == 0 {
+                interleaved.add(*id); // dup — must be a no-op on the set
+            }
+        }
+
+        let r_in = in_order.root();
+        let r_rev = in_rev.root();
+        let r_int = interleaved.root();
+        assert_eq!(r_in, r_rev, "insertion order must not affect the root");
+        assert_eq!(r_in, r_int, "duplicate insertions must not affect the root");
+        assert_eq!(in_order.len(), 16);
+        assert_eq!(interleaved.len(), 16, "dups excluded from the leaf set");
+
+        // Reference: a single sort of the same multiset, then the tree hash.
+        let mut reference = ids.clone();
+        reference.sort_unstable();
+        let mut level = reference;
+        while level.len() > 1 {
+            let mut next = Vec::with_capacity(level.len().div_ceil(2));
+            let mut i = 0;
+            while i < level.len() {
+                let left = level[i];
+                let right = if i + 1 < level.len() { level[i + 1] } else { level[i] };
+                let mut buf = Vec::with_capacity(64);
+                buf.extend_from_slice(&left);
+                buf.extend_from_slice(&right);
+                next.push(sha3_256(&buf));
+                i += 2;
+            }
+            level = next;
+        }
+        assert_eq!(r_in, level[0], "root must match the canonical sorted reference");
     }
 
     // ── SyncFrame signing/verification ──

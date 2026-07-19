@@ -49,14 +49,22 @@ pub struct Ownership {
 /// Rank every hub by `hrw_weight(order_id, hub.pubkey)` (descending). Ties are
 /// broken by pubkey bytes (lexicographic) so the ordering is total and stable
 /// across nodes. Returns the hubs in owner-first order.
+///
+/// Schwartzian transform (blessed pattern: `bebop-proto-cap/src/matcher.rs`
+/// `assign`): precompute `(weight, hub)` once, then sort the tuples. The old
+/// code recomputed `hrw_weight` twice per comparator call — 2× the hashing work
+/// on every comparison. The total order is identical: weight DESC, then pubkey
+/// DESC for a stable tie-break.
 fn ranked(order_id: u64, hubs: &[Hub]) -> Vec<Hub> {
-    let mut ranked: Vec<Hub> = hubs.to_vec();
-    ranked.sort_by(|a, b| {
-        hrw_weight(order_id, &b.pubkey)
-            .cmp(&hrw_weight(order_id, &a.pubkey))
-            .then_with(|| b.pubkey.cmp(&a.pubkey))
+    let mut weighted: Vec<(u64, Hub)> = hubs
+        .iter()
+        .map(|h| (hrw_weight(order_id, &h.pubkey), *h))
+        .collect();
+    weighted.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.pubkey.cmp(&a.1.pubkey))
     });
-    ranked
+    weighted.into_iter().map(|(_, h)| h).collect()
 }
 
 /// Compute the `(owner, replicas)` assignment for `order_id` over `hubs`.
@@ -75,8 +83,21 @@ pub fn assign(order_id: u64, hubs: &[Hub], replica_count: usize) -> Ownership {
 }
 
 /// Convenience: just the owner hub.
+///
+/// Single `max_by` scan over the precomputed weights — no full sort just to
+/// take `[0]` (the old `assign(order_id, hubs, 0).owner` sorted the whole hub
+/// set and discarded all but the first).
 pub fn owner_hub(order_id: u64, hubs: &[Hub]) -> Hub {
-    assign(order_id, hubs, 0).owner
+    hubs.iter()
+        // Max under the SAME tuple order `ranked` uses (weight, pubkey) — the
+        // natural asc order, i.e. the element that `ranked` places at [0]. Using
+        // the identical comparator guarantees a bit-identical owner to before.
+        .max_by(|a, b| {
+            (hrw_weight(order_id, &a.pubkey), a.pubkey)
+                .cmp(&(hrw_weight(order_id, &b.pubkey), b.pubkey))
+        })
+        .copied()
+        .expect("owner_hub: hub set must be non-empty")
 }
 
 /// Is `hub` the computed owner of `order_id`?
@@ -187,5 +208,57 @@ mod tests {
 
         // Owner unchanged (the removed hub was not it).
         assert_eq!(owner_hub(order, &survivors), owner);
+    }
+
+    // ── P78 B4 HRW-ORDER GATE ─────────────────────────────────────────────────
+    // `ranked` now uses a Schwartzian transform (precompute weight once, sort
+    // tuples) instead of recomputing the HRW hash twice per comparison;
+    // `owner_hub` is a single `max_by` scan. This test pins the SAME total order
+    // as the original comparator so the change is strictly behavior-preserving:
+    // weight DESC, pubkey DESC tie-break. The reference below re-implements the
+    // ORIGINAL comparator verbatim and must match the new `ranked`/`owner_hub`.
+    #[test]
+    fn p78_ranked_total_order_is_identical_to_reference() {
+        let h = hubs(8);
+        let order = 0xC0FFEEu64;
+
+        // Reference: exact original comparator (weight DESC, pubkey DESC).
+        let mut reference: Vec<Hub> = h.clone();
+        reference.sort_by(|a, b| {
+            hrw_weight(order, &b.pubkey)
+                .cmp(&hrw_weight(order, &a.pubkey))
+                .then_with(|| b.pubkey.cmp(&a.pubkey))
+        });
+
+        // New `ranked` must produce a bit-identical ordering.
+        assert_eq!(ranked(order, &h), reference, "ranked total order changed");
+
+        // New `owner_hub` must return ranked[0], identical to before.
+        let owner_new = owner_hub(order, &h);
+        let owner_ref = reference[0];
+        assert_eq!(owner_new, owner_ref, "owner_hub diverged from ranked[0]");
+
+        // Cross-check the convenience owner equals assign().owner (old contract).
+        assert_eq!(owner_hub(order, &h), assign(order, &h, 0).owner);
+
+        // Full assignment ordering must also be bit-identical to the reference.
+        let o = assign(order, &h, 4);
+        let mut expected = reference.clone();
+        expected.truncate(1 + 4.min(h.len().saturating_sub(1)));
+        let expected_owner_first = expected;
+        assert_eq!(o.owner, expected_owner_first[0]);
+        assert_eq!(o.replicas, &expected_owner_first[1..]);
+    }
+
+    // ── P78 B4: `owner_hub` must not panic / pick a phantom owner on a real set.
+    #[test]
+    fn p78_owner_hub_within_set_and_stable() {
+        let h = hubs(5);
+        for order in 0u64..50 {
+            let owner = owner_hub(order, &h);
+            assert!(h.contains(&owner), "owner must be a member of the set");
+        }
+        // Deterministic across calls.
+        assert_eq!(owner_hub(7, &h), owner_hub(7, &h));
     }
 }

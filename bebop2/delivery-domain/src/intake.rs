@@ -41,7 +41,9 @@ use bebop_mesh_node::dod::{DodFault, DodGate};
 use bebop_mesh_node::DodGate as _; // bring `admit` into scope
 
 use dowiz_kernel::domain::{apply_event, place_order, Order, OrderItem};
+use dowiz_kernel::money::Currency;
 use dowiz_kernel::order_machine::{assert_transition, OrderStatus};
+use dowiz_kernel::vendor::VendorId;
 
 use crate::facade::{KernelFacade, Reject};
 use crate::DeliveryStatus;
@@ -78,6 +80,11 @@ pub fn from_order_status(s: OrderStatus) -> Option<DeliveryStatus> {
         OrderStatus::Cancelled => Some(DeliveryStatus::Cancelled),
         OrderStatus::PickedUp => Some(DeliveryStatus::PickedUp),
         OrderStatus::Scheduled => None,
+        // Kernel `OrderStatus` carries refund states the wire `DeliveryStatus` has
+        // no counterpart for yet — leave unmapped (None). Required for match
+        // exhaustiveness against the linked dowiz-kernel.
+        OrderStatus::Refunding => None,
+        OrderStatus::CompensatedRefund => None,
     }
 }
 
@@ -272,6 +279,8 @@ pub fn fresh_order(order_id: &str, start: DeliveryStatus) -> Order {
             modifier_ids: vec![],
             quantity: 1,
             unit_price: 1000,
+            currency: Currency::Usd,
+            vendor_id: VendorId(13),
         }],
         0,
         None,
