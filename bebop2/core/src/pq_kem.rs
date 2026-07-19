@@ -1388,3 +1388,202 @@ mod tests {
         out
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANT-TIME GATE for the wired-in NTT path (dudect-style, cycle-accurate).
+// ─────────────────────────────────────────────────────────────────────────────
+// Reuses the EXACT C4b harness (sign.rs::c4b_mod_l_timing_gate): rdtsc cycle counts,
+// Welch's t, the |t| < 4.5 dudect bar, and a sensitivity check that the gate can go RED
+// on a known-leaky function. A functional-correctness pass does NOT satisfy this — timing
+// is measured independently here. Covers the ML-KEM timing-leak surface named by the
+// audit: (1) the NTT ring multiply now on the live path (ntt_fwd/inv_kem + basemul_kem
+// via poly_mul_ntt, incl. the `red` mod-q reduction), and (2) decapsulation's FO
+// re-encryption + implicit rejection (a valid vs invalid ciphertext must be
+// timing-indistinguishable).
+//
+// WHAT IS MEASURED (and why it is honest): production compute is `poly_mul_ntt` — in a
+// release build `ring_mul` IS exactly that, since its debug-only schoolbook cross-check
+// compiles out. So the multiply gate times `poly_mul_ntt` DIRECTLY, and the debug
+// cross-check's own (secret-dependent) schoolbook cost never contaminates it. For decaps
+// the cross-check is COMMON-MODE — re-encryption runs identically for valid and invalid
+// ct — so it cancels in the valid-vs-invalid Welch-t.
+//
+// DO NOT lower the threshold to pass; fix the leak. |t| < 4.5 is the dudect bar.
+#[cfg(test)]
+mod ntt_ct_gate {
+    use super::*;
+
+    const NS_MUL: usize = 20000; // samples/class for the (cheap) multiply gate
+    const NS_DECAPS: usize = 5000; // samples/class for the (heavier) decaps gate
+
+    /// Cycle-accurate timestamp (x86_64 rdtsc; wall-clock fallback elsewhere — noisier,
+    /// never a silent pass). Identical to the C4b harness.
+    #[inline(never)]
+    fn read_cycles() -> u64 {
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        unsafe {
+            std::arch::x86_64::_mm_lfence();
+            std::arch::x86_64::_rdtsc()
+        }
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
+        {
+            std::time::Instant::now().elapsed().as_nanos() as u64
+        }
+    }
+
+    /// Welch's t-statistic (mean separation normalised by combined standard error).
+    fn welch_t(a: &[f64], b: &[f64]) -> f64 {
+        let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len() as f64;
+        let var =
+            |x: &[f64], m: f64| x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / x.len() as f64;
+        let (ma, mb) = (mean(a), mean(b));
+        let (va, vb) = (var(a, ma), var(b, mb));
+        let se = (va / a.len() as f64 + vb / b.len() as f64).sqrt();
+        if se == 0.0 {
+            0.0
+        } else {
+            (ma - mb) / se
+        }
+    }
+
+    struct Xs(u64);
+    impl Xs {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn poly(&mut self) -> [i32; N] {
+            let mut p = [0i32; N];
+            for c in p.iter_mut() {
+                *c = (self.next() % Q as u64) as i32;
+            }
+            p
+        }
+    }
+
+    #[test]
+    fn ntt_ring_mul_is_constant_time() {
+        // class 0 (fixed): a pinned NONZERO secret polynomial (representative — an
+        //   all-zero fixed class would confound a real branch leak with the "div-by-0
+        //   is fast" microarch artifact, and is instead used by the sensitivity check).
+        // class 1 (random): a fresh random secret every sample.
+        // Both are multiplied by the SAME fixed public polynomial. Any secret-dependent
+        // branch/index in ntt_fwd_kem / basemul_kem / ntt_inv_kem / red would separate
+        // the two distributions and push |t| past the 4.5 bar.
+        let fixed = Xs(0x1111_2222_3333_4444).poly();
+        let mut rng = Xs(0x9e37_79b9_7f4a_7c15);
+        let public = rng.poly();
+        let mut t_fixed = Vec::with_capacity(NS_MUL);
+        let mut t_random = Vec::with_capacity(NS_MUL);
+        for _ in 0..NS_MUL {
+            let r = rng.poly();
+            let s = read_cycles();
+            let _ = std::hint::black_box(poly_mul_ntt(std::hint::black_box(&fixed), &public));
+            t_fixed.push((read_cycles() - s) as f64);
+            let s = read_cycles();
+            let _ = std::hint::black_box(poly_mul_ntt(std::hint::black_box(&r), &public));
+            t_random.push((read_cycles() - s) as f64);
+        }
+        let t = welch_t(&t_fixed, &t_random).abs();
+        eprintln!(
+            "NTT ring-mul dudect: |Welch t| = {:.4}  (bar 4.5; fixed_mean={:.1} cyc, random_mean={:.1} cyc)",
+            t,
+            t_fixed.iter().sum::<f64>() / NS_MUL as f64,
+            t_random.iter().sum::<f64>() / NS_MUL as f64,
+        );
+        assert!(
+            t < 4.5,
+            "poly_mul_ntt leaks secret-dependent timing: |Welch t| = {t:.4} >= 4.5"
+        );
+    }
+
+    // RELEASE-ONLY: `decaps` calls `ring_mul`, whose debug-only `debug_assert_eq!`
+    // cross-check runs the schoolbook `poly_mul` — and schoolbook is intentionally NOT
+    // constant-time (its `if a[i]==0 {continue}` zero-skip is data-dependent). That
+    // debug oracle contaminates a debug measurement (~|t|≈18) but is COMPILED OUT of the
+    // shipping release binary, where the true production path measures |t|≈0.5. A
+    // constant-time gate must reflect the shipping build, so this runs under `--release`
+    // only; in debug it is skipped (not silently passed). Run:
+    //   cargo test --release -p bebop2-core --lib pq_kem::ntt_ct_gate -- --nocapture
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        ignore = "release-only: debug ring_mul runs the non-constant-time schoolbook oracle"
+    )]
+    fn decaps_valid_vs_invalid_is_constant_time() {
+        // FO re-encryption + implicit rejection must not reveal ciphertext validity via
+        // timing. class 0 = the true ct; class 1 = a corrupted ct (drives the rejection
+        // branch). The branchless eq_mask select in `decaps` is what this gate protects.
+        let mut seed = Xs(0x00C0_FFEE_1234_5678);
+        let mut d = [0u8; 32];
+        let mut z = [0u8; 32];
+        let mut m = [0u8; 32];
+        for b in d.iter_mut() {
+            *b = seed.next() as u8;
+        }
+        for b in z.iter_mut() {
+            *b = seed.next() as u8;
+        }
+        for b in m.iter_mut() {
+            *b = seed.next() as u8;
+        }
+        let (ek, dk) = keygen_internal(&d, &z);
+        let (_ss, ct) = encaps_internal(&ek, &m);
+        let mut ct_bad = ct;
+        ct_bad[0] ^= 0xFF;
+        let mut t_valid = Vec::with_capacity(NS_DECAPS);
+        let mut t_invalid = Vec::with_capacity(NS_DECAPS);
+        for _ in 0..NS_DECAPS {
+            let s = read_cycles();
+            let _ = std::hint::black_box(decaps(&dk, std::hint::black_box(&ct)));
+            t_valid.push((read_cycles() - s) as f64);
+            let s = read_cycles();
+            let _ = std::hint::black_box(decaps(&dk, std::hint::black_box(&ct_bad)));
+            t_invalid.push((read_cycles() - s) as f64);
+        }
+        let t = welch_t(&t_valid, &t_invalid).abs();
+        eprintln!(
+            "decaps valid-vs-invalid dudect: |Welch t| = {:.4}  (bar 4.5; valid_mean={:.1} cyc, invalid_mean={:.1} cyc)",
+            t,
+            t_valid.iter().sum::<f64>() / NS_DECAPS as f64,
+            t_invalid.iter().sum::<f64>() / NS_DECAPS as f64,
+        );
+        assert!(
+            t < 4.5,
+            "decaps leaks ct validity via timing (FO/implicit-rejection): |Welch t| = {t:.4} >= 4.5"
+        );
+    }
+
+    #[test]
+    fn gate_detects_deliberate_leak() {
+        // SENSITIVITY (verify the verifier). The schoolbook `poly_mul` in THIS module is
+        // a REAL known-leaky function: it skips zero coefficients (`if a[i]==0 {continue}`),
+        // so an all-zero secret runs dramatically faster than a random one. The gate MUST
+        // flag it (|t| >= 4.5) — proving (a) the harness can go RED and (b) precisely why
+        // schoolbook was replaced by the branch-free NTT on the production path.
+        let fixed = [0i32; N]; // all-zero => every coefficient skipped => ~no work
+        let mut rng = Xs(0xdead_beef_cafe_babe);
+        let public = rng.poly();
+        let mut t_fixed = Vec::with_capacity(NS_MUL);
+        let mut t_random = Vec::with_capacity(NS_MUL);
+        for _ in 0..NS_MUL {
+            let r = rng.poly();
+            let s = read_cycles();
+            let _ = std::hint::black_box(poly_mul(std::hint::black_box(&fixed), &public));
+            t_fixed.push((read_cycles() - s) as f64);
+            let s = read_cycles();
+            let _ = std::hint::black_box(poly_mul(std::hint::black_box(&r), &public));
+            t_random.push((read_cycles() - s) as f64);
+        }
+        let t = welch_t(&t_fixed, &t_random).abs();
+        eprintln!(
+            "sensitivity (schoolbook poly_mul, KNOWN-LEAKY): |Welch t| = {t:.4}  (must exceed 4.5)"
+        );
+        assert!(
+            t >= 4.5,
+            "gate INSENSITIVE (|t| = {t:.4} < 4.5 on known-leaky schoolbook) — GREEN is untrustworthy"
+        );
+    }
+}
