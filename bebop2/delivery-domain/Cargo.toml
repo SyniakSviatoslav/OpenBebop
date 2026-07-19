@@ -32,12 +32,12 @@ kernel-rlib = ["dep:dowiz-kernel", "dep:bebop-mesh-node"]
 # feature-independent and byte-identical regardless of how it is linked.
 # (Path is `../../../dowiz/kernel` relative to this file: bebop2/delivery-domain
 # → bebop2 → bebop-repo → /root; kernel lives at /root/dowiz/kernel.)
-dowiz-kernel = { path = "../../../dowiz/kernel", default-features = false, features = ["std"], optional = true }
+dowiz-kernel = { path = "../../../dowiz/kernel", version = "0.1.0", default-features = false, features = ["std"], optional = true }
 # WIRE gate (HybridGate + SignedFrame + AnchorRoster) — ALWAYS available
 # (pure-Rust, no transport). Needed so finalization.rs / hub_ring.rs P76 tests
 # run under default `cargo test`; the KernelFacade WIRE→LAW→MONEY chain that
 # also uses it remains gated on `kernel-rlib`.
-bebop-proto-cap = { path = "../proto-cap" }
+bebop-proto-cap = { path = "../proto-cap", version = "0.1.0" }
 # Mesh node runtime (P13 spine): the Definition-of-Done gate `DodGate` the
 # receiver runs on every carried event. Gated on `kernel-rlib` so the default
 # build stays dependency-free. `mesh-node`'s transport deps (tokio/rustls/quinn)

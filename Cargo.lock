@@ -267,6 +267,7 @@ dependencies = [
  "bebop-mesh-node",
  "bebop-proto-cap",
  "bebop2-core",
+ "criterion",
  "dowiz-kernel",
 ]
 
@@ -287,6 +288,7 @@ name = "bebop-proto-cap"
 version = "0.1.0"
 dependencies = [
  "bebop2-core",
+ "criterion",
  "serde",
  "serde_json",
 ]
@@ -301,6 +303,7 @@ version = "0.1.0"
 dependencies = [
  "bebop-proto-cap",
  "bebop2-core",
+ "criterion",
  "futures-util",
  "http",
  "quinn",
