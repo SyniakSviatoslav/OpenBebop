@@ -71,3 +71,11 @@ futures-util = "0.3"
 # itself stays free of a direct core dependency (signing is reached via
 # `bebop_proto_cap`), but the tests need to mint keys.
 bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
+# P82 (bebop bench expansion, §3.3-C3): criterion harness for the proto-wire codec
+# hot paths (encode/decode_frame chain-swept, framing, envelope serde_json). The
+# bench ids use the `<group>/<n>` schema owned by P75 (P82 cites it).
+criterion = "0.5"
+
+[[bench]]
+name = "proto_wire_benches"
+harness = false
