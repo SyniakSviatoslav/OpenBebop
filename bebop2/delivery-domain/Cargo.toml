@@ -13,7 +13,17 @@ description = "Layer-B decider-core adapter: re-exports the dowiz-kernel order-m
 # dependency-free and offline-clean per MESH-01 R-MESH01a.
 [features]
 default = []
-kernel-rlib = ["dep:dowiz-kernel", "dep:bebop-proto-cap", "dep:bebop-mesh-node", "dep:bebop2-core"]
+# P76 (A2): the split-brain / double-finalization + hub-ring ownership tests are
+# SAFETY-CRITICAL and must run under DEFAULT `cargo test` (the audit found them
+# gated behind `kernel-rlib`, default-OFF, so the default run was green while
+# the falsifiable RED/GREEN tests were silently excluded). `bebop2-core` (PQ
+# crypto) and `bebop-proto-cap` (capability gate) are pure-Rust and
+# offline-clean, so we make them ALWAYS available — that lets finalization.rs +
+# hub_ring.rs types compile and their `#[cfg(test)]` run by default. `dowiz-kernel`
+# (the real order-machine Law) stays OPT-IN under `kernel-rlib`; intake.rs's
+# full-lifecycle tests genuinely need it, so those remain gated + a CI matrix
+# leg (`cargo test -p bebop-delivery-domain --features kernel-rlib`) runs them.
+kernel-rlib = ["dep:dowiz-kernel", "dep:bebop-mesh-node"]
 
 [dependencies]
 # Path-link the REAL kernel. `default-features = false` + `features = ["std"]`
@@ -23,19 +33,20 @@ kernel-rlib = ["dep:dowiz-kernel", "dep:bebop-proto-cap", "dep:bebop-mesh-node",
 # (Path is `../../../dowiz/kernel` relative to this file: bebop2/delivery-domain
 # → bebop2 → bebop-repo → /root; kernel lives at /root/dowiz/kernel.)
 dowiz-kernel = { path = "../../../dowiz/kernel", default-features = false, features = ["std"], optional = true }
-# WIRE gate (HybridGate + SignedFrame + AnchorRoster). The KernelFacade compiles
-# the WIRE→LAW→MONEY chain; it is gated on `kernel-rlib` so the default build
-# stays dependency-free (MESH-01/02). `proto-cap` is pure-Rust, no transport.
-bebop-proto-cap = { path = "../proto-cap", optional = true }
+# WIRE gate (HybridGate + SignedFrame + AnchorRoster) — ALWAYS available
+# (pure-Rust, no transport). Needed so finalization.rs / hub_ring.rs P76 tests
+# run under default `cargo test`; the KernelFacade WIRE→LAW→MONEY chain that
+# also uses it remains gated on `kernel-rlib`.
+bebop-proto-cap = { path = "../proto-cap" }
 # Mesh node runtime (P13 spine): the Definition-of-Done gate `DodGate` the
 # receiver runs on every carried event. Gated on `kernel-rlib` so the default
 # build stays dependency-free. `mesh-node`'s transport deps (tokio/rustls/quinn)
 # are NOT used by the spine — only its pure `dod` module's gate type.
 bebop-mesh-node = { path = "../mesh-node", version = "0.1.0", optional = true }
-# Core crypto (Ed25519 + ML-DSA-65 + SHA3) for signing frames, PoD claims, and
-# the F46 hash-chain. Reused VERBATIM — zero new crypto dependency. Gated on
-# `kernel-rlib` so the default build stays offline-clean.
-bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"], optional = true }
+# Core crypto (Ed25519 + ML-DSA-65 + SHA3) — ALWAYS available (pure-Rust,
+# offline-clean). Needed by finalization.rs (F46 hash-chain) + hub_ring.rs (HRW
+# keygen) so their P76 safety-critical tests run under default `cargo test`.
+bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
 
 [dev-dependencies]
 # Real keygen for building signed frames in the MESH-02 RED test (no crypto dep leak).

@@ -24,7 +24,9 @@ pub struct Mesh {
 struct MeshInner {
     /// topic -> list of (node, handler)
     subs: HashMap<String, Vec<(String, usize)>>,
-    handlers: HashMap<usize, Box<dyn Fn(&Envelope) + Send + Sync>>,
+    /// `Arc<dyn Fn>` (not `Box`) so `publish` can CLONE the subscribed handles out
+    /// under the lock and dispatch them AFTER the guard is dropped (snapshot-under-lock).
+    handlers: HashMap<usize, Arc<dyn Fn(&Envelope) + Send + Sync>>,
     next_id: usize,
     /// per-node delivery log for deterministic assertions
     log: Vec<(String, String, String)>, // (node, topic, body)
@@ -56,7 +58,7 @@ impl Mesh {
         let mut g = self.inner.lock().unwrap();
         let id = g.next_id;
         g.next_id += 1;
-        g.handlers.insert(id, Box::new(f));
+        g.handlers.insert(id, Arc::new(f));
         g.subs
             .entry(topic.to_string())
             .or_default()
@@ -74,20 +76,36 @@ impl Mesh {
 
     /// Publish to a topic across the mesh. Every subscribed node receives a copy
     /// (that's the mesh fan-out). Returns the number of node-deliveries.
+    ///
+    /// Concurrency (G-C1 fix, `OPUS-PERF-BESTPRACTICES-PROPAGATION-2026-07-18.md`):
+    /// the subscribed node-handlers are SNAPSHOTTED (`Arc` clones) under the lock and
+    /// the delivery log is written under that same lock, THEN the guard is dropped and
+    /// the handlers are invoked outside it. The old code held the single mesh `Mutex`
+    /// across the whole per-node dispatch loop (and mutated `g.log` inside it), which
+    /// serialized every publish and SELF-DEADLOCKED on any handler that re-entered the
+    /// mesh (join/leave/publish re-locks the same non-reentrant `std::sync::Mutex`).
+    /// Fan-out count and delivery-log order are preserved.
     pub fn publish(&self, env: &Envelope) -> usize {
-        let mut g = self.inner.lock().unwrap();
-        let targets: Vec<(String, usize)> = match g.subs.get(&env.topic) {
-            Some(v) => v.clone(),
-            None => return 0,
-        };
-        let mut count = 0;
-        for (node, id) in &targets {
-            if let Some(h) = g.handlers.get(id) {
-                h(env);
-                g.log
-                    .push((node.clone(), env.topic.clone(), env.body.clone()));
-                count += 1;
+        let dispatch: Vec<Arc<dyn Fn(&Envelope) + Send + Sync>> = {
+            let mut g = self.inner.lock().unwrap();
+            let targets: Vec<(String, usize)> = match g.subs.get(&env.topic) {
+                Some(v) => v.clone(),
+                None => return 0,
+            };
+            let mut out = Vec::with_capacity(targets.len());
+            for (node, id) in &targets {
+                if let Some(h) = g.handlers.get(id).cloned() {
+                    g.log
+                        .push((node.clone(), env.topic.clone(), env.body.clone()));
+                    out.push(h);
+                }
             }
+            out
+        }; // ← guard dropped here, BEFORE any handler runs
+        let mut count = 0;
+        for h in &dispatch {
+            h(env);
+            count += 1;
         }
         count
     }
@@ -144,5 +162,38 @@ mod tests {
             body: "2".into(),
         });
         assert_eq!(*hits.lock().unwrap(), 1, "node received after leaving mesh");
+    }
+
+    // ── G-C1 correctness: snapshot-under-lock / dispatch-outside-lock ──
+
+    #[test]
+    fn reentrant_handler_does_not_deadlock() {
+        // A node handler that re-publishes into the mesh from inside its dispatch must
+        // NOT deadlock. Old shape held the mesh Mutex across dispatch → re-lock hang.
+        let m = Mesh::new();
+        let downstream = Arc::new(Mutex::new(0usize));
+        let d2 = downstream.clone();
+        m.join("sink", "b", move |_| *d2.lock().unwrap() += 1);
+        let m2 = m.clone();
+        m.join("relay", "a", move |_| {
+            m2.publish(&Envelope {
+                topic: "b".into(),
+                from: "relay".into(),
+                to: "".into(),
+                body: "cascade".into(),
+            });
+        });
+        let n = m.publish(&Envelope {
+            topic: "a".into(),
+            from: "src".into(),
+            to: "".into(),
+            body: "trigger".into(),
+        });
+        assert_eq!(n, 1, "the 'a' relay fired");
+        assert_eq!(
+            *downstream.lock().unwrap(),
+            1,
+            "re-entrant mesh publish completed without deadlock"
+        );
     }
 }

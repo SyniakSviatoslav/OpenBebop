@@ -1,5 +1,15 @@
 //! REPUTATION — the node-trust primitive (the real blocker from the audit).
 //!
+//! ⚠️ P76 / D-2 FLAG (OPEN, non-blocking): this module implements
+//! courier/node *scoring* via a trust ledger. That is FORBIDDEN by the
+//! NO-COURIER-SCORING red line in `dowiz_kernel::event_log` — trust must come
+//! from signed capability, never from a reputation score. The canonical stance is
+//! that this file is removed (or re-born as append-only score events feeding the
+//! event-sourced ledger) per the §4/D-2 operator ruling. It is currently
+//! unreferenced anywhere in the crate (dead surface), so leaving it as-is does
+//! not affect any runtime path. Do NOT expand scope here in P76 — this is a
+//! marker only.
+//!
 //! The audit asked: is the blocker "no trust between nodes" or "no standard
 //! interface"? The interface already exists (matcher JSON contract +
 //! `MatcherClient`). The missing piece is TRUST: a network of strangers with a

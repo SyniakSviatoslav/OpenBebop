@@ -360,24 +360,32 @@ pub mod facade {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// P13 · DELIVERY-ON-PROTOCOL SPINE (gated on `kernel-rlib`).
+// P13 · DELIVERY-ON-PROTOCOL SPINE.
 //
 // The modules below implement the P13 spine: hub-ring ownership (HRW), the
 // order-intake → SignedFrame → DOD → kernel-Law fold pipeline, the k-of-n
 // Proof-of-Delivery port, and the F46 partition-then-merge finalization rule.
-// All are gated behind `kernel-rlib` so the DEFAULT build of this crate stays
-// dependency-free and offline-clean (MESH-01a); the `mesh-node` `DodGate` is
-// pulled in only under the feature (its transport deps are never used by the
-// spine — only the pure `dod` gate type).
+//
+// P76 (A2) UN-GATE: `finalization` (split-brain / double-finalization
+// RED/GREEN tests) and `hub_ring` (HRW determinism tests) are PURE-RUST and
+// use only the always-available `bebop2-core` / `bebop-proto-cap` — they do
+// NOT need `dowiz-kernel`. They are compiled UNCONDITIONALLY now so their
+// `#[cfg(test)]` safety-critical tests run under DEFAULT `cargo test`. (The
+// old gating silently excluded them; see P76 audit finding A2.)
+//
+// `intake` and `pod` still require the real kernel Law, so they stay gated on
+// `kernel-rlib`; their tests run via the CI matrix leg
+// `cargo test -p bebop-delivery-domain --features kernel-rlib`.
+//
+// Keeping `dowiz-kernel` OPT-IN preserves MESH-01a (default build stays
+// dependency-free of the kernel's wasm/serde surface).
 // ─────────────────────────────────────────────────────────────────────────────
-#[cfg(feature = "kernel-rlib")]
-pub mod hub_ring;
+pub mod finalization; // P76: always compiled → its split-brain tests run by default
+pub mod hub_ring;     // P76: always compiled → its HRW tests run by default
 #[cfg(feature = "kernel-rlib")]
 pub mod intake;
 #[cfg(feature = "kernel-rlib")]
 pub mod pod;
-#[cfg(feature = "kernel-rlib")]
-pub mod finalization;
 
 #[cfg(all(feature = "kernel-rlib", test))]
 mod facade_tests {

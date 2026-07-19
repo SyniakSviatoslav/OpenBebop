@@ -169,7 +169,7 @@ impl PartitionMerge {
     }
 }
 
-#[cfg(all(feature = "kernel-rlib", test))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use bebop2_core::sign::keygen;

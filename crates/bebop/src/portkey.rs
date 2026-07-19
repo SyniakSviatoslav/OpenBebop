@@ -33,7 +33,11 @@ pub struct Portkey {
 
 struct Inner {
     subs: HashMap<String, Vec<SubId>>,
-    handlers: HashMap<SubId, Box<dyn Fn(&Envelope) + Send + Sync>>,
+    /// `Arc<dyn Fn>` (not `Box`) so `publish` can CLONE the subscribed handles out
+    /// under the lock and invoke them AFTER the guard is dropped — the snapshot-under-
+    /// lock / dispatch-outside-lock discipline. A `Box<dyn Fn>` can't be cloned, which
+    /// is why the old code held the bus lock across the whole dispatch loop.
+    handlers: HashMap<SubId, Arc<dyn Fn(&Envelope) + Send + Sync>>,
     next_id: SubId,
     /// delivery log (topic, body) — for deterministic assertions in tests.
     log: Vec<(String, String)>,
@@ -63,7 +67,7 @@ impl Portkey {
         let mut g = self.inner.lock().unwrap();
         let id = g.next_id;
         g.next_id += 1;
-        g.handlers.insert(id, Box::new(f));
+        g.handlers.insert(id, Arc::new(f));
         g.subs.entry(topic.to_string()).or_default().push(id);
         id
     }
@@ -78,20 +82,32 @@ impl Portkey {
 
     /// Publish to a topic. Delivers to every subscriber (and to `to`-matched
     /// subscribers). Returns the count of handlers invoked.
+    ///
+    /// Concurrency (G-C1 fix, `OPUS-PERF-BESTPRACTICES-PROPAGATION-2026-07-18.md`):
+    /// the subscribed handlers are SNAPSHOTTED (cheap `Arc` clones) under the lock, the
+    /// guard is DROPPED, and only THEN are they invoked — snapshot-under-lock /
+    /// dispatch-outside-lock. The old code held the single bus `Mutex` across the whole
+    /// dispatch loop, which (a) serialized every publish behind the slowest handler and
+    /// (b) SELF-DEADLOCKED the instant a handler re-entered the bus (subscribe/publish/
+    /// unsubscribe re-locks the same non-reentrant `std::sync::Mutex`). Delivery order
+    /// is preserved (snapshot is in `subs` order); the delivery log is written under the
+    /// lock, before dispatch, exactly as before.
     pub fn publish(&self, env: &Envelope) -> usize {
-        let mut g = self.inner.lock().unwrap();
-        g.log.push((env.topic.clone(), env.body.clone()));
-        let ids: Vec<SubId> = match g.subs.get(&env.topic) {
-            Some(v) => v.clone(),
-            None => return 0,
-        };
-        // invoke each handler in-place (boxed closures can't be cloned)
-        let mut count = 0;
-        for id in &ids {
-            if let Some(h) = g.handlers.get(id) {
-                h(env);
-                count += 1;
+        let handlers: Vec<Arc<dyn Fn(&Envelope) + Send + Sync>> = {
+            let mut g = self.inner.lock().unwrap();
+            g.log.push((env.topic.clone(), env.body.clone()));
+            match g.subs.get(&env.topic) {
+                Some(ids) => ids
+                    .iter()
+                    .filter_map(|id| g.handlers.get(id).cloned())
+                    .collect(),
+                None => return 0,
             }
+        }; // ← guard dropped here, BEFORE any handler runs
+        let mut count = 0;
+        for h in &handlers {
+            h(env);
+            count += 1;
         }
         count
     }
@@ -173,5 +189,65 @@ mod tests {
             body: "burn again".into(),
         });
         assert_eq!(*hits.lock().unwrap(), 1, "handler fired after unsubscribe");
+    }
+
+    // ── G-C1 correctness: snapshot-under-lock / dispatch-outside-lock ──
+
+    #[test]
+    fn publish_preserves_order_and_loses_no_dispatch() {
+        // Three subscribers on one topic must ALL fire, in subscription order.
+        // Proves the snapshot (Arc clones under the lock) preserves fan-out + order.
+        let bus = Portkey::new();
+        let order = Arc::new(Mutex::new(Vec::<u8>::new()));
+        for tag in [1u8, 2, 3] {
+            let o = order.clone();
+            bus.subscribe("nav", move |_| o.lock().unwrap().push(tag));
+        }
+        let n = bus.publish(&Envelope {
+            topic: "nav".into(),
+            from: "helm".into(),
+            to: "".into(),
+            body: "mark".into(),
+        });
+        assert_eq!(n, 3, "no dispatch lost — all three subscribers fired");
+        assert_eq!(
+            *order.lock().unwrap(),
+            vec![1, 2, 3],
+            "delivery order preserved (subscription order)"
+        );
+    }
+
+    #[test]
+    fn reentrant_handler_does_not_deadlock() {
+        // A handler that RE-PUBLISHES to the bus from inside its own dispatch is the
+        // natural "react to a message by emitting another" pattern. With the old
+        // lock-across-dispatch shape this re-locked the same non-reentrant Mutex and
+        // deadlocked (the test would HANG). With snapshot-under-lock it completes.
+        let bus = Portkey::new();
+        let downstream = Arc::new(Mutex::new(0usize));
+        let d2 = downstream.clone();
+        bus.subscribe("b", move |_| *d2.lock().unwrap() += 1);
+        let bus2 = bus.clone();
+        bus.subscribe("a", move |_| {
+            // re-enter the bus from within a handler — must NOT deadlock.
+            bus2.publish(&Envelope {
+                topic: "b".into(),
+                from: "a-handler".into(),
+                to: "".into(),
+                body: "cascade".into(),
+            });
+        });
+        let n = bus.publish(&Envelope {
+            topic: "a".into(),
+            from: "src".into(),
+            to: "".into(),
+            body: "trigger".into(),
+        });
+        assert_eq!(n, 1, "the 'a' handler fired");
+        assert_eq!(
+            *downstream.lock().unwrap(),
+            1,
+            "re-entrant publish to 'b' completed without deadlock"
+        );
     }
 }

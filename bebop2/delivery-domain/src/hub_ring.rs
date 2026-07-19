@@ -91,7 +91,7 @@ pub fn is_replica(order_id: u64, hubs: &[Hub], replica_count: usize, hub: &Hub) 
         .contains(hub)
 }
 
-#[cfg(all(feature = "kernel-rlib", test))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use bebop2_core::sign::keygen;
