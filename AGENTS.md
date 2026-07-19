@@ -45,8 +45,10 @@ cannot fail is a false-positive metric and does NOT validate. Enforced by
 `scripts/guardrail-falsifiable-proof.mjs` (pre-commit) and `scripts/verify-doc-claims.mjs`.
 
 ## 3. Red-line areas need per-change confirmation
-auth / money / RLS / migrations / bulk-edit / crypto-constant changes are red-line. Don't silently
-ship them; flag for human confirmation.
+auth / money / RLS / migrations / bulk-edit / crypto-constant / wire-schema changes are red-line.
+Don't silently ship them; flag for human confirmation. **Exception (see §8):** when the red-line
+change is fully specified by an approved roadmap plan / blueprint, it may run on autopilot — followed
+byte-for-byte, with any error/gap logged to `docs/RED-LINE-LEDGER.md` rather than self-resolved.
 
 ## 4. Trust the failing test over the narrative
 When a test is red, the bug is real even if the code "looks right". Investigate with an independent
@@ -81,6 +83,36 @@ These invariants are now MECHANICALLY ENFORCED (were a manual RED-suite):
 - **Money/order ⊥ CRDT-merge crate** (`ci-crdt-fence.sh`), **proto-cap ⊥ dowiz-kernel** (`ci-kernel-fence.sh`) — pre-commit + CI.
 - **Sovereign core = empty wasm import section / no phone-home** (`verify-empty-imports.sh`) — CI.
 - **A DONE/CLOSED mesh claim must cite a live test** (`ci-claim-live-test.sh`) — CI.
+
+## 7. Dependencies track the actual code (operator, 2026-07-19)
+Manifests (`Cargo.toml`, `package.json`, any lockfile) MUST reflect what the code actually
+imports and what the registry actually publishes — **derived from ground truth, not from a
+pasted status or an aspirational pin.** Before adding/bumping/keeping a dependency:
+- Verify the crate/package + version **exists on the registry** and **resolves** (a pin to a
+  non-existent version — e.g. `@cloudflare/workers-types@^4.20260714.0` when the highest real
+  publish is `4.20260702.1` — is a real defect: every fresh clone and Dependabot run fails).
+- Verify the code **actually uses** the dep. An unused dep is removed, not carried. A used-but-
+  unlisted dep is added. Duplicate implementations (e.g. a TS worker duplicating a native Rust
+  daemon) get the redundant side removed, not both maintained.
+- This is a VERIFY gate, not a courtesy: the manifest is downstream of the code, never the other
+  way around. (NOT a decart trigger by itself — §5 still governs *new* integrations / swaps.)
+
+## 8. Red-line work on autopilot: blueprint byte-for-byte, zero самодіяльність (operator, 2026-07-19)
+Red-line areas (§3: auth / money / RLS / migrations / bulk-edit / crypto-constant / wire-schema)
+MAY now be executed on autopilot **without per-change confirmation — but ONLY when driven strictly
+by an approved roadmap plan or blueprint.** This is the one place where §3-Ground-truth / §2-VbM
+"figure it out from the live repo" does **NOT** apply. Instead:
+- **The blueprint's exact schema is authoritative and followed byte for byte.** Zero inventions,
+  zero discoveries, zero improvisation (жодної самодіяльності). If the spec gives exact bytes,
+  field order, or constants, they are reproduced exactly — the agent does not "improve" or
+  re-derive them.
+- **No blueprint coverage = no autopilot.** If the red-line change is not fully specified by an
+  approved plan/blueprint, it reverts to §3 (human confirmation required). Autopilot is licensed
+  by the blueprint, not by the red-line classification.
+- **Errors, ambiguities, and suggestions are NOT acted on — they are logged.** Any defect found,
+  gap in the spec, or improvement idea is written to `docs/RED-LINE-LEDGER.md` (append-only) and
+  left for the planning team. The executing agent continues only on the byte-exact, unambiguous
+  parts, and stops if the blocker is load-bearing. It does not self-resolve a red-line ambiguity.
 
 ## Build/test
 - `cargo test` — 914 Rust tests, RED+GREEN, 0 fail
