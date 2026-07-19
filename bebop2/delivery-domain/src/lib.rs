@@ -399,6 +399,8 @@ mod facade_tests {
     use bebop2_core::sign::keygen;
 
     use dowiz_kernel::domain::{place_order, OrderItem};
+    use dowiz_kernel::money::Currency;
+    use dowiz_kernel::vendor::VendorId;
     use dowiz_kernel::OrderStatus;
 
     /// Build a REAL (Ed25519-signed) capability frame for `(resource, action)`
@@ -464,6 +466,8 @@ mod facade_tests {
                 modifier_ids: vec![],
                 quantity: 1,
                 unit_price: 500,
+                currency: Currency::Usd,
+                vendor_id: VendorId(1),
             }],
             0,
             None,
@@ -495,6 +499,8 @@ mod facade_tests {
                 modifier_ids: vec![],
                 quantity: 1,
                 unit_price: 500,
+                currency: Currency::Usd,
+                vendor_id: VendorId(2),
             }],
             0,
             None,
@@ -535,6 +541,8 @@ mod facade_tests {
                 modifier_ids: vec![],
                 quantity: 1,
                 unit_price: 500,
+                currency: Currency::Usd,
+                vendor_id: VendorId(3),
             }],
             0,
             None,

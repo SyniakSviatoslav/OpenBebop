@@ -51,3 +51,11 @@ bebop2-core = { path = "../core", version = "0.1.0", default-features = false, f
 [dev-dependencies]
 # Real keygen for building signed frames in the MESH-02 RED test (no crypto dep leak).
 bebop2-core = { path = "../core", version = "0.1.0", default-features = false, features = ["std", "test_keygen"] }
+# Benchmarking harness for the hot paths (P78 B4 — hub_ring ranked/owner_hub).
+# Convention: `<group>/<n>` bench-id owned by P75 (cite, don't redefine).
+criterion = "0.5"
+
+[[bench]]
+name = "hub_ring"
+harness = false
+required-features = ["kernel-rlib"]
