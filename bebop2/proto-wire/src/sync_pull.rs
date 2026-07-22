@@ -446,19 +446,21 @@ impl MerkleLog {
     }
 
     /// Add a content-id (idempotent: dups do not change the set/root).
+    /// O(1) amortized — sort is deferred to `root()`.
     pub fn add(&mut self, id: [u8; 32]) {
         if self.seen.insert(id) {
             self.leaves.push(id);
-            self.leaves.sort_unstable();
         }
     }
 
     /// Current Merkle root. Stable for a given set of leaves.
+    /// Sort is done here on the clone to avoid O(n·log n) per insert.
     pub fn root(&self) -> [u8; 32] {
         if self.leaves.is_empty() {
             return [0u8; 32];
         }
         let mut level: Vec<[u8; 32]> = self.leaves.clone();
+        level.sort_unstable();
         while level.len() > 1 {
             let mut next = Vec::with_capacity(level.len().div_ceil(2));
             let mut i = 0;
